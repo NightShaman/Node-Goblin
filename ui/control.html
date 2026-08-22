@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en" data-surface="control">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Remote Nodes</title>
+    <link rel="stylesheet" href="./mod.css" />
+  </head>
+  <body>
+    <main class="surface" aria-labelledby="page-title">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">Remote Burrow Nodes</p>
+          <h1 id="page-title">Node control</h1>
+          <p class="lede">Check the reachability and runtime state of configured headless nodes.</p>
+        </div>
+        <button class="button button-secondary" id="refresh-nodes" type="button">Refresh</button>
+      </header>
+
+      <div id="feedback" class="feedback" role="status" aria-live="polite"></div>
+      <section id="node-list" class="node-list" aria-label="Remote nodes" aria-busy="true"></section>
+    </main>
+
+    <script src="./remote-nodes.js"></script>
+  </body>
+</html>

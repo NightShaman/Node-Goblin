@@ -1,0 +1,9 @@
+{
+  "id": "remote-nodes",
+  "name": "Remote Nodes",
+  "server": "server/index.mjs",
+  "ui": {
+    "control": "ui/control.html",
+    "settings": "ui/settings.html"
+  }
+}
