@@ -1,6 +1,14 @@
 # Remote Nodes for Burrow
 
-Remote Nodes is a standalone Burrow mod for configuring and checking other Burrow installations from a UI-enabled Burrow node.
+Remote Nodes is a small Burrow mod that contributes additional Burrow API targets to the existing core UI.
+
+The mod owns only this node registry:
+
+```text
+id, name, baseUrl, enabled
+```
+
+Burrow core owns agents, sessions, settings, chat, streaming, cancellation, tools, memory, receipts, rendering, and request routing. The mod does not copy or replace those systems.
 
 ## Install
 
@@ -17,6 +25,12 @@ Restart Burrow after installing or updating the mod.
 
 Other common runtime roots include `/var/lib/burrow` for a system installation and `/data` in Docker.
 
+## State
+
+Target records are stored in the `remote-nodes` namespace of Burrow's existing SQLite settings database. The package has no separate database and stores no credentials in version one.
+
+Remote targets are contacted directly by the existing Burrow UI client. Their APIs must be reachable from the browser and allow the UI origin through CORS.
+
 ## Update
 
 ```bash
@@ -24,10 +38,6 @@ git -C "$BURROW_RUNTIME_ROOT/mods/remote-nodes" pull --ff-only
 ```
 
 Restart Burrow after updating.
-
-## State and credentials
-
-The package directory contains only mod code and UI assets. Node configuration is stored in Burrow's SQLite settings database. Remote-node credentials are stored through Burrow's encrypted mod-secret storage and are never returned to the UI.
 
 ## Test
 

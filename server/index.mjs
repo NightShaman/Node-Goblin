@@ -1,8 +1,5 @@
-import { randomUUID } from 'node:crypto';
-
-const SETTINGS_NAME = 'nodes';
-const secretName = (id) => `node:${id}:credential`;
-const now = () => new Date().toISOString();
+const SETTINGS_NAME = 'targets';
+const TARGET_ID = /^[a-z0-9][a-z0-9._-]*$/i;
 
 function problem(message, statusCode = 400) {
   const error = new Error(message);
@@ -16,6 +13,12 @@ function cleanText(value, field) {
   return text;
 }
 
+function cleanId(value) {
+  const id = cleanText(value, 'target_id');
+  if (!TARGET_ID.test(id) || id === 'local') throw problem('target_id_invalid');
+  return id;
+}
+
 function cleanBaseUrl(value) {
   const text = cleanText(value, 'base_url');
   let url;
@@ -25,127 +28,56 @@ function cleanBaseUrl(value) {
   return url.toString().replace(/\/$/, '');
 }
 
-function storedNodes(settings) {
-  const nodes = settings.get(SETTINGS_NAME, []);
-  return Array.isArray(nodes) ? nodes : [];
-}
-
-function publicNode(node, secrets) {
+function cleanTarget(body = {}) {
   return {
-    id: node.id,
-    name: node.name,
-    baseUrl: node.baseUrl,
-    enabled: node.enabled !== false,
-    status: ['online', 'offline', 'unknown'].includes(node.status) ? node.status : 'unknown',
-    lastCheckedAt: node.lastCheckedAt || null,
-    lastSeenAt: node.lastSeenAt || null,
-    version: node.version || null,
-    error: node.error || null,
-    credentialConfigured: secrets.has(secretName(node.id)),
+    id: cleanId(body.id),
+    name: cleanText(body.name, 'name'),
+    baseUrl: cleanBaseUrl(body.baseUrl),
+    enabled: body.enabled !== false,
   };
 }
 
-function findNode(nodes, id) {
-  const index = nodes.findIndex((node) => node.id === id);
-  if (index < 0) throw problem('remote_node_not_found', 404);
-  return { index, node: nodes[index] };
+function storedTargets(settings) {
+  const targets = settings.get(SETTINGS_NAME, []);
+  if (!Array.isArray(targets)) return [];
+  return targets.flatMap((target) => {
+    try { return [cleanTarget(target)]; } catch { return []; }
+  });
 }
 
-function saveCredential(secrets, id, body, { create = false } = {}) {
-  if (!Object.prototype.hasOwnProperty.call(body, 'credential')) return;
-  const value = body.credential;
-  if (value === null || value === undefined || String(value) === '') {
-    secrets.clear(secretName(id));
-    return;
-  }
-  secrets.set(secretName(id), String(value));
+function findTarget(targets, id) {
+  const index = targets.findIndex((target) => target.id === id);
+  if (index < 0) throw problem('api_target_not_found', 404);
+  return { index, target: targets[index] };
 }
 
-function authHeaders(credential) {
-  const headers = { accept: 'application/json' };
-  const value = String(credential || '').trim();
-  if (!value) return headers;
-  if (/^(basic|bearer)\s+/i.test(value)) headers.authorization = value;
-  else headers.authorization = `Bearer ${value}`;
-  return headers;
-}
+export async function activate({ api, settings }) {
+  api.get('/targets', () => ({ ok: true, targets: storedTargets(settings) }));
 
-function healthVersion(body, response) {
-  const header = response.headers.get('x-burrow-version');
-  return header || body?.version || body?.burrowVersion || body?.build?.version || null;
-}
-
-async function checkRemote(node, secrets) {
-  const checkedAt = now();
-  try {
-    const credential = secrets.get(secretName(node.id));
-    const response = await fetch(`${node.baseUrl}/api/health`, {
-      headers: authHeaders(credential),
-      signal: AbortSignal.timeout(10_000),
-    });
-    const body = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(`remote_node_http_${response.status}`);
-    if (!body || body.ok !== true || body.runtime !== 'burrow') throw new Error('remote_node_health_invalid');
-    return { ...node, status: 'online', lastCheckedAt: checkedAt, lastSeenAt: checkedAt, version: healthVersion(body, response), error: null };
-  } catch (error) {
-    return { ...node, status: 'offline', lastCheckedAt: checkedAt, error: String(error?.message || error) };
-  }
-}
-
-export async function activate({ api, settings, secrets }) {
-  api.get('/nodes', () => ({ ok: true, nodes: storedNodes(settings).map((node) => publicNode(node, secrets)) }));
-
-  api.post('/nodes', ({ body = {} }) => {
-    const nodes = storedNodes(settings);
-    const node = {
-      id: randomUUID(),
-      name: cleanText(body.name, 'name'),
-      baseUrl: cleanBaseUrl(body.baseUrl),
-      enabled: body.enabled !== false,
-      status: 'unknown',
-      lastCheckedAt: null,
-      lastSeenAt: null,
-      version: null,
-      error: null,
-    };
-    nodes.push(node);
-    settings.set(SETTINGS_NAME, nodes);
-    saveCredential(secrets, node.id, body, { create: true });
-    return { status: 201, body: { ok: true, node: publicNode(node, secrets) } };
+  api.post('/targets', ({ body = {} }) => {
+    const targets = storedTargets(settings);
+    const target = cleanTarget(body);
+    if (targets.some((entry) => entry.id === target.id)) throw problem('api_target_exists', 409);
+    targets.push(target);
+    settings.set(SETTINGS_NAME, targets);
+    return { status: 201, body: { ok: true, target } };
   });
 
-  api.put('/nodes/:id', ({ params, body = {} }) => {
-    const nodes = storedNodes(settings);
-    const { index, node } = findNode(nodes, params.id);
-    const updated = {
-      ...node,
-      name: cleanText(body.name, 'name'),
-      baseUrl: cleanBaseUrl(body.baseUrl),
-      enabled: body.enabled !== false,
-    };
-    if (updated.baseUrl !== node.baseUrl) Object.assign(updated, { status: 'unknown', lastCheckedAt: null, lastSeenAt: null, version: null, error: null });
-    nodes[index] = updated;
-    settings.set(SETTINGS_NAME, nodes);
-    saveCredential(secrets, updated.id, body);
-    return { ok: true, node: publicNode(updated, secrets) };
+  api.put('/targets/:id', ({ params, body = {} }) => {
+    const targets = storedTargets(settings);
+    const { index } = findTarget(targets, params.id);
+    const target = cleanTarget(body);
+    if (target.id !== params.id) throw problem('target_id_immutable');
+    targets[index] = target;
+    settings.set(SETTINGS_NAME, targets);
+    return { ok: true, target };
   });
 
-  api.delete('/nodes/:id', ({ params }) => {
-    const nodes = storedNodes(settings);
-    const { index, node } = findNode(nodes, params.id);
-    nodes.splice(index, 1);
-    settings.set(SETTINGS_NAME, nodes);
-    secrets.clear(secretName(node.id));
+  api.delete('/targets/:id', ({ params }) => {
+    const targets = storedTargets(settings);
+    const { index } = findTarget(targets, params.id);
+    targets.splice(index, 1);
+    settings.set(SETTINGS_NAME, targets);
     return { ok: true };
-  });
-
-  api.post('/nodes/:id/check', async ({ params }) => {
-    const nodes = storedNodes(settings);
-    const { index, node } = findNode(nodes, params.id);
-    if (node.enabled === false) throw problem('remote_node_disabled', 409);
-    const checked = await checkRemote(node, secrets);
-    nodes[index] = checked;
-    settings.set(SETTINGS_NAME, nodes);
-    return { ok: true, node: publicNode(checked, secrets) };
   });
 }
