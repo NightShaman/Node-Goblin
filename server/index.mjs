@@ -7,48 +7,47 @@ function problem(message, statusCode = 400) {
   return error;
 }
 
-function cleanText(value, field) {
-  const text = String(value ?? '').trim();
-  if (!text) throw problem(`${field}_required`);
-  return text;
-}
-
 function cleanId(value) {
-  const id = cleanText(value, 'target_id');
+  const id = String(value ?? '').trim();
   if (!TARGET_ID.test(id) || id === 'local') throw problem('target_id_invalid');
   return id;
 }
 
+function cleanName(value) {
+  const name = String(value ?? '').trim();
+  if (!name) throw problem('target_name_required');
+  return name;
+}
+
 function cleanBaseUrl(value) {
-  const text = cleanText(value, 'base_url');
   let url;
-  try { url = new URL(text); } catch { throw problem('base_url_invalid'); }
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw problem('base_url_invalid');
+  try { url = new URL(String(value ?? '').trim()); } catch { throw problem('target_base_url_invalid'); }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw problem('target_base_url_invalid');
   url.pathname = url.pathname.replace(/\/+$/, '');
   return url.toString().replace(/\/$/, '');
 }
 
-function cleanTarget(body = {}) {
+function cleanTarget(value = {}) {
   return {
-    id: cleanId(body.id),
-    name: cleanText(body.name, 'name'),
-    baseUrl: cleanBaseUrl(body.baseUrl),
-    enabled: body.enabled !== false,
+    id: cleanId(value.id),
+    name: cleanName(value.name),
+    baseUrl: cleanBaseUrl(value.baseUrl),
+    enabled: value.enabled !== false,
   };
 }
 
 function storedTargets(settings) {
-  const targets = settings.get(SETTINGS_NAME, []);
-  if (!Array.isArray(targets)) return [];
-  return targets.flatMap((target) => {
-    try { return [cleanTarget(target)]; } catch { return []; }
-  });
+  const values = settings.get(SETTINGS_NAME, []);
+  if (!Array.isArray(values)) return [];
+  return values.map((value) => {
+    try { return cleanTarget(value); } catch { return null; }
+  }).filter(Boolean);
 }
 
 function findTarget(targets, id) {
   const index = targets.findIndex((target) => target.id === id);
   if (index < 0) throw problem('api_target_not_found', 404);
-  return { index, target: targets[index] };
+  return index;
 }
 
 export async function activate({ api, settings }) {
@@ -57,7 +56,7 @@ export async function activate({ api, settings }) {
   api.post('/targets', ({ body = {} }) => {
     const targets = storedTargets(settings);
     const target = cleanTarget(body);
-    if (targets.some((entry) => entry.id === target.id)) throw problem('api_target_exists', 409);
+    if (targets.some((value) => value.id === target.id)) throw problem('api_target_exists', 409);
     targets.push(target);
     settings.set(SETTINGS_NAME, targets);
     return { status: 201, body: { ok: true, target } };
@@ -65,7 +64,7 @@ export async function activate({ api, settings }) {
 
   api.put('/targets/:id', ({ params, body = {} }) => {
     const targets = storedTargets(settings);
-    const { index } = findTarget(targets, params.id);
+    const index = findTarget(targets, params.id);
     const target = cleanTarget(body);
     if (target.id !== params.id) throw problem('target_id_immutable');
     targets[index] = target;
@@ -75,7 +74,7 @@ export async function activate({ api, settings }) {
 
   api.delete('/targets/:id', ({ params }) => {
     const targets = storedTargets(settings);
-    const { index } = findTarget(targets, params.id);
+    const index = findTarget(targets, params.id);
     targets.splice(index, 1);
     settings.set(SETTINGS_NAME, targets);
     return { ok: true };

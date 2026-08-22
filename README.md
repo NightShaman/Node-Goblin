@@ -1,14 +1,17 @@
 # Remote Nodes for Burrow
 
-Remote Nodes is a small Burrow mod that contributes additional Burrow API targets to the existing core UI.
+Remote Nodes is a small Burrow mod that stores additional Burrow API targets. Core Burrow uses those targets through its existing UI, API client, chat streaming, sessions, tools, settings, and other product surfaces.
 
-The mod owns only this node registry:
+The mod does not reimplement Burrow screens or proxy Burrow APIs. Version 1 stores only:
 
 ```text
-id, name, baseUrl, enabled
+id
+name
+baseUrl
+enabled
 ```
 
-Burrow core owns agents, sessions, settings, chat, streaming, cancellation, tools, memory, receipts, rendering, and request routing. The mod does not copy or replace those systems.
+Target records live in the mod's namespace in Burrow's existing SQLite settings database.
 
 ## Install
 
@@ -25,12 +28,6 @@ Restart Burrow after installing or updating the mod.
 
 Other common runtime roots include `/var/lib/burrow` for a system installation and `/data` in Docker.
 
-## State
-
-Target records are stored in the `remote-nodes` namespace of Burrow's existing SQLite settings database. The package has no separate database and stores no credentials in version one.
-
-Remote targets are contacted directly by the existing Burrow UI client. Their APIs must be reachable from the browser and allow the UI origin through CORS.
-
 ## Update
 
 ```bash
@@ -38,6 +35,31 @@ git -C "$BURROW_RUNTIME_ROOT/mods/remote-nodes" pull --ff-only
 ```
 
 Restart Burrow after updating.
+
+## Contract
+
+The manifest contributes one host-owned API-target endpoint:
+
+```json
+{
+  "contributions": {
+    "apiTargets": "/api/mods/remote-nodes/targets"
+  }
+}
+```
+
+The endpoint supports:
+
+```text
+GET    /api/mods/remote-nodes/targets
+POST   /api/mods/remote-nodes/targets
+PUT    /api/mods/remote-nodes/targets/:id
+DELETE /api/mods/remote-nodes/targets/:id
+```
+
+Core Burrow renders target settings, combines resources from enabled targets, preserves node provenance, and routes operations to the node that owns each resource.
+
+Remote Burrow APIs must be reachable by the browser. Burrow core provides CORS for its API routes. Version 1 adds no remote credential contract.
 
 ## Test
 

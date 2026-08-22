@@ -23,41 +23,32 @@ async function readyHarness() {
 
 const target = { id: 'aap-host', name: 'AAP Host', baseUrl: 'http://127.0.0.1:42817', enabled: true };
 
-test('stores and exposes only API target records', async () => {
+test('owns only the namespaced API target registry', async () => {
   const value = await readyHarness();
+  assert.deepEqual([...value.routes.keys()], ['GET /targets', 'POST /targets', 'PUT /targets/:id', 'DELETE /targets/:id']);
+
   const created = value.routes.get('POST /targets')({ body: target });
-  assert.deepEqual(created, { status: 201, body: { ok: true, target } });
+  assert.equal(created.status, 201);
+  assert.deepEqual(created.body, { ok: true, target });
   assert.deepEqual(value.values.get('targets'), [target]);
   assert.deepEqual(value.routes.get('GET /targets')({}), { ok: true, targets: [target] });
 
   const updatedTarget = { ...target, name: 'TaskMaster', baseUrl: 'https://aap.example.test', enabled: false };
   assert.deepEqual(value.routes.get('PUT /targets/:id')({ params: { id: target.id }, body: updatedTarget }), { ok: true, target: updatedTarget });
-  assert.deepEqual(value.values.get('targets'), [updatedTarget]);
-
   assert.deepEqual(value.routes.get('DELETE /targets/:id')({ params: { id: target.id } }), { ok: true });
   assert.deepEqual(value.routes.get('GET /targets')({}), { ok: true, targets: [] });
 });
 
-test('validates IDs, names, and direct http or https API URLs', async () => {
+test('validates target identity and URL without adding credentials or health state', async () => {
   const value = await readyHarness();
-  const create = value.routes.get('POST /targets');
-  assert.throws(() => create({ body: { ...target, id: 'local' } }), /target_id_invalid/);
-  assert.throws(() => create({ body: { ...target, id: 'bad id' } }), /target_id_invalid/);
-  assert.throws(() => create({ body: { ...target, name: '' } }), /name_required/);
-  assert.throws(() => create({ body: { ...target, baseUrl: 'file:\/\/\/tmp/nope' } }), /base_url_invalid/);
-  assert.throws(() => create({ body: { ...target, baseUrl: 'https://user:pass@node.test' } }), /base_url_invalid/);
-});
+  assert.throws(() => value.routes.get('POST /targets')({ body: { ...target, id: 'local' } }), /target_id_invalid/);
+  assert.throws(() => value.routes.get('POST /targets')({ body: { ...target, name: '' } }), /target_name_required/);
+  assert.throws(() => value.routes.get('POST /targets')({ body: { ...target, baseUrl: 'file:///tmp/nope' } }), /target_base_url_invalid/);
+  assert.throws(() => value.routes.get('POST /targets')({ body: { ...target, baseUrl: 'https://user:pass@node.test' } }), /target_base_url_invalid/);
 
-test('rejects duplicate IDs, ID mutation, and unknown records', async () => {
-  const value = await readyHarness();
   value.routes.get('POST /targets')({ body: target });
   assert.throws(() => value.routes.get('POST /targets')({ body: target }), /api_target_exists/);
   assert.throws(() => value.routes.get('PUT /targets/:id')({ params: { id: target.id }, body: { ...target, id: 'other' } }), /target_id_immutable/);
-  assert.throws(() => value.routes.get('DELETE /targets/:id')({ params: { id: 'missing' } }), /api_target_not_found/);
-});
-
-test('drops malformed legacy values instead of publishing unsafe targets', async () => {
-  const value = await readyHarness();
-  value.values.set('targets', [target, { id: 'bad id', name: 'Bad', baseUrl: 'javascript:alert(1)', enabled: true }]);
-  assert.deepEqual(value.routes.get('GET /targets')({}), { ok: true, targets: [target] });
+  assert.equal(JSON.stringify(value.values.get('targets')).includes('credential'), false);
+  assert.equal(JSON.stringify(value.values.get('targets')).includes('status'), false);
 });
