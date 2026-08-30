@@ -7,16 +7,16 @@
     "settings": [{
       "id": "remote-targets",
       "navigation": {
-        "title": "Remote Nodes",
+        "title": "Connections",
         "description": "Configure remote Burrow nodes."
       },
       "primary": {
-        "title": "Connection",
+        "title": "The Connections Card",
         "description": "Add or edit a remote Burrow runtime.",
         "capability": "apiTargets"
       },
       "inventory": {
-        "title": "Known nodes",
+        "title": "Configured Connections",
         "capability": "apiTargets",
         "emptyState": {
           "title": "No remote nodes",
