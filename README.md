@@ -38,15 +38,27 @@ Restart Burrow after updating.
 
 ## Contract
 
-The manifest contributes one host-owned API-target endpoint:
+The manifest contributes one host-owned API-target endpoint and a declarative Settings slot. Core owns the Settings layout and rendering; this mod only declares metadata and requests the host-owned `apiTargets` capability:
 
 ```json
 {
   "contributions": {
-    "apiTargets": "/api/mods/remote-nodes/targets"
+    "apiTargets": "/api/mods/remote-nodes/targets",
+    "settings": [{
+      "id": "remote-targets",
+      "navigation": { "title": "Remote Nodes", "description": "Configure remote Burrow nodes." },
+      "primary": { "title": "Connection", "capability": "apiTargets" },
+      "inventory": {
+        "title": "Known nodes",
+        "capability": "apiTargets",
+        "emptyState": { "title": "No remote nodes", "description": "Add one to begin." }
+      }
+    }]
   }
 }
 ```
+
+The `navigation` metadata is rendered in Column 2, `primary` in Column 3, and optional `inventory` in Column 4. Mods do not provide markup, styles, layout instructions, or executable UI behavior.
 
 The endpoint supports:
 

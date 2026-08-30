@@ -3,6 +3,26 @@
   "name": "Remote Nodes",
   "server": "server/index.mjs",
   "contributions": {
-    "apiTargets": "/api/mods/remote-nodes/targets"
+    "apiTargets": "/api/mods/remote-nodes/targets",
+    "settings": [{
+      "id": "remote-targets",
+      "navigation": {
+        "title": "Remote Nodes",
+        "description": "Configure remote Burrow nodes."
+      },
+      "primary": {
+        "title": "Connection",
+        "description": "Add or edit a remote Burrow runtime.",
+        "capability": "apiTargets"
+      },
+      "inventory": {
+        "title": "Known nodes",
+        "capability": "apiTargets",
+        "emptyState": {
+          "title": "No remote nodes",
+          "description": "Add one to begin."
+        }
+      }
+    }]
   }
 }
