@@ -135,6 +135,37 @@ test('client executes request and correlates events', async () => {
   }
 });
 
+test('rejects invalid protected delivery binding before child execution', async () => {
+  const marker = path.join(os.tmpdir(), `gateway-protected-invalid-${process.pid}-${Date.now()}`);
+  const messages = await collect(async ({ input, daemon }) => {
+    daemon.secureTransportContext = { gatewayId: 'gateway-1', connectionId: 'connection-1' };
+    input.write(JSON.stringify({ id: 'request-1', method: 'process.exec', params: {
+      operationId: 'protected-invalid', executable: process.execPath, args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`],
+      protectedValues: { TOKEN: 'do-not-run' },
+      protectedDelivery: { gatewayId: 'gateway-1', connectionId: 'wrong-connection', requestId: 'request-1', operationId: 'protected-invalid' },
+    } }) + '\n');
+  }, { waitMs: 50 });
+  assert.equal(messages[0].error.code, 'protected_delivery_binding_invalid');
+  assert.equal(fs.existsSync(marker), false);
+  assert.equal(JSON.stringify(messages).includes('do-not-run'), false);
+});
+
+test('protected metadata conflicts and protected redelivery fail closed', async () => {
+  const secret = 'protected-replay-secret';
+  const base = { operationId: 'protected-replay', executable: process.execPath, args: ['-e', "process.stdout.write('ok')"], protectedBindingMetadata: [{ name: 'TOKEN', ref: 'protected://one' }] };
+  const messages = await collect(async ({ input, daemon }) => {
+    daemon.secureTransportContext = { gatewayId: 'gateway-1', connectionId: 'connection-1' };
+    const delivery = (requestId) => ({ gatewayId: 'gateway-1', connectionId: 'connection-1', requestId, operationId: base.operationId });
+    input.write(JSON.stringify({ id: 'first', method: 'process.exec', params: { ...base, protectedValues: { TOKEN: secret }, protectedDelivery: delivery('first') } }) + '\n');
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    input.write(JSON.stringify({ id: 'redelivery', method: 'process.exec', params: { ...base, protectedValues: { TOKEN: secret }, protectedDelivery: delivery('redelivery') } }) + '\n');
+    input.write(JSON.stringify({ id: 'conflict', method: 'process.exec', params: { ...base, protectedBindingMetadata: [{ name: 'TOKEN', ref: 'protected://two' }] } }) + '\n');
+  });
+  assert.equal(messages.find((message) => message.requestId === 'redelivery').error.code, 'protected_redelivery_forbidden');
+  assert.equal(messages.find((message) => message.requestId === 'conflict').error.code, 'operation_id_conflict');
+  assert.equal(JSON.stringify(messages).includes(secret), false);
+});
+
 test('shutdown reports stopping', async () => {
   const messages = await collect(async ({ input }) => {
     input.write(JSON.stringify({ id: 's', method: 'shutdown' }) + '\n');

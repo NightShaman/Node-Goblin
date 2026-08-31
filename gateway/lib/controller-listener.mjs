@@ -119,7 +119,7 @@ class GatewayConnection extends EventEmitter {
     this.controllerId = controllerId;
     this.state = 'ready';
     this.health = { status: 'ok', activeOperations: [] };
-    this.send({ type: 'auth.ok' });
+    this.send({ type: 'auth.ok', connectionId: this.connectionId });
     this.listener.emit('gatewayAuthenticated', { gatewayId, connection: this });
   }
 
@@ -176,7 +176,17 @@ class GatewayConnection extends EventEmitter {
       entry.reject = reject;
     });
     this.pendingRequests.set(requestId, entry);
-    this.send({ id: requestId, method, params });
+    const hasProtectedValues = params.protectedValues && Object.keys(params.protectedValues).length > 0;
+    const boundParams = hasProtectedValues ? {
+      ...params,
+      protectedDelivery: {
+        gatewayId: this.gatewayId,
+        operationId: String(params.operationId || ''),
+        requestId,
+        connectionId: this.connectionId,
+      },
+    } : params;
+    this.send({ id: requestId, method, params: boundParams });
     return promise;
   }
 

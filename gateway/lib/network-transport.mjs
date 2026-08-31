@@ -78,6 +78,7 @@ export class OutboundGatewayTransport extends EventEmitter {
     this.attempt = 0;
     this.authenticated = false;
     this.proofSent = false;
+    this.connectionId = null;
     this.buffer = '';
   }
 
@@ -103,6 +104,8 @@ export class OutboundGatewayTransport extends EventEmitter {
     socket.on('close', () => {
       if (this.output.socket === socket) this.output.socket = null;
       this.authenticated = false;
+      this.connectionId = null;
+      this.daemon.secureTransportContext = null;
       this.emit('disconnected');
       this.scheduleReconnect();
     });
@@ -157,6 +160,9 @@ export class OutboundGatewayTransport extends EventEmitter {
       }
       if (message?.type === 'auth.ok' && this.proofSent) {
         this.authenticated = true;
+        this.connectionId = typeof message.connectionId === 'string' ? message.connectionId : null;
+        this.daemon.secureTransportContext = this.connectionId
+          ? { gatewayId: this.gatewayId, connectionId: this.connectionId } : null;
         this.attempt = 0;
         this.emit('authenticated');
         return;

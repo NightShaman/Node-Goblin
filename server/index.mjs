@@ -216,6 +216,11 @@ export function createProcessController(service, { logger = console, operationSt
       if (request.process.cwd) params.cwd = String(request.process.cwd);
       if (request.process.env) params.env = { ...request.process.env };
       if (request.process.timeoutMs != null) params.timeoutMs = Number(request.process.timeoutMs);
+      const protectedValues = request.protectedValues && typeof request.protectedValues === 'object'
+        ? { ...request.protectedValues } : null;
+      const protectedBindingMetadata = Array.isArray(request.protectedBindingMetadata)
+        ? request.protectedBindingMetadata.map((entry) => ({ ...entry })) : [];
+      if (protectedBindingMetadata.length) params.protectedBindingMetadata = protectedBindingMetadata;
       let cancelPromise = null;
       const cancel = () => {
         if (!cancelPromise) cancelPromise = Promise.resolve(service.dispatchCancel(gatewayId, operationId)).catch((error) => {
@@ -223,7 +228,10 @@ export function createProcessController(service, { logger = console, operationSt
         });
       };
       operationStore?.begin(request, 'process', params);
-      const dispatchPromise = service.dispatchProcessExec(gatewayId, params);
+      // Values exist only in this transient dispatch object. The listener binds
+      // them to its authenticated connection and generated request id.
+      const dispatchParams = protectedValues ? { ...params, protectedValues } : params;
+      const dispatchPromise = service.dispatchProcessExec(gatewayId, dispatchParams);
       if (abortSignal?.aborted) cancel();
       else abortSignal?.addEventListener('abort', cancel, { once: true });
       try {

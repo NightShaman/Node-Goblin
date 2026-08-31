@@ -16,6 +16,10 @@ export function canonicalProcessRequest(params = {}, method = 'process.exec') {
   const normalized = {
     ...params,
     operationId: undefined,
+    // Secret material is one-shot transport data. Safe binding metadata remains
+    // in the digest so reference/name conflicts are still detected.
+    protectedValues: undefined,
+    protectedDelivery: undefined,
   };
   return { method, params: normalized };
 }

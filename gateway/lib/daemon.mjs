@@ -60,11 +60,31 @@ export class GatewayDaemon {
     }
     if (method !== 'process.exec' && method !== 'filesystem.execute') throw new Error('unknown_method');
 
-    const operationRequest = { method, params };
-    const requestDigest = requestDigestFromParams(params, method);
-    const operationId = String(params.operationId || operationIdFromRequest(operationRequest));
+    const protectedValues = params.protectedValues && typeof params.protectedValues === 'object' && !Array.isArray(params.protectedValues)
+      ? { ...params.protectedValues } : null;
+    const hasProtectedValues = protectedValues && Object.keys(protectedValues).length > 0;
+    if (hasProtectedValues) {
+      const delivery = params.protectedDelivery;
+      const context = this.secureTransportContext;
+      const validValues = method === 'process.exec' && Object.entries(protectedValues)
+        .every(([name, value]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && typeof value === 'string' && value.length > 0);
+      if (!validValues || !context || delivery?.gatewayId !== context.gatewayId || delivery?.connectionId !== context.connectionId
+        || delivery?.requestId !== String(message.id ?? '') || delivery?.operationId !== String(params.operationId ?? '')) {
+        throw new Error('protected_delivery_binding_invalid');
+      }
+    }
+    const safeParams = { ...params };
+    delete safeParams.protectedValues;
+    delete safeParams.protectedDelivery;
+    const operationRequest = { method, params: safeParams };
+    const requestDigest = requestDigestFromParams(safeParams, method);
+    const operationId = String(safeParams.operationId || operationIdFromRequest(operationRequest));
     const replay = this.journal.inspect(operationId, this.now());
     if (replay) {
+      if (hasProtectedValues) {
+        this.send({ type: 'response', requestId: message.id ?? null, ok: false, error: { code: 'protected_redelivery_forbidden', operationId } });
+        return;
+      }
       if (replay.requestDigest && replay.requestDigest !== requestDigest) {
         this.send({ type: 'response', requestId: message.id ?? null, ok: false, error: { code: 'operation_id_conflict', operationId } });
         return;
@@ -89,8 +109,8 @@ export class GatewayDaemon {
 
     try {
       const outcome = method === 'process.exec'
-        ? await runProcess(params, { signal: controller.signal, now: this.now, emitEvent: (event) => this.send({ ...event, operationId }) })
-        : await runFilesystem(params, { signal: controller.signal, now: this.now });
+        ? await runProcess(safeParams, { protectedEnv: protectedValues, signal: controller.signal, now: this.now, emitEvent: (event) => this.send({ ...event, operationId }) })
+        : await runFilesystem(safeParams, { signal: controller.signal, now: this.now });
       this.journal.put(operationId, requestDigest, outcome, this.now());
       this.send({ type: 'response', requestId: message.id ?? null, ok: true, result: { operationId, replay: false, outcome } });
     } catch (error) {

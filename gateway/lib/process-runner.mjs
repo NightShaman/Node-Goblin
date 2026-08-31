@@ -12,18 +12,20 @@ function normalizeExec(request) {
   return { mode: 'exec', file: executable, args, options: { shell: false } };
 }
 
-export function runProcess(request, { emitEvent, signal, now = () => Date.now() } = {}) {
+export function runProcess(request, { protectedEnv = null, emitEvent, signal, now = () => Date.now() } = {}) {
   const startHr = process.hrtime.bigint();
   const startedAt = new Date().toISOString();
   const cwd = request.cwd ? String(request.cwd) : process.cwd();
   const env = request.env && typeof request.env === 'object' ? Object.fromEntries(Object.entries(request.env).map(([key, value]) => [key, String(value)])) : undefined;
+  const secretEnv = protectedEnv && typeof protectedEnv === 'object'
+    ? Object.fromEntries(Object.entries(protectedEnv).map(([key, value]) => [key, String(value)])) : null;
   const maxOutputBytes = Number.isInteger(request.maxOutputBytes) && request.maxOutputBytes > 0 ? request.maxOutputBytes : DEFAULT_MAX_OUTPUT_BYTES;
   const timeoutMs = Number.isInteger(request.timeoutMs) && request.timeoutMs > 0 ? request.timeoutMs : null;
   const deadlineMs = Number.isInteger(request.deadlineMs) ? request.deadlineMs : null;
   const exec = normalizeExec(request);
   const child = spawn(exec.file, exec.args, {
     cwd,
-    env: env ? { ...process.env, ...env } : process.env,
+    env: env || secretEnv ? { ...process.env, ...(env || {}), ...(secretEnv || {}) } : process.env,
     shell: exec.options.shell,
     detached: process.platform !== 'win32',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -39,9 +41,28 @@ export function runProcess(request, { emitEvent, signal, now = () => Date.now() 
   const timers = [];
 
   const totalBytes = () => Buffer.byteLength(stdout, 'utf8') + Buffer.byteLength(stderr, 'utf8');
+  const secretValues = [...new Set(Object.values(secretEnv || {}).filter(Boolean))].sort((a, b) => b.length - a.length);
+  const pending = { stdout: '', stderr: '' };
 
-  const noteChunk = (stream, chunk) => {
-    const text = chunk.toString('utf8');
+  // Redact as a stream, retaining only a possible secret prefix. Redacting each
+  // child chunk independently leaks values when a process writes a secret in
+  // multiple chunks.
+  const drainRedacted = (stream, final = false) => {
+    let source = pending[stream];
+    let text = '';
+    let cursor = 0;
+    while (cursor < source.length) {
+      const secret = secretValues.find((value) => source.startsWith(value, cursor));
+      if (secret) {
+        text += '[redacted]';
+        cursor += secret.length;
+        continue;
+      }
+      if (!final && secretValues.some((value) => value.startsWith(source.slice(cursor)))) break;
+      text += source[cursor++];
+    }
+    pending[stream] = source.slice(cursor);
+    if (!text) return;
     const room = Math.max(0, maxOutputBytes - totalBytes());
     const kept = room > 0 ? truncateUtf8(text, room) : '';
     if (stream === 'stdout') stdout += kept;
@@ -51,6 +72,13 @@ export function runProcess(request, { emitEvent, signal, now = () => Date.now() 
       terminate('SIGTERM');
     }
     emitEvent?.({ type: 'process.stream', stream, seq: ++seq, data: kept, truncated });
+  };
+
+  const noteChunk = (stream, chunk) => {
+    // Terminal evidence and stream events are redacted before accumulation,
+    // hashing, journaling, or transport back to the controller.
+    pending[stream] += chunk.toString('utf8');
+    drainRedacted(stream);
   };
 
   const terminate = (reasonSignal = 'SIGTERM') => {
@@ -91,6 +119,8 @@ export function runProcess(request, { emitEvent, signal, now = () => Date.now() 
     child.once('error', reject);
     child.once('close', (code, closeSignal) => {
       for (const timer of timers) clearTimeout(timer);
+      drainRedacted('stdout', true);
+      drainRedacted('stderr', true);
       const endedAt = new Date().toISOString();
       const durationMs = Number(process.hrtime.bigint() - startHr) / 1e6;
       const result = {
