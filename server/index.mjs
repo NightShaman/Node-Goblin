@@ -271,6 +271,7 @@ export function createControllerService({ settings, secrets, listenerFactory = (
   const config = storedControllerConfig(settings);
   const records = gatewayRecords(settings, secrets);
   const secretValues = records.map((record) => record.secret);
+  const tlsConfigured = { key: Boolean(secrets?.get?.('controller.tls.key')), cert: Boolean(secrets?.get?.('controller.tls.cert')), ca: Boolean(secrets?.get?.('controller.tls.ca')) };
   let listener = null;
   let startError = null;
   if (config.enabled) {
@@ -288,10 +289,14 @@ export function createControllerService({ settings, secrets, listenerFactory = (
       }
     }
   }
-  const state = () => ({ enabled: config.enabled, host: config.host, port: config.port, running: Boolean(listener), ...(startError ? { error: startError } : {}) });
+  const state = () => ({ enabled: config.enabled, host: config.host, port: config.port, running: Boolean(listener), tls: { configured: tlsConfigured.key && tlsConfigured.cert, ready: Boolean(listener) && tlsConfigured.key && tlsConfigured.cert, keyConfigured: tlsConfigured.key, certConfigured: tlsConfigured.cert, caConfigured: tlsConfigured.ca }, ...(startError ? { error: startError } : {}) });
   return Object.freeze({
     state,
     listLiveGateways: () => listener ? listener.listLiveGateways() : [],
+    listGateways: () => listener
+      ? (listener.listGateways?.() ?? listener.listLiveGateways())
+      : records.map(({ gatewayId }) => ({ gatewayId, status: 'disconnected', connected: false, connectedAt: null, lastSeenAt: null, activeOperations: [], name: null, version: null, protocolVersion: null })),
+    listOperationActivity: (options) => listener?.listOperationActivity?.(options) ?? [],
     async dispatchProcessExec(gatewayId, params) {
       if (!listener) throw Object.assign(new Error(startError || 'controller_not_running'), { code: startError || 'controller_not_running' });
       return redact(await listener.dispatchProcessExec(gatewayId, params), secretValues);
@@ -362,7 +367,13 @@ export async function activate({ api, settings, secrets, logger, processExecutio
     settings.set(CONTROLLER_GATEWAYS_NAME, gateways); secrets.clear?.(`controller.gateway.${gatewayId}`);
     return { ok: true, restartRequired: true };
   });
-  api.get('/gateways', () => ({ ok: true, gateways: service.listLiveGateways() }));
+  api.get('/gateways', () => ({ ok: true, gateways: service.listGateways?.() ?? service.listLiveGateways() }));
+  api.get('/operations', ({ query = {} } = {}) => {
+    const requested = Number(query.limit ?? 50);
+    const limit = Number.isInteger(requested) ? Math.max(1, Math.min(256, requested)) : 50;
+    const gatewayId = query.gatewayId == null || query.gatewayId === '' ? null : cleanId(query.gatewayId);
+    return { ok: true, operations: service.listOperationActivity?.({ gatewayId, limit }) ?? [], limit };
+  });
   api.post('/gateways/:gatewayId/processes', async ({ params, body = {} }) => {
     const operationId = String(body.operationId ?? '').trim();
     if (!OPERATION_ID.test(operationId)) throw problem('operation_id_invalid');

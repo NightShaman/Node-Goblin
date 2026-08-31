@@ -4,6 +4,28 @@ import tls from 'node:tls';
 
 const AUTH_CONTEXT = 'burrow-host-gateway-auth-v1';
 const MAX_FRAME_BYTES = 2 * 1024 * 1024;
+const DEFAULT_ACTIVITY_LIMIT = 256;
+
+function optionalText(value, max = 255) {
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null;
+}
+
+function safeGatewayMetadata(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { name: null, version: null, protocolVersion: null };
+  return { name: optionalText(value.name), version: optionalText(value.version), protocolVersion: optionalText(value.protocolVersion) };
+}
+
+function operationOutcome(message) {
+  const outcome = message?.result?.outcome;
+  if (message?.ok === false) return { terminalOutcome: optionalText(message?.error?.code, 128) || 'failed', durationMs: null };
+  if (!outcome || typeof outcome !== 'object') return { terminalOutcome: message?.result?.cancelling ? 'cancelling' : 'completed', durationMs: null };
+  let terminalOutcome = 'completed';
+  if (outcome.timedOut === true) terminalOutcome = 'timed_out';
+  else if (outcome.cancelled === true) terminalOutcome = 'cancelled';
+  else if (typeof outcome.exitCode === 'number' && outcome.exitCode !== 0) terminalOutcome = 'failed';
+  else if (outcome.ok === false) terminalOutcome = 'failed';
+  return { terminalOutcome, durationMs: Number.isFinite(outcome.durationMs) ? outcome.durationMs : null };
+}
 
 function requireText(value, name) {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`missing_${name}`);
@@ -57,6 +79,9 @@ class GatewayConnection extends EventEmitter {
     this.buffer = '';
     this.gatewayId = null;
     this.controllerId = null;
+    this.gatewayMetadata = { name: null, version: null, protocolVersion: null };
+    this.connectedAt = new Date().toISOString();
+    this.lastSeenAt = this.connectedAt;
     this.nonce = nonce;
     this.pendingRequests = new Map();
     this.activeOperationRequests = new Map();
@@ -90,6 +115,7 @@ class GatewayConnection extends EventEmitter {
   }
 
   onLine(line) {
+    this.lastSeenAt = new Date().toISOString();
     let message;
     try { message = JSON.parse(line); } catch {
       return this.state === 'ready'
@@ -117,6 +143,7 @@ class GatewayConnection extends EventEmitter {
     if (!this.listener.bindGatewayIdentity(gatewayId, this)) return this.fail('gateway_already_connected');
     this.gatewayId = gatewayId;
     this.controllerId = controllerId;
+    this.gatewayMetadata = safeGatewayMetadata(message.gateway);
     this.state = 'ready';
     this.health = { status: 'ok', activeOperations: [] };
     this.send({ type: 'auth.ok', connectionId: this.connectionId });
@@ -132,6 +159,7 @@ class GatewayConnection extends EventEmitter {
         this.activeOperationRequests.set(message.operationId, pending.requestId);
       }
       this.health.activeOperations = [...this.activeOperationRequests.keys()];
+      this.listener.recordAccepted(this.gatewayId, pending, message);
       this.listener.emit('gatewayAccepted', { gatewayId: this.gatewayId, message });
       return;
     }
@@ -142,6 +170,7 @@ class GatewayConnection extends EventEmitter {
         const operationId = message?.result?.operationId || message?.error?.operationId;
         if (operationId) this.activeOperationRequests.delete(operationId);
         this.health.activeOperations = [...this.activeOperationRequests.keys()];
+        this.listener.recordResponse(this.gatewayId, pending, message);
         pending.resolve({ accepted: pending.accepted ?? null, response: message, events: [...pending.events] });
       }
       if (message?.result?.activeOperations) this.health = message.result;
@@ -152,6 +181,7 @@ class GatewayConnection extends EventEmitter {
       const pending = this.pendingRequests.get(message.requestId);
       if (pending) {
         this.pendingRequests.delete(message.requestId);
+        this.listener.recordResponse(this.gatewayId, pending, message);
         pending.reject(Object.assign(new Error(message?.error?.code || 'gateway_error'), { code: message?.error?.code || 'gateway_error', envelope: message }));
       }
       this.listener.emit('gatewayProtocolError', { gatewayId: this.gatewayId, message });
@@ -170,12 +200,13 @@ class GatewayConnection extends EventEmitter {
   dispatch(method, params = {}) {
     if (this.state !== 'ready') return Promise.reject(Object.assign(new Error('gateway_not_ready'), { code: 'gateway_not_ready' }));
     const requestId = crypto.randomUUID();
-    const entry = { requestId, accepted: null, events: [], resolve: null, reject: null };
+    const entry = { requestId, method, operationId: optionalText(params.operationId, 256), startedAt: new Date().toISOString(), accepted: null, events: [], resolve: null, reject: null };
     const promise = new Promise((resolve, reject) => {
       entry.resolve = resolve;
       entry.reject = reject;
     });
     this.pendingRequests.set(requestId, entry);
+    this.listener.recordDispatch(this.gatewayId, entry);
     const hasProtectedValues = params.protectedValues && Object.keys(params.protectedValues).length > 0;
     const boundParams = hasProtectedValues ? {
       ...params,
@@ -195,7 +226,10 @@ class GatewayConnection extends EventEmitter {
     this.state = 'closed';
     this.health = { status: 'disconnected', activeOperations: [] };
     const error = disconnectError(this.gatewayId ?? 'unknown');
-    for (const pending of this.pendingRequests.values()) pending.reject(error);
+    for (const pending of this.pendingRequests.values()) {
+      this.listener.recordDisconnected(this.gatewayId, pending);
+      pending.reject(error);
+    }
     this.pendingRequests.clear();
     this.activeOperationRequests.clear();
     this.listener.emit('gatewayDisconnected', { gatewayId: this.gatewayId, connection: this });
@@ -203,10 +237,13 @@ class GatewayConnection extends EventEmitter {
 }
 
 export class GatewayControllerListener extends EventEmitter {
-  constructor({ gateways = [], serverOptions = {}, tlsServer = tls.createServer, nonceFactory = challengeNonce } = {}) {
+  constructor({ gateways = [], serverOptions = {}, tlsServer = tls.createServer, nonceFactory = challengeNonce, activityLimit = DEFAULT_ACTIVITY_LIMIT } = {}) {
     super();
     this.gatewayRecords = toGatewayRecords(gateways);
     this.connections = new Map();
+    this.gatewayHealth = new Map([...this.gatewayRecords.keys()].map((gatewayId) => [gatewayId, { gatewayId, status: 'disconnected', connected: false, connectedAt: null, lastSeenAt: null, activeOperations: [], name: null, version: null, protocolVersion: null }]));
+    this.activityLimit = Math.max(1, Math.min(1000, Number(activityLimit) || DEFAULT_ACTIVITY_LIMIT));
+    this.activity = [];
     this.nonceFactory = nonceFactory;
     this.server = tlsServer(serverOptions, (socket) => this.onSocket(socket));
     this.server.on('tlsClientError', (error, socket) => this.emit('tlsClientError', { error, socket }));
@@ -226,7 +263,11 @@ export class GatewayControllerListener extends EventEmitter {
   }
 
   unbindGatewayIdentity(connection) {
-    if (connection.gatewayId && this.connections.get(connection.gatewayId) === connection) this.connections.delete(connection.gatewayId);
+    if (connection.gatewayId && this.connections.get(connection.gatewayId) === connection) {
+      this.connections.delete(connection.gatewayId);
+      const previous = this.gatewayHealth.get(connection.gatewayId) || {};
+      this.gatewayHealth.set(connection.gatewayId, { ...previous, gatewayId: connection.gatewayId, status: 'disconnected', connected: false, connectedAt: null, lastSeenAt: connection.lastSeenAt, activeOperations: [] });
+    }
   }
 
   listen(...args) {
@@ -243,12 +284,59 @@ export class GatewayControllerListener extends EventEmitter {
     return this.connections.get(gatewayId) ?? null;
   }
 
+  gatewaySnapshot(gatewayId, connection) {
+    const snapshot = {
+      gatewayId, status: connection.health.status, connected: true,
+      connectedAt: connection.connectedAt, lastSeenAt: connection.lastSeenAt,
+      activeOperations: [...connection.health.activeOperations], ...connection.gatewayMetadata,
+    };
+    this.gatewayHealth.set(gatewayId, snapshot);
+    return { ...snapshot, activeOperations: [...snapshot.activeOperations] };
+  }
+
   listLiveGateways() {
     return [...this.connections.entries()].map(([gatewayId, connection]) => ({
-      gatewayId,
-      status: connection.health.status,
-      activeOperations: [...connection.health.activeOperations],
+      gatewayId, status: connection.health.status, activeOperations: [...connection.health.activeOperations],
     }));
+  }
+
+  listGateways() {
+    for (const [gatewayId, connection] of this.connections) this.gatewaySnapshot(gatewayId, connection);
+    return [...this.gatewayHealth.values()].map((entry) => ({ ...entry, activeOperations: [...entry.activeOperations] }));
+  }
+
+  putActivity(entry) {
+    const index = this.activity.findIndex((value) => value.gatewayId === entry.gatewayId && value.operationId === entry.operationId);
+    if (index >= 0) this.activity.splice(index, 1);
+    this.activity.push(Object.freeze({ ...entry }));
+    while (this.activity.length > this.activityLimit) this.activity.shift();
+  }
+
+  recordDispatch(gatewayId, pending) {
+    if (!pending.operationId || pending.method === 'cancel') return;
+    this.putActivity({ gatewayId, operationId: pending.operationId, kind: pending.method === 'filesystem.execute' ? 'filesystem' : 'process', state: 'dispatching', replay: false, reconnectRequired: false, terminalOutcome: null, startedAt: pending.startedAt, endedAt: null, durationMs: null });
+  }
+
+  recordAccepted(gatewayId, pending, message) {
+    if (!pending?.operationId) return;
+    this.putActivity({ ...(this.activity.find((entry) => entry.gatewayId === gatewayId && entry.operationId === pending.operationId) || {}), gatewayId, operationId: pending.operationId, kind: pending.method === 'filesystem.execute' ? 'filesystem' : 'process', state: 'running', replay: false, reconnectRequired: false, terminalOutcome: null, startedAt: pending.startedAt, acceptedAt: new Date().toISOString(), endedAt: null, durationMs: null });
+  }
+
+  recordResponse(gatewayId, pending, message) {
+    if (!pending?.operationId || pending.method === 'cancel') return;
+    const endedAt = new Date().toISOString();
+    const outcome = operationOutcome(message);
+    this.putActivity({ ...(this.activity.find((entry) => entry.gatewayId === gatewayId && entry.operationId === pending.operationId) || {}), gatewayId, operationId: pending.operationId, kind: pending.method === 'filesystem.execute' ? 'filesystem' : 'process', state: 'terminal', replay: message?.result?.replay === true, reconnectRequired: false, terminalOutcome: outcome.terminalOutcome, startedAt: pending.startedAt, endedAt, durationMs: outcome.durationMs ?? Math.max(0, Date.parse(endedAt) - Date.parse(pending.startedAt)) });
+  }
+
+  recordDisconnected(gatewayId, pending) {
+    if (!pending?.operationId || pending.method === 'cancel') return;
+    this.putActivity({ ...(this.activity.find((entry) => entry.gatewayId === gatewayId && entry.operationId === pending.operationId) || {}), gatewayId, operationId: pending.operationId, kind: pending.method === 'filesystem.execute' ? 'filesystem' : 'process', state: 'interrupted', replay: false, reconnectRequired: true, terminalOutcome: null, startedAt: pending.startedAt, endedAt: null, durationMs: null });
+  }
+
+  listOperationActivity({ gatewayId = null, limit = 50 } = {}) {
+    const bounded = Math.max(1, Math.min(this.activityLimit, Number(limit) || 50));
+    return this.activity.filter((entry) => !gatewayId || entry.gatewayId === gatewayId).slice(-bounded).reverse().map((entry) => ({ ...entry }));
   }
 
   dispatchProcessExec(gatewayId, params = {}) {

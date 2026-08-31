@@ -64,6 +64,7 @@ function authenticate(socket, overrides = {}) {
     gatewayId,
     controllerId,
     proof: overrides.proof ?? controllerAuthenticationProof('shared-secret', gatewayId, challenge.nonce),
+    ...(overrides.gateway ? { gateway: overrides.gateway } : {}),
   });
 }
 
@@ -167,4 +168,50 @@ test('dispatches cancellation and reports malformed frames without corrupting li
   } finally {
     listener.close();
   }
+});
+
+
+test('exposes gateway version and connection health metadata plus bounded safe operation activity', async () => {
+  const { listener, server } = listenerFixture({ activityLimit: 2 });
+  const socket = server.connect();
+  try {
+    authenticate(socket, { gateway: { name: 'burrow-host-gateway', version: '1.2.3', protocolVersion: '1.0', secret: 'ignored' } });
+    const gateway = listener.listGateways()[0];
+    assert.equal(gateway.connected, true);
+    assert.equal(gateway.version, '1.2.3');
+    assert.equal(gateway.protocolVersion, '1.0');
+    assert.equal(typeof gateway.connectedAt, 'string');
+    assert.equal(typeof gateway.lastSeenAt, 'string');
+    assert.equal(JSON.stringify(gateway).includes('ignored'), false);
+
+    const dispatch = listener.dispatchProcessExec('gateway-1', { operationId: 'activity-op', command: 'echo secret', protectedValues: { TOKEN: 'protected-secret' } });
+    const outbound = socket.messages().find((message) => message.method === 'process.exec');
+    socket.feed({ type: 'accepted', requestId: outbound.id, ok: true, operationId: 'activity-op' });
+    socket.feed({ type: 'response', requestId: outbound.id, ok: true, result: { operationId: 'activity-op', replay: true, outcome: { type: 'process.result', exitCode: 0, durationMs: 7, stdout: 'unbounded output' } } });
+    await dispatch;
+    const activity = listener.listOperationActivity({ limit: 100 });
+    assert.deepEqual(activity.map(({ gatewayId, operationId, kind, state, replay, reconnectRequired, terminalOutcome, durationMs }) => ({ gatewayId, operationId, kind, state, replay, reconnectRequired, terminalOutcome, durationMs })), [
+      { gatewayId: 'gateway-1', operationId: 'activity-op', kind: 'process', state: 'terminal', replay: true, reconnectRequired: false, terminalOutcome: 'completed', durationMs: 7 },
+    ]);
+    assert.equal(JSON.stringify(activity).includes('echo secret'), false);
+    assert.equal(JSON.stringify(activity).includes('protected-secret'), false);
+    assert.equal(JSON.stringify(activity).includes('unbounded output'), false);
+  } finally { listener.close(); }
+});
+
+test('retains disconnected last-seen health and marks pending operations reconnect-required', async () => {
+  const { listener, server } = listenerFixture();
+  const socket = server.connect();
+  authenticate(socket, { gateway: { version: '1.2.3' } });
+  const pending = listener.dispatchProcessExec('gateway-1', { operationId: 'interrupted-op', command: 'sleep 1' });
+  socket.destroy();
+  await assert.rejects(pending, /disconnected/);
+  const gateway = listener.listGateways()[0];
+  assert.equal(gateway.connected, false);
+  assert.equal(gateway.status, 'disconnected');
+  assert.equal(typeof gateway.lastSeenAt, 'string');
+  const activity = listener.listOperationActivity()[0];
+  assert.equal(activity.state, 'interrupted');
+  assert.equal(activity.reconnectRequired, true);
+  listener.close();
 });

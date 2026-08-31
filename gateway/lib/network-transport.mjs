@@ -154,6 +154,11 @@ export class OutboundGatewayTransport extends EventEmitter {
           gatewayId: this.gatewayId,
           controllerId: this.trust.controllerId,
           proof: authenticationProof(this.trust.secret, this.gatewayId, message.nonce),
+          gateway: {
+            name: this.daemon.identity.name,
+            version: this.daemon.identity.version,
+            protocolVersion: this.daemon.identity.protocolVersion,
+          },
         });
         this.proofSent = true;
         return;

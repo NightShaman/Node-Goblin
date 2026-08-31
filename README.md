@@ -294,3 +294,13 @@ sudo ./deploy/uninstall.sh
 ```
 
 For package testing without root or systemd, the installer supports a non-production staging mode: `./deploy/install.sh --root /tmp/stage --skip-account --no-systemd`.
+
+### Operational metadata and activity
+
+Operational responses expose status without exposing credentials:
+
+- `GET /controller` includes `tls.configured`, `tls.ready`, and per-component `keyConfigured`, `certConfigured`, and `caConfigured` booleans. `ready` means the current listener is running with key and certificate; no key, certificate, CA, enrollment secret, or protected binding value is returned.
+- `GET /gateways` preserves the gateway inventory route and now includes configured disconnected gateways as well as live gateways. Entries include `gatewayId`, connection `status`, `connected`, `connectedAt`, `lastSeenAt`, active operation IDs, and the gateway-advertised `name`, `version`, and `protocolVersion` when available.
+- `GET /operations?gatewayId=<id>&limit=<1..256>` returns newest-first bounded controller activity. Each item contains only UI-safe provenance: `gatewayId`, `operationId`, `kind`, `state`, replay/reconnect flags, terminal outcome, timestamps, and duration where available. The listener retains at most 256 items by default. Request parameters, prompts, protected values/bindings, and stdout/stderr are never included.
+
+Gateway version metadata is advertised in the authenticated challenge response and accepted only after the existing HMAC proof succeeds. Older gateways that omit it remain compatible and report null version fields. A pending operation interrupted by disconnect is reported as `interrupted` with `reconnectRequired: true`; replay after reconnect becomes a terminal activity with `replay: true`.

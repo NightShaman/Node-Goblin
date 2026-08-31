@@ -15,7 +15,7 @@ const target = { id: 'aap-host', name: 'AAP Host', baseUrl: 'http://127.0.0.1:42
 
 test('retains legacy target registry API while adding controller operational routes', async () => {
   const value = await readyHarness({ controllerService: { state: () => ({ enabled: false, host: '127.0.0.1', port: 7443, running: false }), listLiveGateways: () => [], close() {} } });
-  assert.deepEqual([...value.routes.keys()], ['GET /targets', 'POST /targets', 'PUT /targets/:id', 'DELETE /targets/:id', 'GET /controller', 'PUT /controller', 'PUT /controller/tls', 'DELETE /controller/tls', 'GET /gateway-trust', 'PUT /gateway-trust/:gatewayId', 'DELETE /gateway-trust/:gatewayId', 'GET /gateways', 'POST /gateways/:gatewayId/processes', 'POST /gateways/:gatewayId/operations/:operationId/cancel']);
+  assert.deepEqual([...value.routes.keys()], ['GET /targets', 'POST /targets', 'PUT /targets/:id', 'DELETE /targets/:id', 'GET /controller', 'PUT /controller', 'PUT /controller/tls', 'DELETE /controller/tls', 'GET /gateway-trust', 'PUT /gateway-trust/:gatewayId', 'DELETE /gateway-trust/:gatewayId', 'GET /gateways', 'GET /operations', 'POST /gateways/:gatewayId/processes', 'POST /gateways/:gatewayId/operations/:operationId/cancel']);
   const created = value.routes.get('POST /targets')({ body: target });
   assert.equal(created.status, 201); assert.deepEqual(created.body, { ok: true, target }); assert.deepEqual(value.values.get('targets'), [target]);
   assert.deepEqual(value.routes.get('GET /targets')({}), { ok: true, targets: [target] });
@@ -38,12 +38,15 @@ test('exposes live inventory and preserves gateway operation correlation for dis
   const calls = []; const service = {
     state: () => ({ enabled: true, host: '127.0.0.1', port: 7443, running: true }),
     listLiveGateways: () => [{ gatewayId: 'host-1', status: 'ok', activeOperations: ['op-1'] }],
+    listGateways: () => [{ gatewayId: 'host-1', status: 'ok', connected: true, version: '1.0.0', lastSeenAt: '2025-01-01T00:00:00.000Z', activeOperations: ['op-1'] }],
+    listOperationActivity: ({ limit }) => [{ gatewayId: 'host-1', operationId: 'op-1', kind: 'process', state: 'running', replay: false, reconnectRequired: false, terminalOutcome: null, durationMs: null }].slice(0, limit),
     dispatchProcessExec: async (gatewayId, body) => (calls.push(['exec', gatewayId, body]), { accepted: { operationId: body.operationId }, response: { result: { operationId: body.operationId } } }),
     dispatchCancel: async (gatewayId, operationId) => (calls.push(['cancel', gatewayId, operationId]), { response: { result: { operationId, cancelling: true } } }), close() {},
   };
   const value = await readyHarness({ controllerService: service });
   assert.deepEqual(value.routes.get('GET /controller')({}), { ok: true, controller: service.state() });
-  assert.deepEqual(value.routes.get('GET /gateways')({}), { ok: true, gateways: service.listLiveGateways() });
+  assert.deepEqual(value.routes.get('GET /gateways')({}), { ok: true, gateways: service.listGateways() });
+  assert.deepEqual(value.routes.get('GET /operations')({ query: { limit: '999' } }), { ok: true, operations: service.listOperationActivity({ gatewayId: null, limit: 256 }), limit: 256 });
   const dispatched = await value.routes.get('POST /gateways/:gatewayId/processes')({ params: { gatewayId: 'host-1' }, body: { operationId: 'op-1', executable: '/bin/echo', args: ['hi'] } });
   assert.equal(dispatched.operationId, 'op-1'); assert.deepEqual(calls[0], ['exec', 'host-1', { operationId: 'op-1', executable: '/bin/echo', args: ['hi'] }]);
   await value.routes.get('POST /gateways/:gatewayId/operations/:operationId/cancel')({ params: { gatewayId: 'host-1', operationId: 'op-1' } });
@@ -53,6 +56,7 @@ test('exposes live inventory and preserves gateway operation correlation for dis
 
 test('administers controller trust and TLS through secrets without returning material and declares restart lifecycle', async () => {
   const value = await readyHarness();
+  assert.deepEqual(value.routes.get('GET /controller')({}).controller.tls, { configured: false, ready: false, keyConfigured: false, certConfigured: false, caConfigured: false });
   assert.deepEqual(value.routes.get('PUT /controller')({ body: { enabled: true, host: '0.0.0.0', port: 8443 } }), { ok: true, controller: { enabled: true, host: '0.0.0.0', port: 8443 }, restartRequired: true });
   const tlsResult = value.routes.get('PUT /controller/tls')({ body: { key: 'PRIVATE', cert: 'CERT', ca: 'CA' } });
   assert.deepEqual(tlsResult, { ok: true, restartRequired: true }); assert.equal(JSON.stringify(tlsResult).includes('PRIVATE'), false);
@@ -132,7 +136,7 @@ test('controller service starts only from encrypted secrets, never exposes them,
       return { listen() {}, close() { closed = true; }, listLiveGateways: () => [], dispatchProcessExec: async () => ({ response: { result: { diagnostic: 'shared-secret' } } }) };
     },
   });
-  assert.deepEqual(service.state(), { enabled: true, host: '127.0.0.1', port: 7443, running: true }); assert.equal(options.gateways[0].secret, 'shared-secret'); assert.equal(JSON.stringify(service.state()).includes('secret'), false);
+  assert.deepEqual(service.state(), { enabled: true, host: '127.0.0.1', port: 7443, running: true, tls: { configured: true, ready: true, keyConfigured: true, certConfigured: true, caConfigured: false } }); assert.equal(options.gateways[0].secret, 'shared-secret'); assert.equal(JSON.stringify(service.state()).includes('secret'), false);
   assert.equal(JSON.stringify(await service.dispatchProcessExec('host-1', { operationId: 'op-1' })).includes('shared-secret'), false); service.close(); assert.equal(closed, true);
 });
 
