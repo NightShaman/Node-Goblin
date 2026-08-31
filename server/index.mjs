@@ -105,6 +105,93 @@ function serviceError(error) {
   return problem(code, statusCode);
 }
 
+function dispatchError(envelope) {
+  const detail = envelope?.error || {};
+  const error = new Error(detail.code || 'gateway_dispatch_failed');
+  error.code = detail.code || 'gateway_dispatch_failed';
+  error.operationId = detail.operationId;
+  error.envelope = envelope;
+  return error;
+}
+
+function terminalEvidence(dispatch) {
+  const terminal = dispatch?.events?.findLast?.((event) => event?.type === 'process.terminal');
+  return terminal?.evidence ?? dispatch?.response?.result?.outcome ?? null;
+}
+
+/** Map authenticated gateway evidence to the result shape consumed by shell_exec callers. */
+export function shellExecResult(request, dispatch) {
+  const response = dispatch?.response;
+  if (!response?.ok) throw dispatchError(response);
+  const evidence = terminalEvidence(dispatch);
+  if (!evidence || evidence.type !== 'process.result') throw Object.assign(new Error('gateway_terminal_evidence_missing'), { code: 'gateway_terminal_evidence_missing' });
+  const operationId = request.operationId;
+  const correlatedIds = [dispatch?.accepted?.operationId, response?.result?.operationId,
+    ...(dispatch?.events || []).filter((event) => event?.type === 'process.terminal').map((event) => event.operationId),
+  ].filter((value) => value != null);
+  if (correlatedIds.some((value) => value !== operationId)) throw Object.assign(new Error('gateway_operation_id_mismatch'), { code: 'gateway_operation_id_mismatch' });
+  const stdout = String(evidence.stdout ?? '');
+  const stderr = String(evidence.stderr ?? '');
+  const cancelled = evidence.cancelled === true;
+  const timedOut = evidence.timedOut === true;
+  return {
+    tool: 'shell_exec',
+    ok: evidence.exitCode === 0 && !cancelled && !timedOut,
+    command: request.process.command,
+    reason: null,
+    cwd: evidence.cwd ?? request.process.cwd ?? null,
+    exitCode: evidence.exitCode ?? null,
+    signal: evidence.signal ?? null,
+    timedOut,
+    cancelled,
+    killed: evidence.signal != null,
+    durationMs: evidence.durationMs ?? null,
+    stdout,
+    stderr,
+    stdoutTruncated: evidence.truncated === true,
+    stderrTruncated: evidence.truncated === true,
+    stdoutOriginalChars: stdout.length,
+    stderrOriginalChars: stderr.length,
+    error: null,
+    artifacts: null,
+    operationId,
+    gatewayId: request.gatewayId,
+  };
+}
+
+/** Adapt the backend's correlated remote request to the existing gateway controller service. */
+export function createProcessController(service, { logger = console } = {}) {
+  if (!service || typeof service.dispatchProcessExec !== 'function' || typeof service.dispatchCancel !== 'function') throw new Error('controller_service_invalid');
+  return Object.freeze({
+    async executeProcess(request = {}, { abortSignal = null } = {}) {
+      const operationId = String(request.operationId ?? '').trim();
+      const gatewayId = String(request.gatewayId ?? '').trim();
+      if (!OPERATION_ID.test(operationId)) throw new Error('operation_id_invalid');
+      if (!gatewayId) throw new Error('gateway_id_required');
+      if (!request.process || typeof request.process.command !== 'string' || !request.process.command.trim()) throw new Error('command_required');
+      const params = { operationId, command: request.process.command };
+      if (request.process.cwd) params.cwd = String(request.process.cwd);
+      if (request.process.env) params.env = { ...request.process.env };
+      if (request.process.timeoutMs != null) params.timeoutMs = Number(request.process.timeoutMs);
+      let cancelPromise = null;
+      const cancel = () => {
+        if (!cancelPromise) cancelPromise = Promise.resolve(service.dispatchCancel(gatewayId, operationId)).catch((error) => {
+          logger.warn?.(`Remote Nodes cancellation dispatch failed: ${String(error?.message || error)}`);
+        });
+      };
+      const dispatchPromise = service.dispatchProcessExec(gatewayId, params);
+      if (abortSignal?.aborted) cancel();
+      else abortSignal?.addEventListener('abort', cancel, { once: true });
+      try {
+        const dispatch = await dispatchPromise;
+        return shellExecResult(request, dispatch);
+      } finally {
+        abortSignal?.removeEventListener?.('abort', cancel);
+      }
+    },
+  });
+}
+
 /** Controller listener lifecycle kept separate from HTTP route registration for testability and future host cleanup support. */
 export function createControllerService({ settings, secrets, listenerFactory = (options) => new GatewayControllerListener(options), logger = console } = {}) {
   const config = storedControllerConfig(settings);
@@ -143,8 +230,9 @@ export function createControllerService({ settings, secrets, listenerFactory = (
   });
 }
 
-export async function activate({ api, settings, secrets, logger, controllerService, listenerFactory } = {}) {
+export async function activate({ api, settings, secrets, logger, processExecution, controllerService, listenerFactory } = {}) {
   const service = controllerService ?? createControllerService({ settings, secrets, listenerFactory, logger });
+  const unregisterController = processExecution?.registerController?.(createProcessController(service, { logger }));
   api.get('/targets', () => ({ ok: true, targets: storedTargets(settings) }));
   api.post('/targets', ({ body = {} }) => {
     const targets = storedTargets(settings); const target = cleanTarget(body);
@@ -207,6 +295,10 @@ export async function activate({ api, settings, secrets, logger, controllerServi
     try { return { ok: true, operationId: params.operationId, dispatch: await service.dispatchCancel(params.gatewayId, params.operationId) }; }
     catch (error) { throw serviceError(error); }
   });
-  // Current Burrow runtime does not invoke a deactivate hook. Returning close makes cleanup available to a lifecycle-aware host.
-  return Object.freeze({ close: service.close });
+  return Object.freeze({
+    close() {
+      unregisterController?.();
+      service.close();
+    },
+  });
 }

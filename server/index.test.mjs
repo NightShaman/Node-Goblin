@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { activate, createControllerService } from './index.mjs';
+import { activate, createControllerService, createProcessController } from './index.mjs';
 
 function harness() {
   const routes = new Map(); const api = {};
@@ -64,6 +64,61 @@ test('administers controller trust and TLS through secrets without returning mat
   value.routes.get('DELETE /controller/tls')({}); assert.equal(value.secretValues.has('controller.tls.key'), false);
   assert.throws(() => value.routes.get('PUT /gateway-trust/:gatewayId')({ params: { gatewayId: 'bad/id' }, body: { secret: 'x' } }), /target_id_invalid/);
   assert.throws(() => value.routes.get('PUT /controller/tls')({ body: { key: '', cert: 'CERT' } }), /controller_tls_credentials_required/);
+});
+
+test('registers a process controller without changing legacy routes and unregisters it on close', async () => {
+  const value = harness();
+  const service = { state: () => ({}), listLiveGateways: () => [], dispatchProcessExec() {}, dispatchCancel() {}, close() { service.closed = true; } };
+  let controller; let unregistered = false;
+  const lifecycle = await activate({ ...value, controllerService: service, processExecution: { registerController(candidate) { controller = candidate; return () => { unregistered = true; }; } } });
+  assert.equal(typeof controller.executeProcess, 'function');
+  assert.equal(value.routes.has('GET /targets'), true);
+  lifecycle.close();
+  assert.equal(unregistered, true);
+  assert.equal(service.closed, true);
+});
+
+test('process controller dispatches correlated shell command and maps terminal evidence', async () => {
+  const calls = [];
+  const evidence = { type: 'process.result', cwd: '/repo', exitCode: 0, signal: null, timedOut: false, cancelled: false, truncated: false, durationMs: 12, stdout: 'ok\n', stderr: '' };
+  const service = {
+    async dispatchProcessExec(gatewayId, params) {
+      calls.push(['exec', gatewayId, params]);
+      return { accepted: { operationId: params.operationId }, events: [{ type: 'process.terminal', operationId: params.operationId, evidence }], response: { ok: true, result: { operationId: params.operationId, outcome: evidence } } };
+    },
+    async dispatchCancel(gatewayId, operationId) { calls.push(['cancel', gatewayId, operationId]); },
+  };
+  const result = await createProcessController(service).executeProcess({ operationId: 'shell-abc', gatewayId: 'host-1', parentRunId: 'run-1', toolCallId: 'call-1', process: { command: 'printf ok', cwd: '/repo', env: { A: 'b' }, timeoutMs: 42 } });
+  assert.deepEqual(calls, [['exec', 'host-1', { operationId: 'shell-abc', command: 'printf ok', cwd: '/repo', env: { A: 'b' }, timeoutMs: 42 }]]);
+  assert.deepEqual(result, { tool: 'shell_exec', ok: true, command: 'printf ok', reason: null, cwd: '/repo', exitCode: 0, signal: null, timedOut: false, cancelled: false, killed: false, durationMs: 12, stdout: 'ok\n', stderr: '', stdoutTruncated: false, stderrTruncated: false, stdoutOriginalChars: 3, stderrOriginalChars: 0, error: null, artifacts: null, operationId: 'shell-abc', gatewayId: 'host-1' });
+});
+
+test('process controller uses response outcome for replay and rejects failed or uncorrelated evidence', async () => {
+  const request = { operationId: 'shell-replay', gatewayId: 'host-1', process: { command: 'false' } };
+  const evidence = { type: 'process.result', exitCode: 7, stdout: '', stderr: 'no', cancelled: false, timedOut: false };
+  const replay = createProcessController({ dispatchProcessExec: async () => ({ response: { ok: true, result: { operationId: 'shell-replay', replay: true, outcome: evidence } } }), dispatchCancel() {} });
+  assert.equal((await replay.executeProcess(request)).ok, false);
+  const failed = createProcessController({ dispatchProcessExec: async () => ({ response: { ok: false, error: { code: 'operation_id_conflict', operationId: 'shell-replay' } } }), dispatchCancel() {} });
+  await assert.rejects(failed.executeProcess(request), (error) => error.code === 'operation_id_conflict');
+  const mismatch = createProcessController({ dispatchProcessExec: async () => ({ response: { ok: true, result: { operationId: 'other', outcome: evidence } } }), dispatchCancel() {} });
+  await assert.rejects(mismatch.executeProcess(request), (error) => error.code === 'gateway_operation_id_mismatch');
+});
+
+test('process controller propagates AbortSignal cancellation with the same operation id', async () => {
+  const calls = []; let resolveDispatch;
+  const service = {
+    dispatchProcessExec: (gatewayId, params) => (calls.push(['exec', gatewayId, params.operationId]), new Promise((resolve) => { resolveDispatch = resolve; })),
+    dispatchCancel: async (gatewayId, operationId) => { calls.push(['cancel', gatewayId, operationId]); },
+  };
+  const abort = new AbortController();
+  const pending = createProcessController(service).executeProcess({ operationId: 'shell-cancel', gatewayId: 'host-1', process: { command: 'sleep 10' } }, { abortSignal: abort.signal });
+  abort.abort();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls.slice(0, 2), [['exec', 'host-1', 'shell-cancel'], ['cancel', 'host-1', 'shell-cancel']]);
+  const evidence = { type: 'process.result', exitCode: null, signal: 'SIGTERM', stdout: '', stderr: '', cancelled: true, timedOut: false };
+  resolveDispatch({ response: { ok: true, result: { operationId: 'shell-cancel', outcome: evidence } } });
+  const result = await pending;
+  assert.equal(result.cancelled, true); assert.equal(result.ok, false);
 });
 
 test('controller service starts only from encrypted secrets, never exposes them, redacts dispatch evidence, and closes listener', async () => {
