@@ -1,4 +1,5 @@
-import { GatewayControllerListener } from '../gateway/index.mjs';
+import { createHash } from 'node:crypto';
+import { GatewayControllerListener, canonicalize } from '../gateway/index.mjs';
 
 const SETTINGS_NAME = 'targets';
 const CONTROLLER_SETTINGS_NAME = 'controller';
@@ -114,6 +115,48 @@ function dispatchError(envelope) {
   return error;
 }
 
+const OPERATIONS_NAME = 'controllerOperations';
+
+function requestDigest(value) {
+  return createHash('sha256').update(canonicalize(value)).digest('hex');
+}
+
+/** Durable controller-owned correlation. The gateway journal remains authoritative for execution replay. */
+export function createOperationCorrelationStore(settings) {
+  const read = () => {
+    const value = settings?.get?.(OPERATIONS_NAME, []);
+    return Array.isArray(value) ? value : [];
+  };
+  const write = (record) => {
+    const records = read();
+    const index = records.findIndex((entry) => entry.operationId === record.operationId);
+    if (index < 0) records.push(record); else records[index] = record;
+    settings?.set?.(OPERATIONS_NAME, records);
+    return record;
+  };
+  return Object.freeze({
+    begin(request, kind, payload) {
+      const digest = requestDigest(payload);
+      const existing = read().find((entry) => entry.operationId === request.operationId);
+      if (existing && (existing.requestDigest !== digest || existing.gatewayId !== request.gatewayId || existing.kind !== kind)) {
+        throw Object.assign(new Error('operation_correlation_conflict'), { code: 'operation_correlation_conflict' });
+      }
+      return existing || write({ operationId: request.operationId, parentRunId: request.parentRunId, toolCallId: request.toolCallId,
+        gatewayId: request.gatewayId, kind, requestDigest: digest, state: 'dispatching', terminalReference: null, updatedAt: new Date().toISOString() });
+    },
+    terminal(operationId, dispatch) {
+      const existing = read().find((entry) => entry.operationId === operationId);
+      if (!existing) throw new Error('operation_correlation_missing');
+      const result = dispatch?.response?.result || {};
+      return write({ ...existing, state: 'terminal', terminalReference: {
+        operationId: result.operationId || operationId, replay: result.replay === true,
+        outcomeDigest: requestDigest(result.outcome ?? null),
+      }, updatedAt: new Date().toISOString() });
+    },
+    get(operationId) { return read().find((entry) => entry.operationId === operationId) || null; },
+  });
+}
+
 function terminalEvidence(dispatch) {
   const terminal = dispatch?.events?.findLast?.((event) => event?.type === 'process.terminal');
   return terminal?.evidence ?? dispatch?.response?.result?.outcome ?? null;
@@ -160,7 +203,7 @@ export function shellExecResult(request, dispatch) {
 }
 
 /** Adapt the backend's correlated remote request to the existing gateway controller service. */
-export function createProcessController(service, { logger = console } = {}) {
+export function createProcessController(service, { logger = console, operationStore = null } = {}) {
   if (!service || typeof service.dispatchProcessExec !== 'function' || typeof service.dispatchCancel !== 'function') throw new Error('controller_service_invalid');
   return Object.freeze({
     async executeProcess(request = {}, { abortSignal = null } = {}) {
@@ -179,12 +222,15 @@ export function createProcessController(service, { logger = console } = {}) {
           logger.warn?.(`Remote Nodes cancellation dispatch failed: ${String(error?.message || error)}`);
         });
       };
+      operationStore?.begin(request, 'process', params);
       const dispatchPromise = service.dispatchProcessExec(gatewayId, params);
       if (abortSignal?.aborted) cancel();
       else abortSignal?.addEventListener('abort', cancel, { once: true });
       try {
         const dispatch = await dispatchPromise;
-        return shellExecResult(request, dispatch);
+        const result = shellExecResult(request, dispatch);
+        operationStore?.terminal(operationId, dispatch);
+        return result;
       } finally {
         abortSignal?.removeEventListener?.('abort', cancel);
       }
@@ -197,6 +243,7 @@ export function createProcessController(service, { logger = console } = {}) {
       const params = { operationId, parentRunId: request.parentRunId, toolCallId: request.toolCallId, tool: request.operation?.tool, arguments: { ...(request.operation?.arguments || {}) } };
       let cancelPromise = null;
       const cancel = () => { if (!cancelPromise) cancelPromise = Promise.resolve(service.dispatchCancel(gatewayId, operationId)).catch((error) => logger.warn?.(`Remote Nodes cancellation dispatch failed: ${String(error?.message || error)}`)); };
+      operationStore?.begin(request, 'filesystem', params);
       const dispatchPromise = service.dispatchFilesystem(gatewayId, params);
       if (abortSignal?.aborted) cancel(); else abortSignal?.addEventListener('abort', cancel, { once: true });
       try {
@@ -204,6 +251,7 @@ export function createProcessController(service, { logger = console } = {}) {
         if (!dispatch?.response?.ok) throw dispatchError(dispatch?.response);
         const correlated = [dispatch.accepted?.operationId, dispatch.response?.result?.operationId].filter(Boolean);
         if (correlated.some((id) => id !== operationId)) throw new Error('gateway_operation_id_mismatch');
+        operationStore?.terminal(operationId, dispatch);
         return { ...dispatch.response.result.outcome, operationId, gatewayId, parentRunId: request.parentRunId, toolCallId: request.toolCallId, execution: { kind: 'gateway', gatewayId } };
       } finally { abortSignal?.removeEventListener?.('abort', cancel); }
     },
@@ -254,7 +302,8 @@ export function createControllerService({ settings, secrets, listenerFactory = (
 
 export async function activate({ api, settings, secrets, logger, processExecution, controllerService, listenerFactory } = {}) {
   const service = controllerService ?? createControllerService({ settings, secrets, listenerFactory, logger });
-  const unregisterController = processExecution?.registerController?.(createProcessController(service, { logger }));
+  const operationStore = createOperationCorrelationStore(settings);
+  const unregisterController = processExecution?.registerController?.(createProcessController(service, { logger, operationStore }));
   api.get('/targets', () => ({ ok: true, targets: storedTargets(settings) }));
   api.post('/targets', ({ body = {} }) => {
     const targets = storedTargets(settings); const target = cleanTarget(body);

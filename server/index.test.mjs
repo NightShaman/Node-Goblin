@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { activate, createControllerService, createProcessController } from './index.mjs';
+import { activate, createControllerService, createOperationCorrelationStore, createProcessController } from './index.mjs';
 
 function harness() {
   const routes = new Map(); const api = {};
@@ -134,4 +134,18 @@ test('controller service starts only from encrypted secrets, never exposes them,
   });
   assert.deepEqual(service.state(), { enabled: true, host: '127.0.0.1', port: 7443, running: true }); assert.equal(options.gateways[0].secret, 'shared-secret'); assert.equal(JSON.stringify(service.state()).includes('secret'), false);
   assert.equal(JSON.stringify(await service.dispatchProcessExec('host-1', { operationId: 'op-1' })).includes('shared-secret'), false); service.close(); assert.equal(closed, true);
+});
+
+test('operation correlation survives controller recreation and permits identical replay only', () => {
+  const { settings } = harness();
+  const request = { operationId: 'op-durable', parentRunId: 'run-1', toolCallId: 'call-1', gatewayId: 'gw-1' };
+  const params = { operationId: 'op-durable', command: 'echo durable' };
+  createOperationCorrelationStore(settings).begin(request, 'process', params);
+  const recovered = createOperationCorrelationStore(settings);
+  assert.equal(recovered.get('op-durable').state, 'dispatching');
+  assert.equal(recovered.begin(request, 'process', params).requestDigest, recovered.get('op-durable').requestDigest);
+  assert.throws(() => recovered.begin(request, 'process', { ...params, command: 'echo different' }), /operation_correlation_conflict/);
+  recovered.terminal('op-durable', { response: { result: { operationId: 'op-durable', replay: true, outcome: { exitCode: 0 } } } });
+  assert.deepEqual(recovered.get('op-durable').terminalReference.replay, true);
+  assert.equal(recovered.get('op-durable').parentRunId, 'run-1');
 });
