@@ -1,0 +1,13 @@
+{
+  "name": "@burrow/host-gateway",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Standalone Burrow host gateway daemon over versioned JSON lines stdio",
+  "bin": {
+    "burrow-host-gateway": "./cli.mjs"
+  },
+  "scripts": {
+    "test": "node --test *.test.mjs ../server/index.test.mjs"
+  }
+}

@@ -1,0 +1,126 @@
+import { spawn } from 'node:child_process';
+import os from 'node:os';
+import process from 'node:process';
+import { DEFAULT_MAX_OUTPUT_BYTES, digestHex, truncateUtf8 } from './protocol.mjs';
+
+function normalizeExec(request) {
+  if (request.command && request.executable) throw new Error('invalid_process_request');
+  if (request.command) return { mode: 'shell', file: request.command, args: [], options: { shell: true } };
+  const executable = String(request.executable ?? '').trim();
+  if (!executable) throw new Error('executable_required');
+  const args = Array.isArray(request.args) ? request.args.map((value) => String(value)) : [];
+  return { mode: 'exec', file: executable, args, options: { shell: false } };
+}
+
+export function runProcess(request, { emitEvent, signal, now = () => Date.now() } = {}) {
+  const startHr = process.hrtime.bigint();
+  const startedAt = new Date().toISOString();
+  const cwd = request.cwd ? String(request.cwd) : process.cwd();
+  const env = request.env && typeof request.env === 'object' ? Object.fromEntries(Object.entries(request.env).map(([key, value]) => [key, String(value)])) : undefined;
+  const maxOutputBytes = Number.isInteger(request.maxOutputBytes) && request.maxOutputBytes > 0 ? request.maxOutputBytes : DEFAULT_MAX_OUTPUT_BYTES;
+  const timeoutMs = Number.isInteger(request.timeoutMs) && request.timeoutMs > 0 ? request.timeoutMs : null;
+  const deadlineMs = Number.isInteger(request.deadlineMs) ? request.deadlineMs : null;
+  const exec = normalizeExec(request);
+  const child = spawn(exec.file, exec.args, {
+    cwd,
+    env: env ? { ...process.env, ...env } : process.env,
+    shell: exec.options.shell,
+    detached: process.platform !== 'win32',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  let stdout = '';
+  let stderr = '';
+  let seq = 0;
+  let truncated = false;
+  let killRequested = false;
+  let timeoutTriggered = false;
+  let timeoutReason = null;
+  const timers = [];
+
+  const totalBytes = () => Buffer.byteLength(stdout, 'utf8') + Buffer.byteLength(stderr, 'utf8');
+
+  const noteChunk = (stream, chunk) => {
+    const text = chunk.toString('utf8');
+    const room = Math.max(0, maxOutputBytes - totalBytes());
+    const kept = room > 0 ? truncateUtf8(text, room) : '';
+    if (stream === 'stdout') stdout += kept;
+    else stderr += kept;
+    if (Buffer.byteLength(kept, 'utf8') !== Buffer.byteLength(text, 'utf8') && !truncated) {
+      truncated = true;
+      terminate('SIGTERM');
+    }
+    emitEvent?.({ type: 'process.stream', stream, seq: ++seq, data: kept, truncated });
+  };
+
+  const terminate = (reasonSignal = 'SIGTERM') => {
+    if (killRequested) return;
+    killRequested = true;
+    if (process.platform === 'win32') child.kill(reasonSignal);
+    else {
+      try { process.kill(-child.pid, reasonSignal); } catch { child.kill(reasonSignal); }
+    }
+  };
+
+  if (timeoutMs) timers.push(setTimeout(() => {
+    timeoutTriggered = true;
+    timeoutReason = 'timeoutMs';
+    terminate('SIGTERM');
+  }, timeoutMs));
+
+  if (deadlineMs !== null) {
+    const delay = deadlineMs - now();
+    if (delay <= 0) {
+      timeoutTriggered = true;
+      timeoutReason = 'deadlineMs';
+      terminate('SIGTERM');
+    } else {
+      timers.push(setTimeout(() => {
+        timeoutTriggered = true;
+        timeoutReason = 'deadlineMs';
+        terminate('SIGTERM');
+      }, delay));
+    }
+  }
+
+  signal?.addEventListener('abort', () => terminate('SIGTERM'), { once: true });
+  child.stdout.on('data', (chunk) => noteChunk('stdout', chunk));
+  child.stderr.on('data', (chunk) => noteChunk('stderr', chunk));
+
+  return new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code, closeSignal) => {
+      for (const timer of timers) clearTimeout(timer);
+      const endedAt = new Date().toISOString();
+      const durationMs = Number(process.hrtime.bigint() - startHr) / 1e6;
+      const result = {
+        type: 'process.result',
+        startedAt,
+        endedAt,
+        durationMs,
+        cwd,
+        effectiveUid: typeof process.geteuid === 'function' ? process.geteuid() : null,
+        effectiveGid: typeof process.getegid === 'function' ? process.getegid() : null,
+        hostname: os.hostname(),
+        mode: exec.mode,
+        executable: exec.mode === 'exec' ? exec.file : null,
+        args: exec.mode === 'exec' ? exec.args : [],
+        command: exec.mode === 'shell' ? exec.file : null,
+        exitCode: code,
+        signal: closeSignal,
+        cancelled: signal?.aborted === true,
+        truncated,
+        timedOut: timeoutTriggered,
+        timeoutReason,
+        timeoutMs,
+        deadlineMs,
+        stdout,
+        stderr,
+        stdoutDigest: digestHex(stdout),
+        stderrDigest: digestHex(stderr),
+      };
+      emitEvent?.({ type: 'process.terminal', seq: ++seq, evidence: result });
+      resolve(result);
+    });
+  });
+}
