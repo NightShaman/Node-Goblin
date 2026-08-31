@@ -3,6 +3,7 @@ import process from 'node:process';
 import { OperationJournal } from './journal.mjs';
 import { PROTOCOL_VERSION, operationIdFromRequest, requestDigestFromParams } from './protocol.mjs';
 import { runProcess } from './process-runner.mjs';
+import { runFilesystem } from './filesystem-runner.mjs';
 
 export class GatewayDaemon {
   constructor({ input = process.stdin, output = process.stdout, error = process.stderr, now = () => Date.now(), journal = new OperationJournal(), identity = {} } = {}) {
@@ -57,10 +58,10 @@ export class GatewayDaemon {
       queueMicrotask(() => this.stop());
       return;
     }
-    if (method !== 'process.exec') throw new Error('unknown_method');
+    if (method !== 'process.exec' && method !== 'filesystem.execute') throw new Error('unknown_method');
 
     const operationRequest = { method, params };
-    const requestDigest = requestDigestFromParams(params);
+    const requestDigest = requestDigestFromParams(params, method);
     const operationId = String(params.operationId || operationIdFromRequest(operationRequest));
     const replay = this.journal.inspect(operationId, this.now());
     if (replay) {
@@ -87,11 +88,9 @@ export class GatewayDaemon {
     this.send({ type: 'accepted', requestId: message.id ?? null, ok: true, operationId, protocolVersion: PROTOCOL_VERSION });
 
     try {
-      const outcome = await runProcess(params, {
-        signal: controller.signal,
-        now: this.now,
-        emitEvent: (event) => this.send({ ...event, operationId }),
-      });
+      const outcome = method === 'process.exec'
+        ? await runProcess(params, { signal: controller.signal, now: this.now, emitEvent: (event) => this.send({ ...event, operationId }) })
+        : await runFilesystem(params, { signal: controller.signal, now: this.now });
       this.journal.put(operationId, requestDigest, outcome, this.now());
       this.send({ type: 'response', requestId: message.id ?? null, ok: true, result: { operationId, replay: false, outcome } });
     } catch (error) {

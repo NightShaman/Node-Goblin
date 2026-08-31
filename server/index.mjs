@@ -189,6 +189,24 @@ export function createProcessController(service, { logger = console } = {}) {
         abortSignal?.removeEventListener?.('abort', cancel);
       }
     },
+    async executeNativeFilesystem(request = {}, { abortSignal = null } = {}) {
+      const operationId = String(request.operationId ?? '').trim();
+      const gatewayId = String(request.gatewayId ?? '').trim();
+      if (!OPERATION_ID.test(operationId)) throw new Error('operation_id_invalid');
+      if (!gatewayId) throw new Error('gateway_id_required');
+      const params = { operationId, parentRunId: request.parentRunId, toolCallId: request.toolCallId, tool: request.operation?.tool, arguments: { ...(request.operation?.arguments || {}) } };
+      let cancelPromise = null;
+      const cancel = () => { if (!cancelPromise) cancelPromise = Promise.resolve(service.dispatchCancel(gatewayId, operationId)).catch((error) => logger.warn?.(`Remote Nodes cancellation dispatch failed: ${String(error?.message || error)}`)); };
+      const dispatchPromise = service.dispatchFilesystem(gatewayId, params);
+      if (abortSignal?.aborted) cancel(); else abortSignal?.addEventListener('abort', cancel, { once: true });
+      try {
+        const dispatch = await dispatchPromise;
+        if (!dispatch?.response?.ok) throw dispatchError(dispatch?.response);
+        const correlated = [dispatch.accepted?.operationId, dispatch.response?.result?.operationId].filter(Boolean);
+        if (correlated.some((id) => id !== operationId)) throw new Error('gateway_operation_id_mismatch');
+        return { ...dispatch.response.result.outcome, operationId, gatewayId, parentRunId: request.parentRunId, toolCallId: request.toolCallId, execution: { kind: 'gateway', gatewayId } };
+      } finally { abortSignal?.removeEventListener?.('abort', cancel); }
+    },
   });
 }
 
@@ -221,6 +239,10 @@ export function createControllerService({ settings, secrets, listenerFactory = (
     async dispatchProcessExec(gatewayId, params) {
       if (!listener) throw Object.assign(new Error(startError || 'controller_not_running'), { code: startError || 'controller_not_running' });
       return redact(await listener.dispatchProcessExec(gatewayId, params), secretValues);
+    },
+    async dispatchFilesystem(gatewayId, params) {
+      if (!listener) throw Object.assign(new Error(startError || 'controller_not_running'), { code: startError || 'controller_not_running' });
+      return redact(await listener.dispatchFilesystem(gatewayId, params), secretValues);
     },
     async dispatchCancel(gatewayId, operationId) {
       if (!listener) throw Object.assign(new Error(startError || 'controller_not_running'), { code: startError || 'controller_not_running' });

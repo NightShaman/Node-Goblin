@@ -12,16 +12,16 @@ export function canonicalize(value) {
   return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`).join(',')}}`;
 }
 
-export function canonicalProcessRequest(params = {}) {
+export function canonicalProcessRequest(params = {}, method = 'process.exec') {
   const normalized = {
     ...params,
     operationId: undefined,
   };
-  return { method: 'process.exec', params: normalized };
+  return { method, params: normalized };
 }
 
-export function requestDigestFromParams(params = {}) {
-  return crypto.createHash('sha256').update(canonicalize(canonicalProcessRequest(params))).digest('hex');
+export function requestDigestFromParams(params = {}, method = 'process.exec') {
+  return crypto.createHash('sha256').update(canonicalize(canonicalProcessRequest(params, method))).digest('hex');
 }
 
 export function operationIdFromRequest(request) {

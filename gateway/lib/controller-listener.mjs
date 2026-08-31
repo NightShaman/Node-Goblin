@@ -247,6 +247,12 @@ export class GatewayControllerListener extends EventEmitter {
     return connection.dispatch('process.exec', params);
   }
 
+  dispatchFilesystem(gatewayId, params = {}) {
+    const connection = this.liveGateway(gatewayId);
+    if (!connection) return Promise.reject(Object.assign(new Error('gateway_not_connected'), { code: 'gateway_not_connected' }));
+    return connection.dispatch('filesystem.execute', params);
+  }
+
   dispatchCancel(gatewayId, operationId) {
     const connection = this.liveGateway(gatewayId);
     if (!connection) return Promise.reject(Object.assign(new Error('gateway_not_connected'), { code: 'gateway_not_connected' }));

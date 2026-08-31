@@ -141,3 +141,20 @@ test('shutdown reports stopping', async () => {
   });
   assert.equal(messages[0].result.status, 'stopping');
 });
+
+test('native filesystem execution returns correlated gateway evidence and replays', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-fs-'));
+  const filePath = path.join(root, 'hello.txt');
+  fs.writeFileSync(filePath, 'hello gateway');
+  const request = { method: 'filesystem.execute', params: { operationId: 'fs-test-1', parentRunId: 'run-1', toolCallId: 'call-1', tool: 'files_read', arguments: { filePath } } };
+  const messages = await collect(async ({ input }) => {
+    input.write(JSON.stringify({ id: 'f1', ...request }) + '\n');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    input.write(JSON.stringify({ id: 'f2', ...request }) + '\n');
+  }, { waitMs: 100 });
+  assert.equal(messages[0].operationId, 'fs-test-1');
+  const first = messages.find((message) => message.requestId === 'f1' && message.type === 'response');
+  assert.equal(first.result.outcome.content, 'hello gateway');
+  assert.equal(first.result.outcome.execution.kind, 'gateway');
+  assert.equal(messages.find((message) => message.requestId === 'f2').result.replay, true);
+});
