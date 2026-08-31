@@ -101,25 +101,27 @@ export class GatewayDaemon {
     }
   }
 
+  handleLine(line) {
+    if (!line.trim()) return;
+    let requestId = null;
+    try {
+      const parsed = JSON.parse(line);
+      requestId = parsed && typeof parsed === 'object' ? parsed.id ?? null : null;
+      Promise.resolve().then(() => this.handle(parsed)).catch((error) => {
+        this.sendProtocolError(requestId, error.message || 'invalid_request');
+      });
+    } catch {
+      const match = line.match(/"id"\s*:\s*("(?:[^"\\]|\\.)*"|null|[0-9]+|true|false)/);
+      if (match) {
+        try { requestId = JSON.parse(match[1]); } catch {}
+      }
+      this.sendProtocolError(requestId, 'invalid_json');
+    }
+  }
+
   start() {
     this.rl = readline.createInterface({ input: this.input, crlfDelay: Infinity });
-    this.rl.on('line', (line) => {
-      if (!line.trim()) return;
-      let requestId = null;
-      try {
-        const parsed = JSON.parse(line);
-        requestId = parsed && typeof parsed === 'object' ? parsed.id ?? null : null;
-        Promise.resolve().then(() => this.handle(parsed)).catch((error) => {
-          this.sendProtocolError(requestId, error.message || 'invalid_request');
-        });
-      } catch {
-        const match = line.match(/"id"\s*:\s*("(?:[^"\\]|\\.)*"|null|[0-9]+|true|false)/);
-        if (match) {
-          try { requestId = JSON.parse(match[1]); } catch {}
-        }
-        this.sendProtocolError(requestId, 'invalid_json');
-      }
-    });
+    this.rl.on('line', (line) => this.handleLine(line));
     return this;
   }
 

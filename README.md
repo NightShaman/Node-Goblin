@@ -117,6 +117,25 @@ Reissuing the same completed request before journal expiry returns a replayed co
 
 `gateway/lib/client.mjs` exposes a small stdio client for tests and local integration. It spawns the CLI, tracks request IDs, captures the `accepted` envelope, and correlates later operation events by `operationId`.
 
+### Authenticated outbound controller transport
+
+Stdio remains the default. A host daemon can instead make a persistent outbound TLS connection (no inbound listening port and no third-party dependencies):
+
+```bash
+BURROW_GATEWAY_CONTROLLER_URL=tls://controller.example:7443 \
+BURROW_GATEWAY_STATE_DIR=/var/lib/burrow-gateway \
+BURROW_GATEWAY_ID=host-123 \
+BURROW_GATEWAY_ENROLLMENT_TOKEN='<one-time out-of-band secret>' \
+BURROW_GATEWAY_CA_FILE=/etc/burrow/controller-ca.pem \
+node gateway/cli.mjs
+```
+
+The first start atomically stores the enrollment secret at `<state-dir>/controller-trust.json` with mode `0600`. Later enrollment-token values do not replace established trust; rotate trust by an explicit administrative removal/re-enrollment procedure. Protect both the environment used for first enrollment and the state directory with the gateway OS account. Optional `BURROW_GATEWAY_CERT_FILE` and `BURROW_GATEWAY_KEY_FILE` enable controller-side mTLS policy in addition to the application challenge.
+
+The controller sends `{"type":"auth.challenge","nonce":"<at-least-16-random-characters>"}`. The gateway replies with an HMAC-SHA256 proof bound to the protocol context, gateway ID, and nonce; ordinary JSONL requests are rejected until the controller sends `{"type":"auth.ok"}`. TLS certificate verification is always enabled. A disconnect triggers bounded exponential reconnect and a fresh challenge. Because the same daemon journal remains alive (and is durable in network mode), a controller can safely resend an identical `operationId` after reconnect and receive replay rather than duplicate execution. Events and terminal evidence retain the existing `operationId` correlation.
+
+This transport does not add a policy principal: successful controller authentication reaches the same gateway message model, and child processes continue to execute with the daemon's OS-account permissions. The controller must use unique unpredictable nonces and compare the expected HMAC in constant time. Do not expose the enrollment token in URLs, logs, or command arguments.
+
 ## Contract
 
 The manifest contributes one host-owned API-target endpoint and a declarative Settings slot. Core owns the Settings layout and rendering; this mod only declares metadata and requests the host-owned `apiTargets` capability:
