@@ -176,6 +176,34 @@ const result = await listener.dispatchProcessExec('host-123', {
 });
 ```
 
+## Burrow mod controller boundary
+
+The mod now optionally activates the controller-side TLS listener from its server boundary while retaining the original target API unchanged. Controller configuration is stored under the mod settings namespace as `{ "enabled": true, "host": "127.0.0.1", "port": 7443 }`; it is intentionally configuration-only and never contains key material.
+
+TLS private key, certificate, optional CA, and each enrolled gateway shared secret are read only from Burrow's encrypted mod-secret API:
+
+```text
+controller.tls.key
+controller.tls.cert
+controller.tls.ca                 (optional)
+controller.gateway.<gatewayId>
+```
+
+Gateway identity metadata is a non-secret `controllerGateways` settings array containing `{ gatewayId, controllerId }`. A listener starts only when enabled and both TLS key and certificate are present. It binds the configured host and port, authenticates gateways through the existing listener, and dispatches under the gateway daemon's OS account; this mod adds no execution policy or privilege escalation layer.
+
+In addition to the legacy `/targets` API, the mod exposes these namespaced operational routes:
+
+```text
+GET  /api/mods/remote-nodes/controller
+GET  /api/mods/remote-nodes/gateways
+POST /api/mods/remote-nodes/gateways/:gatewayId/processes
+POST /api/mods/remote-nodes/gateways/:gatewayId/operations/:operationId/cancel
+```
+
+`GET /gateways` contains only live gateway ID, status, and active operation IDs. Process dispatch requires an explicit `operationId`; the same ID is forwarded to the gateway and is retained in accepted, event, response, and cancel correlation. This permits safe retry with the same operation ID after a disconnect and preserves daemon journal replay semantics. No endpoint returns controller TLS material or enrollment secrets; known configured secret values are redacted from returned dispatch evidence.
+
+The current Burrow runtime calls `activate` but has no deactivate hook. Activation therefore returns a `close()` lifecycle handle for a lifecycle-aware host; it closes the listener and its authenticated sockets when invoked.
+
 ## Contract
 
 The manifest contributes one host-owned API-target endpoint and a declarative Settings slot. Core owns the Settings layout and rendering; this mod only declares metadata and requests the host-owned `apiTargets` capability:
