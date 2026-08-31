@@ -194,7 +194,13 @@ Gateway identity metadata is a non-secret `controllerGateways` settings array co
 In addition to the legacy `/targets` API, the mod exposes these namespaced operational routes:
 
 ```text
-GET  /api/mods/remote-nodes/controller
+GET    /api/mods/remote-nodes/controller
+PUT    /api/mods/remote-nodes/controller
+PUT    /api/mods/remote-nodes/controller/tls
+DELETE /api/mods/remote-nodes/controller/tls
+GET    /api/mods/remote-nodes/gateway-trust
+PUT    /api/mods/remote-nodes/gateway-trust/:gatewayId
+DELETE /api/mods/remote-nodes/gateway-trust/:gatewayId
 GET  /api/mods/remote-nodes/gateways
 POST /api/mods/remote-nodes/gateways/:gatewayId/processes
 POST /api/mods/remote-nodes/gateways/:gatewayId/operations/:operationId/cancel
@@ -202,7 +208,9 @@ POST /api/mods/remote-nodes/gateways/:gatewayId/operations/:operationId/cancel
 
 `GET /gateways` contains only live gateway ID, status, and active operation IDs. Process dispatch requires an explicit `operationId`; the same ID is forwarded to the gateway and is retained in accepted, event, response, and cancel correlation. This permits safe retry with the same operation ID after a disconnect and preserves daemon journal replay semantics. No endpoint returns controller TLS material or enrollment secrets; known configured secret values are redacted from returned dispatch evidence.
 
-The current Burrow runtime calls `activate` but has no deactivate hook. Activation therefore returns a `close()` lifecycle handle for a lifecycle-aware host; it closes the listener and its authenticated sockets when invoked.
+Trust administration lists only `{ gatewayId, controllerId, trusted }`. Enrollment/rotation accepts the secret in the request body but writes it only through the encrypted mod-secret API; TLS updates behave the same way and responses never echo material. Revocation clears both identity metadata and its secret. Controller configuration, TLS, enrollment, rotation, and revocation responses explicitly return `restartRequired: true`.
+
+The listener snapshots configuration and trust during activation. The current Burrow runtime calls `activate` but has no safe reload/deactivate hook, so administration changes **do not affect the running listener** and require a Burrow restart; APIs never claim otherwise. Activation returns a `close()` lifecycle handle for a lifecycle-aware host; it closes the listener and authenticated sockets when invoked. Revoked gateways already connected to the old snapshot therefore remain connected until restart/close, which administrators should perform promptly.
 
 ## Contract
 

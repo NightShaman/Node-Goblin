@@ -62,6 +62,24 @@ function storedControllerConfig(settings) {
   catch { return cleanControllerConfig(); }
 }
 
+function cleanGatewayIdentity(value = {}, gatewayId = value.gatewayId) {
+  const id = cleanId(gatewayId);
+  const controllerId = String(value.controllerId ?? 'controller').trim();
+  if (!controllerId || controllerId.length > 255) throw problem('controller_id_invalid');
+  return { gatewayId: id, controllerId };
+}
+
+function configuredGatewayIdentities(settings, secrets) {
+  const configured = settings.get(CONTROLLER_GATEWAYS_NAME, []);
+  if (!Array.isArray(configured)) return [];
+  return configured.flatMap((value) => {
+    try {
+      const identity = cleanGatewayIdentity(value);
+      return [{ ...identity, trusted: Boolean(secrets?.has?.(`controller.gateway.${identity.gatewayId}`) ?? secrets?.get?.(`controller.gateway.${identity.gatewayId}`)) }];
+    } catch { return []; }
+  });
+}
+
 function gatewayRecords(settings, secrets) {
   const configured = settings.get(CONTROLLER_GATEWAYS_NAME, []);
   if (!Array.isArray(configured)) return [];
@@ -142,6 +160,41 @@ export async function activate({ api, settings, secrets, logger, controllerServi
   api.delete('/targets/:id', ({ params }) => { const targets = storedTargets(settings); targets.splice(findTarget(targets, params.id), 1); settings.set(SETTINGS_NAME, targets); return { ok: true }; });
 
   api.get('/controller', () => ({ ok: true, controller: service.state() }));
+  api.put('/controller', ({ body = {} }) => {
+    const controller = cleanControllerConfig(body);
+    settings.set(CONTROLLER_SETTINGS_NAME, controller);
+    return { ok: true, controller, restartRequired: true };
+  });
+  api.put('/controller/tls', ({ body = {} }) => {
+    const key = String(body.key ?? ''); const cert = String(body.cert ?? '');
+    if (!key.trim() || !cert.trim()) throw problem('controller_tls_credentials_required');
+    secrets.set('controller.tls.key', key); secrets.set('controller.tls.cert', cert);
+    if (body.ca == null || body.ca === '') secrets.clear?.('controller.tls.ca');
+    else secrets.set('controller.tls.ca', String(body.ca));
+    return { ok: true, restartRequired: true };
+  });
+  api.delete('/controller/tls', () => {
+    secrets.clear?.('controller.tls.key'); secrets.clear?.('controller.tls.cert'); secrets.clear?.('controller.tls.ca');
+    return { ok: true, restartRequired: true };
+  });
+  api.get('/gateway-trust', () => ({ ok: true, gateways: configuredGatewayIdentities(settings, secrets) }));
+  api.put('/gateway-trust/:gatewayId', ({ params, body = {} }) => {
+    const identity = cleanGatewayIdentity(body, params.gatewayId);
+    const secret = String(body.secret ?? '');
+    if (!secret.trim()) throw problem('gateway_secret_required');
+    const gateways = configuredGatewayIdentities(settings, secrets).map(({ gatewayId, controllerId }) => ({ gatewayId, controllerId }));
+    const index = gateways.findIndex((entry) => entry.gatewayId === identity.gatewayId);
+    if (index < 0) gateways.push(identity); else gateways[index] = identity;
+    secrets.set(`controller.gateway.${identity.gatewayId}`, secret);
+    settings.set(CONTROLLER_GATEWAYS_NAME, gateways);
+    return { ok: true, gateway: { ...identity, trusted: true }, restartRequired: true };
+  });
+  api.delete('/gateway-trust/:gatewayId', ({ params }) => {
+    const gatewayId = cleanId(params.gatewayId);
+    const gateways = configuredGatewayIdentities(settings, secrets).filter((entry) => entry.gatewayId !== gatewayId).map(({ gatewayId: id, controllerId }) => ({ gatewayId: id, controllerId }));
+    settings.set(CONTROLLER_GATEWAYS_NAME, gateways); secrets.clear?.(`controller.gateway.${gatewayId}`);
+    return { ok: true, restartRequired: true };
+  });
   api.get('/gateways', () => ({ ok: true, gateways: service.listLiveGateways() }));
   api.post('/gateways/:gatewayId/processes', async ({ params, body = {} }) => {
     const operationId = String(body.operationId ?? '').trim();
