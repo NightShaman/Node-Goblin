@@ -8,6 +8,8 @@
     "burrow-host-gateway": "./cli.mjs"
   },
   "scripts": {
-    "test": "node --test *.test.mjs ../server/index.test.mjs"
+    "test": "node --test *.test.mjs test/*.test.mjs ../server/index.test.mjs",
+    "install:host": "./deploy/install.sh",
+    "uninstall:host": "./deploy/uninstall.sh"
   }
 }

@@ -261,3 +261,28 @@ Gateway package tests from inside `gateway/`:
 cd gateway
 npm test
 ```
+
+## Linux host package (standalone outbound gateway)
+
+`gateway/deploy/` packages the standalone gateway for a systemd Linux host. It creates (or verifies) the dedicated ordinary `burrow` account and group with UID/GID **4226**, installs program files at `/opt/burrow-host-gateway`, durable journal/enrollment state at `/var/lib/burrow-host-gateway`, protected configuration at `/etc/burrow-host-gateway/gateway.env`, and a `burrow-host-gateway.service` unit. The service runs as `burrow:burrow`, uses an explicit state path, and only initiates its outbound TLS controller connection; it opens no inbound listener.
+
+Run the installer as root from a checked-out gateway directory:
+
+```bash
+cd gateway
+sudo ./deploy/install.sh
+sudoedit /etc/burrow-host-gateway/gateway.env
+sudo systemctl restart burrow-host-gateway
+sudo systemctl status burrow-host-gateway
+```
+
+Set `BURROW_GATEWAY_CONTROLLER_URL` (`tls://host:port`) and a stable `BURROW_GATEWAY_ID` in the environment file. It is read by systemd and should remain `root:burrow` mode `0640`. For first enrollment only, supply `BURROW_GATEWAY_ENROLLMENT_TOKEN` there through an out-of-band secret process, start once, then remove it: the gateway stores established trust under the state directory. Reference CA/client certificate/key **file paths** there when required. Never place tokens or PEM material in command arguments, URLs, the unit file, or repository files.
+
+Repeated installation is upgrade-safe: it replaces only `/opt/burrow-host-gateway` and the unit, preserving configuration and durable state. UID/GID collisions fail rather than silently adopting another account. It neither grants sudo nor modifies supplementary groups; those and filesystem access remain host provisioning/OS permission decisions. Uninstalling removes the service unit and program but intentionally preserves the account, `/etc/burrow-host-gateway`, and `/var/lib/burrow-host-gateway` for recovery/reinstall:
+
+```bash
+cd gateway
+sudo ./deploy/uninstall.sh
+```
+
+For package testing without root or systemd, the installer supports a non-production staging mode: `./deploy/install.sh --root /tmp/stage --skip-account --no-systemd`.

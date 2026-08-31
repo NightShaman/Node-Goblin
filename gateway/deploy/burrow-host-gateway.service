@@ -1,0 +1,25 @@
+[Unit]
+Description=Burrow Host Gateway (outbound controller client)
+Documentation=https://github.com/NightShaman/burrow-mod-remote-nodes
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=burrow
+Group=burrow
+Environment=BURROW_GATEWAY_STATE_DIR=/var/lib/burrow-host-gateway
+EnvironmentFile=-/etc/burrow-host-gateway/gateway.env
+WorkingDirectory=/opt/burrow-host-gateway
+ExecStart=/usr/bin/env node /opt/burrow-host-gateway/cli.mjs
+Restart=on-failure
+RestartSec=5s
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/var/lib/burrow-host-gateway
+
+[Install]
+WantedBy=multi-user.target
