@@ -136,6 +136,46 @@ The controller sends `{"type":"auth.challenge","nonce":"<at-least-16-random-char
 
 This transport does not add a policy principal: successful controller authentication reaches the same gateway message model, and child processes continue to execute with the daemon's OS-account permissions. The controller must use unique unpredictable nonces and compare the expected HMAC in constant time. Do not expose the enrollment token in URLs, logs, or command arguments.
 
+### Controller-side TLS gateway listener library
+
+`gateway/lib/controller-listener.mjs` adds the controller-side slice for the same authenticated outbound transport. It accepts outbound TLS sockets from gateways, uses configured per-gateway `{ gatewayId, controllerId, secret }` trust records, sends an unpredictable auth challenge on connect, verifies the HMAC proof with timing-safe comparison, and binds the proof to both controller and gateway identities.
+
+Behavior highlights:
+
+- rejects unknown gateways, bad proofs, malformed auth envelopes, and duplicate live gateway IDs
+- tracks authenticated live gateways plus health-style active operation state
+- correlates `requestId`, `accepted`, streamed events, and terminal/response messages for controller dispatch callers
+- exposes `dispatchProcessExec(gatewayId, params)` and `dispatchCancel(gatewayId, operationId)` without changing the legacy remote-target mod API
+- rejects pending controller dispatch promises on disconnect with actionable retry guidance to resend the same `operationId` after reconnect
+- preserves replay semantics because the gateway daemon journal still owns operation identity and completed replay
+- emits lifecycle events including `gatewaySocketAccepted`, `gatewayAuthenticated`, `gatewayAccepted`, `gatewayEvent`, `gatewayResponse`, `gatewayProtocolError`, `gatewayDisconnected`, and `gatewaySocketError` for later Burrow supervision work
+
+Example library usage:
+
+```js
+import fs from 'node:fs';
+import { GatewayControllerListener } from './gateway/index.mjs';
+
+const listener = new GatewayControllerListener({
+  gateways: [
+    { gatewayId: 'host-123', controllerId: 'controller', secret: '<enrolled-shared-secret>' },
+  ],
+  serverOptions: {
+    key: fs.readFileSync('/etc/burrow/controller-key.pem'),
+    cert: fs.readFileSync('/etc/burrow/controller-cert.pem'),
+    ca: fs.readFileSync('/etc/burrow/gateway-ca.pem'),
+    requestCert: true,
+    rejectUnauthorized: true,
+  },
+}).listen(7443);
+
+const result = await listener.dispatchProcessExec('host-123', {
+  operationId: 'example-op-1',
+  executable: '/bin/echo',
+  args: ['hello'],
+});
+```
+
 ## Contract
 
 The manifest contributes one host-owned API-target endpoint and a declarative Settings slot. Core owns the Settings layout and rendering; this mod only declares metadata and requests the host-owned `apiTargets` capability:
