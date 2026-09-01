@@ -61,10 +61,15 @@ test('administers controller trust and TLS through secrets without returning mat
   const tlsResult = value.routes.get('PUT /controller/tls')({ body: { key: 'PRIVATE', cert: 'CERT', ca: 'CA' } });
   assert.deepEqual(tlsResult, { ok: true, restartRequired: true }); assert.equal(JSON.stringify(tlsResult).includes('PRIVATE'), false);
   const enrolled = value.routes.get('PUT /gateway-trust/:gatewayId')({ params: { gatewayId: 'host-1' }, body: { controllerId: 'controller-a', secret: 'shared-secret' } });
-  assert.deepEqual(enrolled, { ok: true, gateway: { gatewayId: 'host-1', controllerId: 'controller-a', trusted: true }, restartRequired: true });
+  assert.deepEqual(enrolled, { ok: true, gateway: { gatewayId: 'host-1', controllerId: 'controller-a', status: 'approved', approved: true, revoked: false, trusted: true, method: 'hmac' }, restartRequired: true });
   assert.equal(value.secretValues.get('controller.gateway.host-1'), 'shared-secret');
-  const listed = value.routes.get('GET /gateway-trust')({}); assert.deepEqual(listed.gateways, [{ gatewayId: 'host-1', controllerId: 'controller-a', trusted: true }]); assert.equal(JSON.stringify(listed).includes('shared-secret'), false);
-  assert.deepEqual(value.routes.get('DELETE /gateway-trust/:gatewayId')({ params: { gatewayId: 'host-1' } }), { ok: true, restartRequired: true }); assert.equal(value.secretValues.has('controller.gateway.host-1'), false);
+  const listed = value.routes.get('GET /gateway-trust')({}); assert.deepEqual(listed.gateways, [{ gatewayId: 'host-1', controllerId: 'controller-a', status: 'approved', approved: true, revoked: false, trusted: true, method: 'hmac' }]); assert.equal(JSON.stringify(listed).includes('shared-secret'), false);
+  assert.deepEqual(value.routes.get('DELETE /gateway-trust/:gatewayId')({ params: { gatewayId: 'host-1' } }), { ok: true, gateway: { gatewayId: 'host-1', controllerId: 'controller-a', status: 'revoked', approved: false, revoked: true, trusted: false, method: 'hmac' }, restartRequired: true }); assert.equal(value.secretValues.has('controller.gateway.host-1'), false);
+  assert.deepEqual(value.routes.get('GET /gateway-trust')({}).gateways, [{ gatewayId: 'host-1', controllerId: 'controller-a', status: 'revoked', approved: false, revoked: true, trusted: false, method: 'hmac' }]);
+  value.values.set('controllerGateways', [{ gatewayId: 'paired-node', controllerId: 'controller-a' }]);
+  value.secretValues.set('controller.gateway.publicKey.paired-node', 'PUBLIC-KEY');
+  assert.deepEqual(value.routes.get('GET /gateway-trust')({}).gateways, [{ gatewayId: 'paired-node', controllerId: 'controller-a', status: 'approved', approved: true, revoked: false, trusted: true, method: 'ed25519' }]);
+  assert.equal(JSON.stringify(value.routes.get('GET /gateway-trust')({})).includes('PUBLIC-KEY'), false);
   value.routes.get('DELETE /controller/tls')({}); assert.equal(value.secretValues.has('controller.tls.key'), false);
   assert.throws(() => value.routes.get('PUT /gateway-trust/:gatewayId')({ params: { gatewayId: 'bad/id' }, body: { secret: 'x' } }), /target_id_invalid/);
   assert.throws(() => value.routes.get('PUT /controller/tls')({ body: { key: '', cert: 'CERT' } }), /controller_tls_credentials_required/);

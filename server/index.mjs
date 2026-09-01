@@ -84,7 +84,12 @@ function configuredGatewayIdentities(settings, secrets) {
   return configured.flatMap((value) => {
     try {
       const identity = cleanGatewayIdentity(value);
-      return [{ ...identity, trusted: Boolean(secrets?.has?.(`controller.gateway.${identity.gatewayId}`) ?? secrets?.get?.(`controller.gateway.${identity.gatewayId}`)) }];
+      const hasSharedSecret = Boolean(secrets?.has?.(`controller.gateway.${identity.gatewayId}`) ?? secrets?.get?.(`controller.gateway.${identity.gatewayId}`));
+      const hasPublicKey = Boolean(secrets?.has?.(`controller.gateway.publicKey.${identity.gatewayId}`) ?? secrets?.get?.(`controller.gateway.publicKey.${identity.gatewayId}`));
+      const revoked = value?.status === 'revoked' || value?.revoked === true;
+      const method = hasPublicKey ? 'ed25519' : (hasSharedSecret ? 'hmac' : (value?.method || null));
+      const approved = !revoked && (hasSharedSecret || hasPublicKey || value?.status === 'approved' || value?.approved === true);
+      return [{ ...identity, status: revoked ? 'revoked' : (approved ? 'approved' : 'untrusted'), approved, revoked, trusted: approved, method }];
     } catch { return []; }
   });
 }
@@ -344,7 +349,7 @@ export function createControllerService({ settings, secrets, listenerFactory = (
   return Object.freeze({
     state,
     listPendingPairings: () => listener?.listPending?.() ?? pendingPairings(settings),
-    approvePairing(gatewayId) { const pairing = listener?.approvePending?.(gatewayId); if (!pairing) throw Object.assign(new Error('pairing_not_found'), { code: 'pairing_not_found' }); const gateways = configuredGatewayIdentities(settings, secrets).map(({ gatewayId, controllerId }) => ({ gatewayId, controllerId })); const index = gateways.findIndex((entry) => entry.gatewayId === gatewayId); const trusted = { gatewayId, controllerId: pairing.controllerId }; if (index < 0) gateways.push(trusted); else gateways[index] = trusted; settings.set(CONTROLLER_GATEWAYS_NAME, gateways); secrets?.set?.(`controller.gateway.publicKey.${gatewayId}`, pairing.publicKey); settings.set(PENDING_PAIRINGS_NAME, pendingPairings(settings).filter((entry) => entry.gatewayId !== gatewayId)); return { gatewayId: pairing.gatewayId, controllerId: pairing.controllerId, pairingCode: pairing.pairingCode, status: 'approved', trusted: true }; },
+    approvePairing(gatewayId) { const pairing = listener?.approvePending?.(gatewayId); if (!pairing) throw Object.assign(new Error('pairing_not_found'), { code: 'pairing_not_found' }); const gateways = configuredGatewayIdentities(settings, secrets).map(({ gatewayId, controllerId, status, approved, revoked, method }) => ({ gatewayId, controllerId, status, approved, revoked, method })); const index = gateways.findIndex((entry) => entry.gatewayId === gatewayId); const trusted = { gatewayId, controllerId: pairing.controllerId }; if (index < 0) gateways.push(trusted); else gateways[index] = trusted; settings.set(CONTROLLER_GATEWAYS_NAME, gateways); secrets?.set?.(`controller.gateway.publicKey.${gatewayId}`, pairing.publicKey); settings.set(PENDING_PAIRINGS_NAME, pendingPairings(settings).filter((entry) => entry.gatewayId !== gatewayId)); return { gatewayId: pairing.gatewayId, controllerId: pairing.controllerId, pairingCode: pairing.pairingCode, status: 'approved', trusted: true }; },
     rejectPairing(gatewayId) { const pairing = listener?.rejectPending?.(gatewayId); if (!pairing) throw Object.assign(new Error('pairing_not_found'), { code: 'pairing_not_found' }); settings.set(PENDING_PAIRINGS_NAME, pendingPairings(settings).filter((entry) => entry.gatewayId !== gatewayId)); return pairing; },
     listLiveGateways: () => listener ? listener.listLiveGateways() : [],
     listGateways: () => listener
@@ -411,18 +416,21 @@ export async function activate({ api, settings, secrets, logger, processExecutio
     const identity = cleanGatewayIdentity(body, params.gatewayId);
     const secret = String(body.secret ?? '');
     if (!secret.trim()) throw problem('gateway_secret_required');
-    const gateways = configuredGatewayIdentities(settings, secrets).map(({ gatewayId, controllerId }) => ({ gatewayId, controllerId }));
+    const gateways = configuredGatewayIdentities(settings, secrets).map(({ gatewayId, controllerId, status, approved, revoked, method }) => ({ gatewayId, controllerId, status, approved, revoked, method }));
     const index = gateways.findIndex((entry) => entry.gatewayId === identity.gatewayId);
     if (index < 0) gateways.push(identity); else gateways[index] = identity;
     secrets.set(`controller.gateway.${identity.gatewayId}`, secret);
     settings.set(CONTROLLER_GATEWAYS_NAME, gateways);
-    return { ok: true, gateway: { ...identity, trusted: true }, restartRequired: true };
+    return { ok: true, gateway: { ...identity, status: 'approved', approved: true, revoked: false, trusted: true, method: 'hmac' }, restartRequired: true };
   });
   api.delete('/gateway-trust/:gatewayId', ({ params }) => {
     const gatewayId = cleanId(params.gatewayId);
-    const gateways = configuredGatewayIdentities(settings, secrets).filter((entry) => entry.gatewayId !== gatewayId).map(({ gatewayId: id, controllerId }) => ({ gatewayId: id, controllerId }));
+    const current = configuredGatewayIdentities(settings, secrets);
+    const existing = current.find((entry) => entry.gatewayId === gatewayId);
+    const gateways = current.filter((entry) => entry.gatewayId !== gatewayId).map(({ gatewayId: id, controllerId, status, approved, revoked, method }) => ({ gatewayId: id, controllerId, status, approved, revoked, method }));
+    gateways.push({ gatewayId, controllerId: existing?.controllerId || 'controller', status: 'revoked', approved: false, revoked: true, method: existing?.method || null });
     settings.set(CONTROLLER_GATEWAYS_NAME, gateways); secrets.clear?.(`controller.gateway.${gatewayId}`); secrets.clear?.(`controller.gateway.publicKey.${gatewayId}`);
-    return { ok: true, restartRequired: true };
+    return { ok: true, gateway: { gatewayId, controllerId: existing?.controllerId || 'controller', status: 'revoked', approved: false, revoked: true, trusted: false, method: existing?.method || null }, restartRequired: true };
   });
   api.get('/gateways', () => ({ ok: true, gateways: service.listGateways?.() ?? service.listLiveGateways() }));
   api.get('/operations', ({ query = {} } = {}) => {
