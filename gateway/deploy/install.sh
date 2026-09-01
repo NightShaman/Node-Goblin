@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install the dependency-free gateway package. Run as root on a systemd Linux host.
+# Install the dependency-free Node Goblin package. Run as root on a systemd Linux host.
 set -eu
 
 UID_VALUE=4226
@@ -22,7 +22,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 root_path() { printf '%s%s\n' "${ROOT%/}" "$1"; }
-[ -d "$SOURCE" ] || { echo "gateway source directory not found: $SOURCE" >&2; exit 1; }
+[ -d "$SOURCE" ] || { echo "Node Goblin source directory not found: $SOURCE" >&2; exit 1; }
 if [ "$ROOT" = / ] && [ "$(id -u)" -ne 0 ]; then
   echo "installer must run as root (use --root with --skip-account for non-root package tests)" >&2
   exit 1
@@ -66,8 +66,13 @@ if [ ! -e "$CONFIG_DIR/gateway.env" ]; then
 fi
 
 if [ "$NO_SYSTEMD" = false ] && [ "$ROOT" = / ]; then
+  CONFIG_FILE="$CONFIG_DIR/gateway.env"
+  controller_url=$(sed -n "s/^BURROW_GATEWAY_CONTROLLER_URL=//p" "$CONFIG_FILE" | tail -n 1)
+  gateway_id=$(sed -n "s/^BURROW_GATEWAY_ID=//p" "$CONFIG_FILE" | tail -n 1)
+  case "$controller_url" in ""|*controller.example*|*replace-with*) echo "configure BURROW_GATEWAY_CONTROLLER_URL before starting Node Goblin" >&2; exit 1;; esac
+  case "$gateway_id" in ""|*replace-with*) echo "configure BURROW_GATEWAY_ID before starting Node Goblin" >&2; exit 1;; esac
   command -v systemctl >/dev/null || { echo "systemctl is required; use --no-systemd only for staging" >&2; exit 1; }
   systemctl daemon-reload
   systemctl enable --now burrow-host-gateway.service
 fi
-echo "burrow-host-gateway installed; configure $CONFIG_DIR/gateway.env without placing secrets on command lines."
+echo "Node Goblin installed; configure $CONFIG_DIR/gateway.env without placing secrets on command lines."

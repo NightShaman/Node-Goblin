@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { authenticationProof, enrollController, OutboundGatewayTransport, readControllerTrust } from './lib/network-transport.mjs';
+import { controllerIdentity } from './lib/pairing.mjs';
 
 class FakeSocket extends EventEmitter {
   constructor() { super(); this.writes = []; this.destroyed = false; this.writable = true; }
@@ -131,4 +132,37 @@ test('authenticated cancellation emits correlated terminal cancellation evidence
     assert.equal(terminal.operationId, 'cancel-op');
     assert.equal(terminal.evidence.cancelled, true);
   } finally { transport.stop(); }
+});
+
+test('no-CA first pairing permits only bootstrap TLS, pins the approved controller certificate, and rejects a changed certificate', () => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-pair-pin-'));
+  const sockets = [];
+  const certificate = (text) => Buffer.from(text);
+  const transport = new OutboundGatewayTransport({
+    host: 'controller.test', port: 7443, gatewayId: 'goblin-1', stateDir,
+    reconnectMinMs: 10000, reconnectMaxMs: 10000,
+    tlsConnect: (options) => { const socket = new FakeSocket(); socket.options = options; socket.raw = certificate('controller-certificate-one'); socket.getPeerCertificate = () => ({ raw: socket.raw }); sockets.push(socket); return socket; },
+  }).start();
+  try {
+    assert.equal(sockets[0].options.rejectUnauthorized, false);
+    sockets[0].emit('secureConnect');
+    const controller = controllerIdentity();
+    const nonce = '0123456789abcdef';
+    sockets[0].feed({ type: 'auth.challenge', nonce, controllerPublicKey: controller.publicKey });
+    const response = sockets[0].messages()[0];
+    assert.equal(response.nodePublicKey != null, true);
+    sockets[0].feed({ type: 'pairing.pending', pairingCode: 'ABCD-1234-5678' });
+    sockets[0].feed({ type: 'auth.ok', connectionId: 'approved-1' });
+    const saved = JSON.parse(fs.readFileSync(path.join(stateDir, 'node-identity.json'), 'utf8'));
+    assert.equal(typeof saved.controllerTlsFingerprint, 'string'); assert.equal(saved.controllerPublicKey, controller.publicKey);
+    sockets[0].destroy(); transport.timer && clearTimeout(transport.timer); transport.timer = null; transport.connect();
+    assert.equal(sockets[1].options.rejectUnauthorized, false);
+    sockets[1].emit('secureConnect');
+    sockets[1].feed({ type: 'auth.challenge', nonce: 'fedcba9876543210', controllerPublicKey: controller.publicKey });
+    assert.equal(sockets[1].messages()[0].nodePublicKey != null, true);
+    sockets[1].feed({ type: 'auth.ok', connectionId: 'approved-2' }); assert.equal(transport.authenticated, true);
+    sockets[1].destroy(); transport.timer && clearTimeout(transport.timer); transport.timer = null; transport.connect();
+    sockets[2].raw = certificate('attacker-certificate'); sockets[2].emit('secureConnect');
+    assert.equal(sockets[2].destroyed, true);
+  } finally { transport.stop(); fs.rmSync(stateDir, { recursive: true, force: true }); }
 });

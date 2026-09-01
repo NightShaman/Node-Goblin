@@ -15,7 +15,7 @@ const target = { id: 'aap-host', name: 'AAP Host', baseUrl: 'http://127.0.0.1:42
 
 test('retains legacy target registry API while adding controller operational routes', async () => {
   const value = await readyHarness({ controllerService: { state: () => ({ enabled: false, host: '127.0.0.1', port: 7443, running: false }), listLiveGateways: () => [], close() {} } });
-  assert.deepEqual([...value.routes.keys()], ['GET /targets', 'POST /targets', 'PUT /targets/:id', 'DELETE /targets/:id', 'GET /controller', 'PUT /controller', 'PUT /controller/tls', 'DELETE /controller/tls', 'GET /gateway-trust', 'PUT /gateway-trust/:gatewayId', 'DELETE /gateway-trust/:gatewayId', 'GET /gateways', 'GET /operations', 'POST /gateways/:gatewayId/processes', 'POST /gateways/:gatewayId/operations/:operationId/cancel']);
+  assert.deepEqual([...value.routes.keys()], ['GET /targets', 'POST /targets', 'PUT /targets/:id', 'DELETE /targets/:id', 'GET /controller', 'PUT /controller', 'PUT /controller/tls', 'DELETE /controller/tls', 'GET /pairings', 'POST /pairings/:gatewayId/approve', 'POST /pairings/:gatewayId/reject', 'GET /gateway-trust', 'PUT /gateway-trust/:gatewayId', 'DELETE /gateway-trust/:gatewayId', 'GET /gateways', 'GET /operations', 'POST /gateways/:gatewayId/processes', 'POST /gateways/:gatewayId/operations/:operationId/cancel']);
   const created = value.routes.get('POST /targets')({ body: target });
   assert.equal(created.status, 201); assert.deepEqual(created.body, { ok: true, target }); assert.deepEqual(value.values.get('targets'), [target]);
   assert.deepEqual(value.routes.get('GET /targets')({}), { ok: true, targets: [target] });
@@ -136,7 +136,7 @@ test('controller service starts only from encrypted secrets, never exposes them,
       return { listen() {}, close() { closed = true; }, listLiveGateways: () => [], dispatchProcessExec: async () => ({ response: { result: { diagnostic: 'shared-secret' } } }) };
     },
   });
-  assert.deepEqual(service.state(), { enabled: true, host: '127.0.0.1', port: 7443, running: true, tls: { configured: true, ready: true, keyConfigured: true, certConfigured: true, caConfigured: false } }); assert.equal(options.gateways[0].secret, 'shared-secret'); assert.equal(JSON.stringify(service.state()).includes('secret'), false);
+  assert.deepEqual(service.state(), { enabled: true, host: '127.0.0.1', port: 7443, running: true, tls: { configured: true, ready: true, keyConfigured: true, certConfigured: true, caConfigured: false, source: 'configured', createdAt: null, expiresAt: null, rotateAfter: null, host: null } }); assert.equal(options.gateways[0].secret, 'shared-secret'); assert.equal(JSON.stringify(service.state()).includes('secret'), false);
   assert.equal(JSON.stringify(await service.dispatchProcessExec('host-1', { operationId: 'op-1' })).includes('shared-secret'), false); service.close(); assert.equal(closed, true);
 });
 
@@ -152,4 +152,18 @@ test('operation correlation survives controller recreation and permits identical
   recovered.terminal('op-durable', { response: { result: { operationId: 'op-durable', replay: true, outcome: { exitCode: 0 } } } });
   assert.deepEqual(recovered.get('op-durable').terminalReference.replay, true);
   assert.equal(recovered.get('op-durable').parentRunId, 'run-1');
+});
+
+
+test('enabled controller generates long-lived host-bound TLS into secrets and exposes metadata only', () => {
+  const value = harness(); value.settings.set('controller', { enabled: true, host: 'controller.example.test', port: 7443 });
+  let options;
+  const service = createControllerService({ settings: value.settings, secrets: value.secrets, listenerFactory: (entry) => (options = entry, { listen() {}, close() {}, listLiveGateways: () => [] }) });
+  const state = service.state();
+  assert.equal(state.running, true); assert.equal(state.tls.source, 'generated');
+  assert.equal(state.tls.host, 'controller.example.test'); assert.equal(typeof state.tls.expiresAt, 'string');
+  assert.equal(state.tls.rotateAfter < state.tls.expiresAt, true);
+  assert.match(value.secretValues.get('controller.tls.key'), /PRIVATE KEY/); assert.match(value.secretValues.get('controller.tls.cert'), /CERTIFICATE/);
+  assert.match(options.serverOptions.cert, /CERTIFICATE/); assert.equal(JSON.stringify(state).includes('PRIVATE KEY'), false); assert.equal(JSON.stringify(state).includes('CERTIFICATE'), false);
+  service.close();
 });

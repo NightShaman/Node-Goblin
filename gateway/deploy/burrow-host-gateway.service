@@ -1,5 +1,5 @@
 [Unit]
-Description=Burrow Host Gateway (outbound controller client)
+Description=Burrow Node Goblin (outbound controller client)
 Documentation=https://github.com/NightShaman/burrow-mod-remote-nodes
 Wants=network-online.target
 After=network-online.target

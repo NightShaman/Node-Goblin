@@ -1,9 +1,17 @@
 import { createHash } from 'node:crypto';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { controllerIdentity } from '../gateway/index.mjs';
 import { GatewayControllerListener, canonicalize } from '../gateway/index.mjs';
 
 const SETTINGS_NAME = 'targets';
 const CONTROLLER_SETTINGS_NAME = 'controller';
 const CONTROLLER_GATEWAYS_NAME = 'controllerGateways';
+const PENDING_PAIRINGS_NAME = 'pendingNodeGoblinPairings';
+const TLS_METADATA_NAME = 'controllerTlsMetadata';
 const TARGET_ID = /^[a-z0-9][a-z0-9._-]*$/i;
 const OPERATION_ID = /^[a-z0-9][a-z0-9._:-]{0,255}$/i;
 
@@ -81,6 +89,31 @@ function configuredGatewayIdentities(settings, secrets) {
   });
 }
 
+function pendingPairings(settings) { const values = settings.get(PENDING_PAIRINGS_NAME, []); return Array.isArray(values) ? values.filter((value) => value?.gatewayId && value?.publicKey && value.status === 'pending') : []; }
+
+function controllerTlsMetadata(settings) {
+  const value = settings?.get?.(TLS_METADATA_NAME, null);
+  return value && typeof value === 'object' ? value : null;
+}
+
+// TLS private material is written only to a mode-0700 temporary directory, read
+// into encrypted mod secrets, then removed. Neither the key nor certificate is
+// an openssl command argument or emitted to logs.
+function generateControllerTls(host) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'burrow-controller-tls-'));
+  const keyFile = path.join(directory, 'key.pem');
+  const certFile = path.join(directory, 'cert.pem');
+  const san = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.includes(':') ? `IP:${host}` : `DNS:${host}`;
+  try {
+    execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:3072', '-nodes', '-sha256', '-days', '3650', '-subj', '/CN=Burrow Remote Nodes Controller', '-addext', `subjectAltName=${san}`, '-keyout', keyFile, '-out', certFile], { stdio: 'pipe' });
+    const key = fs.readFileSync(keyFile, 'utf8');
+    const cert = fs.readFileSync(certFile, 'utf8');
+    if (!key.includes('PRIVATE KEY') || !cert.includes('CERTIFICATE')) throw new Error('generated_tls_invalid');
+    const createdAt = new Date().toISOString();
+    return { key, cert, metadata: { source: 'generated', algorithm: 'rsa-3072', host, subjectAltName: san, createdAt, expiresAt: new Date(Date.now() + 3650 * 24 * 60 * 60 * 1000).toISOString(), rotateAfter: new Date(Date.now() + 9 * 365 * 24 * 60 * 60 * 1000).toISOString(), fingerprintSha256: crypto.createHash('sha256').update(cert).digest('hex') } };
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+}
+
 function gatewayRecords(settings, secrets) {
   const configured = settings.get(CONTROLLER_GATEWAYS_NAME, []);
   if (!Array.isArray(configured)) return [];
@@ -89,7 +122,8 @@ function gatewayRecords(settings, secrets) {
     const controllerId = String(value?.controllerId ?? 'controller').trim();
     if (!TARGET_ID.test(gatewayId) || !controllerId) return [];
     const secret = secrets?.get?.(`controller.gateway.${gatewayId}`);
-    return secret ? [{ gatewayId, controllerId, secret }] : [];
+    const publicKey = secrets?.get?.(`controller.gateway.publicKey.${gatewayId}`) || value.publicKey;
+    return secret ? [{ gatewayId, controllerId, secret, publicKey }] : (publicKey ? [{ gatewayId, controllerId, secret: '', publicKey }] : []);
   });
 }
 
@@ -270,18 +304,34 @@ export function createProcessController(service, { logger = console, operationSt
 export function createControllerService({ settings, secrets, listenerFactory = (options) => new GatewayControllerListener(options), logger = console } = {}) {
   const config = storedControllerConfig(settings);
   const records = gatewayRecords(settings, secrets);
+  let pairingIdentity; const savedPairingIdentity = secrets?.get?.('controller.pairing.identity');
+  try { pairingIdentity = savedPairingIdentity ? JSON.parse(savedPairingIdentity) : null; } catch {}
+  if (!pairingIdentity?.publicKey || !pairingIdentity?.privateKey) { pairingIdentity = controllerIdentity(); secrets?.set?.('controller.pairing.identity', JSON.stringify(pairingIdentity)); }
   const secretValues = records.map((record) => record.secret);
-  const tlsConfigured = { key: Boolean(secrets?.get?.('controller.tls.key')), cert: Boolean(secrets?.get?.('controller.tls.cert')), ca: Boolean(secrets?.get?.('controller.tls.ca')) };
-  let listener = null;
+  let key = secrets?.get?.('controller.tls.key');
+  let cert = secrets?.get?.('controller.tls.cert');
+  const ca = secrets?.get?.('controller.tls.ca');
+  let tlsMetadata = controllerTlsMetadata(settings);
   let startError = null;
-  if (config.enabled) {
-    const key = secrets?.get?.('controller.tls.key');
-    const cert = secrets?.get?.('controller.tls.cert');
-    const ca = secrets?.get?.('controller.tls.ca');
+  if (config.enabled && (!key || !cert)) {
+    try {
+      const generated = generateControllerTls(config.host);
+      key = generated.key; cert = generated.cert;
+      secrets?.set?.('controller.tls.key', key); secrets?.set?.('controller.tls.cert', cert);
+      settings?.set?.(TLS_METADATA_NAME, generated.metadata); tlsMetadata = generated.metadata;
+    } catch (error) {
+      startError = 'controller_tls_generation_failed';
+      logger.error?.(`Remote Nodes controller TLS generation failed: ${String(error?.message || error)}`);
+    }
+  }
+  if (!tlsMetadata && key && cert) { tlsMetadata = { source: 'configured' }; settings?.set?.(TLS_METADATA_NAME, tlsMetadata); }
+  const tlsConfigured = { key: Boolean(key), cert: Boolean(cert), ca: Boolean(ca) };
+  let listener = null;
+  if (config.enabled && !startError) {
     if (!key || !cert) startError = 'controller_tls_credentials_missing';
     else {
       try {
-        listener = listenerFactory({ gateways: records, serverOptions: { key, cert, ...(ca ? { ca } : {}) } });
+        listener = listenerFactory({ gateways: records, pairings: pendingPairings(settings), pairingIdentity, serverOptions: { key, cert, ...(ca ? { ca } : {}) } });
         listener.listen(config.port, config.host);
       } catch (error) {
         startError = 'controller_listener_start_failed';
@@ -289,9 +339,13 @@ export function createControllerService({ settings, secrets, listenerFactory = (
       }
     }
   }
-  const state = () => ({ enabled: config.enabled, host: config.host, port: config.port, running: Boolean(listener), tls: { configured: tlsConfigured.key && tlsConfigured.cert, ready: Boolean(listener) && tlsConfigured.key && tlsConfigured.cert, keyConfigured: tlsConfigured.key, certConfigured: tlsConfigured.cert, caConfigured: tlsConfigured.ca }, ...(startError ? { error: startError } : {}) });
+  const state = () => ({ enabled: config.enabled, host: config.host, port: config.port, running: Boolean(listener), tls: { configured: tlsConfigured.key && tlsConfigured.cert, ready: Boolean(listener) && tlsConfigured.key && tlsConfigured.cert, keyConfigured: tlsConfigured.key, certConfigured: tlsConfigured.cert, caConfigured: tlsConfigured.ca, ...(tlsMetadata ? { source: tlsMetadata.source || 'configured', createdAt: tlsMetadata.createdAt || null, expiresAt: tlsMetadata.expiresAt || null, rotateAfter: tlsMetadata.rotateAfter || null, host: tlsMetadata.host || null } : {}) }, ...(startError ? { error: startError } : {}) });
+  if (listener?.on) listener.on('gatewayPairingPending', (pairing) => { const values = pendingPairings(settings); const index = values.findIndex((entry) => entry.gatewayId === pairing.gatewayId); if (index < 0) values.push(pairing); else values[index] = pairing; settings.set(PENDING_PAIRINGS_NAME, values); });
   return Object.freeze({
     state,
+    listPendingPairings: () => listener?.listPending?.() ?? pendingPairings(settings),
+    approvePairing(gatewayId) { const pairing = listener?.approvePending?.(gatewayId); if (!pairing) throw Object.assign(new Error('pairing_not_found'), { code: 'pairing_not_found' }); const gateways = configuredGatewayIdentities(settings, secrets).map(({ gatewayId, controllerId }) => ({ gatewayId, controllerId })); const index = gateways.findIndex((entry) => entry.gatewayId === gatewayId); const trusted = { gatewayId, controllerId: pairing.controllerId }; if (index < 0) gateways.push(trusted); else gateways[index] = trusted; settings.set(CONTROLLER_GATEWAYS_NAME, gateways); secrets?.set?.(`controller.gateway.publicKey.${gatewayId}`, pairing.publicKey); settings.set(PENDING_PAIRINGS_NAME, pendingPairings(settings).filter((entry) => entry.gatewayId !== gatewayId)); return { gatewayId: pairing.gatewayId, controllerId: pairing.controllerId, pairingCode: pairing.pairingCode, status: 'approved', trusted: true }; },
+    rejectPairing(gatewayId) { const pairing = listener?.rejectPending?.(gatewayId); if (!pairing) throw Object.assign(new Error('pairing_not_found'), { code: 'pairing_not_found' }); settings.set(PENDING_PAIRINGS_NAME, pendingPairings(settings).filter((entry) => entry.gatewayId !== gatewayId)); return pairing; },
     listLiveGateways: () => listener ? listener.listLiveGateways() : [],
     listGateways: () => listener
       ? (listener.listGateways?.() ?? listener.listLiveGateways())
@@ -340,15 +394,18 @@ export async function activate({ api, settings, secrets, logger, processExecutio
   api.put('/controller/tls', ({ body = {} }) => {
     const key = String(body.key ?? ''); const cert = String(body.cert ?? '');
     if (!key.trim() || !cert.trim()) throw problem('controller_tls_credentials_required');
-    secrets.set('controller.tls.key', key); secrets.set('controller.tls.cert', cert);
+    secrets.set('controller.tls.key', key); secrets.set('controller.tls.cert', cert); settings.set(TLS_METADATA_NAME, { source: 'configured' });
     if (body.ca == null || body.ca === '') secrets.clear?.('controller.tls.ca');
     else secrets.set('controller.tls.ca', String(body.ca));
     return { ok: true, restartRequired: true };
   });
   api.delete('/controller/tls', () => {
-    secrets.clear?.('controller.tls.key'); secrets.clear?.('controller.tls.cert'); secrets.clear?.('controller.tls.ca');
+    secrets.clear?.('controller.tls.key'); secrets.clear?.('controller.tls.cert'); secrets.clear?.('controller.tls.ca'); settings.delete?.(TLS_METADATA_NAME);
     return { ok: true, restartRequired: true };
   });
+  api.get('/pairings', () => ({ ok: true, pairings: service.listPendingPairings?.() ?? [] }));
+  api.post('/pairings/:gatewayId/approve', ({ params }) => ({ ok: true, pairing: service.approvePairing(cleanId(params.gatewayId)) }));
+  api.post('/pairings/:gatewayId/reject', ({ params }) => ({ ok: true, pairing: service.rejectPairing(cleanId(params.gatewayId)) }));
   api.get('/gateway-trust', () => ({ ok: true, gateways: configuredGatewayIdentities(settings, secrets) }));
   api.put('/gateway-trust/:gatewayId', ({ params, body = {} }) => {
     const identity = cleanGatewayIdentity(body, params.gatewayId);
@@ -364,7 +421,7 @@ export async function activate({ api, settings, secrets, logger, processExecutio
   api.delete('/gateway-trust/:gatewayId', ({ params }) => {
     const gatewayId = cleanId(params.gatewayId);
     const gateways = configuredGatewayIdentities(settings, secrets).filter((entry) => entry.gatewayId !== gatewayId).map(({ gatewayId: id, controllerId }) => ({ gatewayId: id, controllerId }));
-    settings.set(CONTROLLER_GATEWAYS_NAME, gateways); secrets.clear?.(`controller.gateway.${gatewayId}`);
+    settings.set(CONTROLLER_GATEWAYS_NAME, gateways); secrets.clear?.(`controller.gateway.${gatewayId}`); secrets.clear?.(`controller.gateway.publicKey.${gatewayId}`);
     return { ok: true, restartRequired: true };
   });
   api.get('/gateways', () => ({ ok: true, gateways: service.listGateways?.() ?? service.listLiveGateways() }));

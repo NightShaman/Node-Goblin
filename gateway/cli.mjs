@@ -14,7 +14,8 @@ if (process.env.BURROW_GATEWAY_CONTROLLER_URL) {
   const controller = new URL(process.env.BURROW_GATEWAY_CONTROLLER_URL);
   if (controller.protocol !== 'tls:') throw new Error('controller URL must use tls:');
   const stateDir = process.env.BURROW_GATEWAY_STATE_DIR;
-  if (!stateDir) throw new Error('BURROW_GATEWAY_STATE_DIR is required for network transport');
+  if (!stateDir) throw new Error('BURROW_GATEWAY_STATE_DIR is required for Node Goblin network transport');
+  if (!process.env.BURROW_GATEWAY_ID?.trim()) throw new Error('BURROW_GATEWAY_ID is required for Node Goblin network transport');
   const daemon = new GatewayDaemon({
     journal: new OperationJournal({ stateDir }),
     identity: { transport: 'tls-jsonl-outbound' },
@@ -30,6 +31,7 @@ if (process.env.BURROW_GATEWAY_CONTROLLER_URL) {
     key: fileFromEnv('BURROW_GATEWAY_KEY_FILE'),
     daemon,
   }).start();
+  service.on('pairingPending', ({ gatewayId, pairingCode }) => console.error(`Node Goblin pairing pending for ${gatewayId}; verify code ${pairingCode} in the controller.`));
 } else {
   service = new GatewayDaemon();
   service.start();

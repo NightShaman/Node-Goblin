@@ -304,3 +304,16 @@ Operational responses expose status without exposing credentials:
 - `GET /operations?gatewayId=<id>&limit=<1..256>` returns newest-first bounded controller activity. Each item contains only UI-safe provenance: `gatewayId`, `operationId`, `kind`, `state`, replay/reconnect flags, terminal outcome, timestamps, and duration where available. The listener retains at most 256 items by default. Request parameters, prompts, protected values/bindings, and stdout/stderr are never included.
 
 Gateway version metadata is advertised in the authenticated challenge response and accepted only after the existing HMAC proof succeeds. Older gateways that omit it remain compatible and report null version fields. A pending operation interrupted by disconnect is reported as `interrupted` with `reconnectRequired: true`; replay after reconnect becomes a terminal activity with `replay: true`.
+
+
+## Node Goblin pairing
+
+The deployed service retains its established `burrow-host-gateway` paths and service name, while **Node Goblin** is its operator-facing name. A Node Goblin without a legacy enrollment token creates a durable Ed25519 identity in its protected state directory and opens an outbound TLS connection. It remains pending and cannot execute requests until an operator compares the displayed three-group pairing code (logged by the node and returned by `GET /pairings`) and approves it with `POST /pairings/:gatewayId/approve`. Approval stores the node public-key trust in encrypted mod secrets and immediately activates the live connection. Reconnects must prove possession of precisely that same key. `POST /pairings/:gatewayId/reject` disconnects the pending node and removes its request. Pending records are durable for visibility after controller recreation, but a stale request cannot be approved: approval requires its original live nonce-bound connection.
+
+Legacy HMAC enrollment remains supported for existing deployments. Pairing codes derive from the signed challenge transcript; no private key is returned by pairing, trust, status, or controller APIs. The daemon currently advertises its existing package version; this repository does not claim a SemVer migration when a calendar build version is unavailable.
+
+### Controller TLS and Node Goblin first pairing
+
+When the controller listener is enabled and no controller TLS material has been configured, the mod generates a self-signed RSA TLS certificate for the configured controller host and stores its private key and certificate in encrypted mod secrets. The controller API reports only safe lifecycle metadata (`source`, host, creation, expiry, and suggested rotation dates), never TLS material. A supplied key/certificate remains supported and is reported as `configured`.
+
+A fresh Node Goblin may connect without `BURROW_GATEWAY_CA_FILE` only for its pending pairing transcript. Compare the displayed pairing code in the Node Goblin and controller, then approve it. On approval the Node Goblin records both the controller pairing public key and TLS certificate SHA-256 pin in its protected state directory; later connections reject a changed controller TLS certificate or pairing identity. Existing pre-enrolled/HMAC nodes and deployments that set `BURROW_GATEWAY_CA_FILE` retain normal strict TLS verification; do not omit a CA for those deployments.

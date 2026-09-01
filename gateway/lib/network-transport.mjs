@@ -4,6 +4,7 @@ import path from 'node:path';
 import tls from 'node:tls';
 import { EventEmitter } from 'node:events';
 import { GatewayDaemon } from './daemon.mjs';
+import { loadNodeIdentity, signPairing, pairingCode } from './pairing.mjs';
 
 const AUTH_CONTEXT = 'burrow-host-gateway-auth-v1';
 
@@ -30,6 +31,13 @@ export function enrollController({ stateDir, token, controllerId = 'controller' 
   fs.renameSync(temporary, file);
   fs.chmodSync(file, 0o600);
   return trust;
+}
+
+function persistNodeIdentity(stateDir, identity) {
+  const file = path.join(stateDir, 'node-identity.json');
+  const temporary = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  fs.writeFileSync(temporary, `${JSON.stringify(identity)}\n`, { mode: 0o600, flag: 'wx' });
+  fs.renameSync(temporary, file); fs.chmodSync(file, 0o600);
 }
 
 export function readControllerTrust(stateDir) {
@@ -61,8 +69,14 @@ export class OutboundGatewayTransport extends EventEmitter {
     this.port = Number(port);
     if (!Number.isInteger(this.port) || this.port < 1 || this.port > 65535) throw new Error('invalid_port');
     this.gatewayId = requireText(gatewayId, 'gateway_id');
-    this.trust = enrollController({ stateDir, token: enrollmentToken });
-    this.tlsOptions = { host: this.host, port: this.port, servername, rejectUnauthorized: true, ca, cert, key };
+    this.trust = enrollmentToken ? enrollController({ stateDir, token: enrollmentToken }) : (fs.existsSync(enrollmentPath(stateDir)) ? readControllerTrust(stateDir) : null);
+    this.nodeIdentity = loadNodeIdentity(stateDir); this.stateDir = stateDir; this.pendingControllerPublicKey = null; this.pendingControllerTlsFingerprint = null;
+    this.hasExplicitCa = Boolean(ca);
+    // Only an entirely unpaired node without an explicit CA gets a temporary
+    // unauthenticated TLS channel for the pairing-code transcript.
+    this.pinnedTlsFingerprint = this.nodeIdentity.controllerTlsFingerprint || null;
+    const pairingBootstrap = !this.hasExplicitCa && !this.trust && !this.nodeIdentity.controllerPublicKey && !this.pinnedTlsFingerprint;
+    this.tlsOptions = { host: this.host, port: this.port, servername, rejectUnauthorized: pairingBootstrap || Boolean(this.pinnedTlsFingerprint) ? false : true, ca, cert, key };
     this.reconnectMinMs = reconnectMinMs;
     this.reconnectMaxMs = reconnectMaxMs;
     this.tlsConnect = tlsConnect;
@@ -98,7 +112,16 @@ export class OutboundGatewayTransport extends EventEmitter {
     this.socket = socket;
     this.output.socket = socket;
     socket.setEncoding('utf8');
-    socket.on('secureConnect', () => this.emit('connected'));
+    socket.on('secureConnect', () => {
+      const raw = socket.getPeerCertificate?.(true)?.raw;
+      const fingerprint = raw ? crypto.createHash('sha256').update(raw).digest('hex') : null;
+      const pinned = typeof this.pinnedTlsFingerprint === 'string' && /^[0-9a-f]{64}$/i.test(this.pinnedTlsFingerprint) ? this.pinnedTlsFingerprint : null;
+      if (this.pinnedTlsFingerprint && (!pinned || !fingerprint || !crypto.timingSafeEqual(Buffer.from(pinned, 'hex'), Buffer.from(fingerprint, 'hex')))) {
+        const error = new Error('controller_tls_identity_mismatch'); error.code = 'controller_tls_identity_mismatch'; this.emit('connectionError', error); socket.destroy(); return;
+      }
+      this.pendingControllerTlsFingerprint = fingerprint;
+      this.emit('connected');
+    });
     socket.on('data', (chunk) => this.onData(chunk));
     socket.on('error', (error) => this.emit('connectionError', error));
     socket.on('close', () => {
@@ -149,11 +172,13 @@ export class OutboundGatewayTransport extends EventEmitter {
     }
     if (!this.authenticated) {
       if (message?.type === 'auth.challenge' && typeof message.nonce === 'string' && message.nonce.length >= 16) {
+        this.pendingControllerPublicKey = message.controllerPublicKey;
+        if (!this.trust && (!message.controllerPublicKey || (this.nodeIdentity.controllerPublicKey && this.nodeIdentity.controllerPublicKey !== message.controllerPublicKey))) { this.reject('controller_identity_mismatch'); this.socket.destroy(); return; }
         this.send({
           type: 'auth.response',
           gatewayId: this.gatewayId,
-          controllerId: this.trust.controllerId,
-          proof: authenticationProof(this.trust.secret, this.gatewayId, message.nonce),
+          controllerId: this.trust?.controllerId ?? 'controller',
+          ...(this.trust ? { proof: authenticationProof(this.trust.secret, this.gatewayId, message.nonce) } : { nodePublicKey: this.nodeIdentity.publicKey, pairingSignature: signPairing(this.nodeIdentity, message.nonce, this.gatewayId, message.controllerPublicKey), pairingCode: pairingCode({ nonce: message.nonce, gatewayId: this.gatewayId, gatewayPublicKey: this.nodeIdentity.publicKey, controllerPublicKey: message.controllerPublicKey }) }),
           gateway: {
             name: this.daemon.identity.name,
             version: this.daemon.identity.version,
@@ -163,8 +188,20 @@ export class OutboundGatewayTransport extends EventEmitter {
         this.proofSent = true;
         return;
       }
+      if (message?.type === 'pairing.pending' && this.proofSent && typeof message.pairingCode === 'string') {
+        // Pending sockets deliberately never receive daemon requests. Expose the transcript code for operator comparison.
+        this.emit('pairingPending', { gatewayId: this.gatewayId, pairingCode: message.pairingCode });
+        return;
+      }
       if (message?.type === 'auth.ok' && this.proofSent) {
         this.authenticated = true;
+        if (!this.trust && !this.nodeIdentity.controllerPublicKey) {
+          if (!this.pendingControllerPublicKey || !this.pendingControllerTlsFingerprint) { this.reject('controller_identity_missing'); this.socket.destroy(); return; }
+          this.nodeIdentity.controllerPublicKey = this.pendingControllerPublicKey;
+          this.nodeIdentity.controllerTlsFingerprint = this.pendingControllerTlsFingerprint;
+          this.pinnedTlsFingerprint = this.pendingControllerTlsFingerprint;
+          persistNodeIdentity(this.stateDir, this.nodeIdentity);
+        }
         this.connectionId = typeof message.connectionId === 'string' ? message.connectionId : null;
         this.daemon.secureTransportContext = this.connectionId
           ? { gatewayId: this.gatewayId, connectionId: this.connectionId } : null;
