@@ -12,7 +12,7 @@ Environment=BURROW_GATEWAY_STATE_DIR=/var/lib/burrow-host-gateway
 EnvironmentFile=-/etc/burrow-host-gateway/gateway.env
 WorkingDirectory=/opt/burrow-host-gateway
 ExecStart=/usr/bin/env node /opt/burrow-host-gateway/cli.mjs
-Restart=on-failure
+Restart=always
 RestartSec=5s
 UMask=0077
 NoNewPrivileges=yes

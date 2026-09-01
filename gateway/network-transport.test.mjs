@@ -97,6 +97,23 @@ test('authenticated execution correlates accepted, terminal evidence, and respon
   } finally { transport.stop(); }
 });
 
+test('disconnect keeps the daemon alive while waiting to reconnect', () => {
+  const { transport, sockets } = fixture({ reconnectMinMs: 10000, reconnectMaxMs: 10000 });
+  try {
+    sockets[0].destroy();
+    assert.equal(transport.timer?.hasRef?.(), true);
+  } finally { transport.stop(); }
+});
+
+test('TLS ServerName defaults to hostnames and is omitted for IP controllers', () => {
+  const hostname = fixture();
+  const ip = fixture({ host: '10.10.20.110' });
+  try {
+    assert.equal(hostname.transport.tlsOptions.servername, 'controller.test');
+    assert.equal(Object.hasOwn(ip.transport.tlsOptions, 'servername'), false);
+  } finally { hostname.transport.stop(); ip.transport.stop(); }
+});
+
 test('disconnect reconnects, reauthenticates, and replays completed operation', async () => {
   const { transport, sockets } = fixture();
   try {

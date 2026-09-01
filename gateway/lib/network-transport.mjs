@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import net from 'node:net';
 import tls from 'node:tls';
 import { EventEmitter } from 'node:events';
 import { GatewayDaemon } from './daemon.mjs';
@@ -63,7 +64,7 @@ class SocketOutput {
 }
 
 export class OutboundGatewayTransport extends EventEmitter {
-  constructor({ host, port, gatewayId = process.env.HOSTNAME || 'gateway', stateDir, enrollmentToken, ca, cert, key, servername = host, reconnectMinMs = 100, reconnectMaxMs = 5000, daemon, tlsConnect = tls.connect } = {}) {
+  constructor({ host, port, gatewayId = process.env.HOSTNAME || 'gateway', stateDir, enrollmentToken, ca, cert, key, servername, reconnectMinMs = 100, reconnectMaxMs = 5000, daemon, tlsConnect = tls.connect } = {}) {
     super();
     this.host = requireText(host, 'host');
     this.port = Number(port);
@@ -76,7 +77,8 @@ export class OutboundGatewayTransport extends EventEmitter {
     // unauthenticated TLS channel for the pairing-code transcript.
     this.pinnedTlsFingerprint = this.nodeIdentity.controllerTlsFingerprint || null;
     const pairingBootstrap = !this.hasExplicitCa && !this.trust && !this.nodeIdentity.controllerPublicKey && !this.pinnedTlsFingerprint;
-    this.tlsOptions = { host: this.host, port: this.port, servername, rejectUnauthorized: pairingBootstrap || Boolean(this.pinnedTlsFingerprint) ? false : true, ca, cert, key };
+    const tlsServername = servername === undefined ? (net.isIP(this.host) ? undefined : this.host) : servername;
+    this.tlsOptions = { host: this.host, port: this.port, ...(tlsServername ? { servername: tlsServername } : {}), rejectUnauthorized: pairingBootstrap || Boolean(this.pinnedTlsFingerprint) ? false : true, ca, cert, key };
     this.reconnectMinMs = reconnectMinMs;
     this.reconnectMaxMs = reconnectMaxMs;
     this.tlsConnect = tlsConnect;
@@ -137,8 +139,9 @@ export class OutboundGatewayTransport extends EventEmitter {
   scheduleReconnect() {
     if (this.stopped || this.timer) return;
     const delay = Math.min(this.reconnectMaxMs, this.reconnectMinMs * (2 ** this.attempt++));
+    // Keep the retry timer referenced: it may be the only event-loop handle after
+    // a controller disconnect, and the daemon must remain alive to reconnect.
     this.timer = setTimeout(() => { this.timer = null; this.connect(); }, delay);
-    this.timer.unref?.();
   }
 
   send(message) {
