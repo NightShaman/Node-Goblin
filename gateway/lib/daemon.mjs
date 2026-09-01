@@ -14,7 +14,7 @@ export class GatewayDaemon {
     this.journal = journal;
     this.identity = {
       name: 'burrow-host-gateway',
-      version: '1.0.0',
+      version: '2026.09.01',
       protocolVersion: PROTOCOL_VERSION,
       transport: 'stdio-jsonl',
       ...identity,

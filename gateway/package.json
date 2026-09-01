@@ -1,7 +1,7 @@
 {
   "name": "@burrow/host-gateway",
   "private": true,
-  "version": "1.0.0",
+  "version": "2026.9.1",
   "type": "module",
   "description": "Standalone Burrow host gateway daemon over versioned JSON lines stdio",
   "bin": {

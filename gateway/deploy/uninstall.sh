@@ -17,6 +17,7 @@ if [ "$NO_SYSTEMD" = false ] && [ "$ROOT" = / ]; then
   systemctl disable --now burrow-host-gateway.service || true
 fi
 rm -f "$(path /etc/systemd/system/burrow-host-gateway.service)"
+rm -f "$(path /usr/local/bin/node-goblin)" "$(path /usr/local/bin/burrow-host-gateway)"
 rm -rf "$(path /opt/burrow-host-gateway)"
 if [ "$NO_SYSTEMD" = false ] && [ "$ROOT" = / ]; then systemctl daemon-reload; fi
 echo "Removed program and unit. Preserved /etc/burrow-host-gateway, /var/lib/burrow-host-gateway, and burrow UID/GID 4226."

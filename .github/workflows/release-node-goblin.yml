@@ -1,0 +1,41 @@
+name: Release Node Goblin
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tag and package version
+        run: |
+          set -eu
+          version=$(cat gateway/VERSION)
+          if [ "${GITHUB_REF_TYPE:-}" = tag ]; then
+            [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "tag $GITHUB_REF_NAME does not match gateway/VERSION $version" >&2; exit 1; }
+          fi
+          (cd gateway && npm test)
+      - name: Build release assets
+        run: |
+          set -eu
+          SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD) gateway/deploy/build-release.sh gateway/dist
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          version=$(cat gateway/VERSION)
+          tag="v$version"
+          if ! git rev-parse "$tag" >/dev/null 2>&1; then
+            git tag "$tag"
+            git push origin "$tag"
+          fi
+          gh release view "$tag" >/dev/null 2>&1 \
+            || gh release create "$tag" --title "Node Goblin $version" --notes "Calendar-versioned Node Goblin release $version."
+          gh release upload "$tag" gateway/dist/node-goblin-$version.tar.gz gateway/dist/node-goblin-$version.tar.gz.sha256 --clobber

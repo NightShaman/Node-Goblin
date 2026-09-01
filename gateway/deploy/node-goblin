@@ -1,0 +1,63 @@
+#!/bin/sh
+# Operator interface for the systemd Node Goblin package.
+set -eu
+ROOT=${BURROW_GATEWAY_ROOT:-/}
+SYSTEMCTL=${SYSTEMCTL:-systemctl}
+SERVICE=burrow-host-gateway.service
+usage() {
+  cat >&2 <<'EOF'
+usage: node-goblin configure [CONTROLLER_ADDRESS NODE_ID]
+       node-goblin connect
+       node-goblin status
+
+configure prompts for omitted, non-secret values. Existing enrollment and TLS
+settings are preserved. Put secrets in the protected configuration file, never
+in command arguments.
+EOF
+}
+path() { printf '%s%s\n' "${ROOT%/}" "$1"; }
+need_root() { [ "$ROOT" != / ] || [ "$(id -u)" -eq 0 ] || { echo "node-goblin $1 must run as root" >&2; exit 1; }; }
+config=$(path /etc/burrow-host-gateway/gateway.env)
+
+command=${1:-}; [ "$#" -eq 0 ] || shift
+case "$command" in
+  configure)
+    need_root configure
+    controller=${1:-}; node_id=${2:-}; [ "$#" -le 2 ] || { usage; exit 2; }
+    if [ -z "$controller" ]; then printf 'Controller address (host:port or tls://host:port): ' >&2; IFS= read -r controller; fi
+    if [ -z "$node_id" ]; then printf 'Node ID: ' >&2; IFS= read -r node_id; fi
+    case "$controller" in tls://*) ;; *://*) echo "controller address must use tls://" >&2; exit 2;; *:*) controller="tls://$controller";; *) echo "controller address must include a port" >&2; exit 2;; esac
+    case "$controller" in *[!A-Za-z0-9._:/\[\]-]*) echo "controller address contains unsupported characters" >&2; exit 2;; esac
+    case "$node_id" in ""|*[!A-Za-z0-9._-]*) echo "node ID may contain only letters, digits, dot, underscore, and hyphen" >&2; exit 2;; esac
+    mkdir -p "$(dirname "$config")"
+    tmp="$config.new.$$"; trap 'rm -f "$tmp"' EXIT HUP INT TERM
+    if [ -f "$config" ]; then
+      awk '!/^BURROW_GATEWAY_CONTROLLER_URL=/ && !/^BURROW_GATEWAY_ID=/' "$config" >"$tmp"
+    else : >"$tmp"; fi
+    printf 'BURROW_GATEWAY_CONTROLLER_URL=%s\nBURROW_GATEWAY_ID=%s\n' "$controller" "$node_id" >>"$tmp"
+    chmod 0640 "$tmp"
+    if [ "$ROOT" = / ] && getent group burrow >/dev/null 2>&1; then chown root:burrow "$tmp"; fi
+    mv "$tmp" "$config"; trap - EXIT HUP INT TERM
+    echo "Configured Node Goblin $node_id for $controller in $config."
+    echo "Run 'sudo node-goblin connect' to start and verify it."
+    ;;
+  connect)
+    [ "$#" -eq 0 ] || { usage; exit 2; }; need_root connect
+    [ "$ROOT" = / ] || { echo "connect is unavailable under a staging root" >&2; exit 1; }
+    [ -r "$config" ] || { echo "missing configuration; run 'sudo node-goblin configure' first" >&2; exit 1; }
+    grep -q '^BURROW_GATEWAY_CONTROLLER_URL=tls://.' "$config" || { echo "controller is not configured" >&2; exit 1; }
+    grep -q '^BURROW_GATEWAY_ID=.' "$config" || { echo "node ID is not configured" >&2; exit 1; }
+    command -v "$SYSTEMCTL" >/dev/null 2>&1 || { echo "systemctl is required" >&2; exit 1; }
+    "$SYSTEMCTL" daemon-reload
+    "$SYSTEMCTL" enable --now "$SERVICE"
+    "$SYSTEMCTL" is-active --quiet "$SERVICE" || { "$SYSTEMCTL" status --no-pager "$SERVICE" >&2 || true; echo "Node Goblin did not become active" >&2; exit 1; }
+    echo "Node Goblin is active. On first connection, compare its pairing code with the controller."
+    ;;
+  status)
+    [ "$#" -eq 0 ] || { usage; exit 2; }
+    [ "$ROOT" = / ] || { echo "status is unavailable under a staging root" >&2; exit 1; }
+    exec "$SYSTEMCTL" status --no-pager "$SERVICE"
+    ;;
+  -h|--help|help) usage ;;
+  *) usage; exit 2 ;;
+esac

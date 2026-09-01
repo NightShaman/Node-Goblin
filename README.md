@@ -274,19 +274,20 @@ npm test
 
 `gateway/deploy/` packages the standalone gateway for a systemd Linux host. It creates (or verifies) the dedicated ordinary `burrow` account and group with UID/GID **4226**, installs program files at `/opt/burrow-host-gateway`, durable journal/enrollment state at `/var/lib/burrow-host-gateway`, protected configuration at `/etc/burrow-host-gateway/gateway.env`, and a `burrow-host-gateway.service` unit. The service runs as `burrow:burrow`, uses an explicit state path, and only initiates its outbound TLS controller connection; it opens no inbound listener.
 
-Run the installer as root from a checked-out gateway directory:
+Install from a checked-out gateway directory or an extracted release tarball, then configure with only the controller address and stable node ID:
 
 ```bash
-cd gateway
 sudo ./deploy/install.sh
-sudoedit /etc/burrow-host-gateway/gateway.env
-sudo systemctl restart burrow-host-gateway
-sudo systemctl status burrow-host-gateway
+sudo node-goblin configure controller.example:7443 workshop-node
+sudo node-goblin connect
+node-goblin status
 ```
+
+With no arguments, `sudo node-goblin configure` prompts for those same two non-secret values. It atomically writes `/etc/burrow-host-gateway/gateway.env` as `root:burrow` mode `0640`, preserving existing enrollment and TLS settings. `connect` enables and starts `burrow-host-gateway.service`, then fails unless systemd reports it active. The legacy service, filesystem paths, `cli.mjs`, and `burrow-host-gateway` command alias remain available.
 
 Set `BURROW_GATEWAY_CONTROLLER_URL` (`tls://host:port`) and a stable `BURROW_GATEWAY_ID` in the environment file. It is read by systemd and should remain `root:burrow` mode `0640`. For first enrollment only, supply `BURROW_GATEWAY_ENROLLMENT_TOKEN` there through an out-of-band secret process, start once, then remove it: the gateway stores established trust under the state directory. Reference CA/client certificate/key **file paths** there when required. Never place tokens or PEM material in command arguments, URLs, the unit file, or repository files.
 
-Repeated installation is upgrade-safe: it replaces only `/opt/burrow-host-gateway` and the unit, preserving configuration and durable state. UID/GID collisions fail rather than silently adopting another account. It neither grants sudo nor modifies supplementary groups; those and filesystem access remain host provisioning/OS permission decisions. Uninstalling removes the service unit and program but intentionally preserves the account, `/etc/burrow-host-gateway`, and `/var/lib/burrow-host-gateway` for recovery/reinstall:
+Repeated installation is upgrade-safe: it replaces only `/opt/burrow-host-gateway`, installed commands, and the unit, preserving configuration and durable state. A normal existing `burrow` login is accepted when its primary group is also named `burrow`; otherwise the installer creates the narrow system account with UID/GID 4226. Unrelated UID/GID collisions fail rather than silently adopting another account. It neither grants sudo nor modifies supplementary groups; those and filesystem access remain host provisioning/OS permission decisions. Uninstalling removes the service unit and program but intentionally preserves the account, `/etc/burrow-host-gateway`, and `/var/lib/burrow-host-gateway` for recovery/reinstall:
 
 ```bash
 cd gateway
@@ -294,6 +295,12 @@ sudo ./deploy/uninstall.sh
 ```
 
 For package testing without root or systemd, the installer supports a non-production staging mode: `./deploy/install.sh --root /tmp/stage --skip-account --no-systemd`.
+
+### Release artifact and canonical bootstrap
+
+`gateway/VERSION` is calendar-versioned as `YYYY.MM.DD` (with an optional `.N` rebuild suffix). From `gateway/`, run `./deploy/build-release.sh`; it writes `dist/node-goblin-<version>.tar.gz` and the matching `.sha256`. The tarball has one top-level directory and is directly installable with `sudo ./node-goblin-<version>/deploy/install.sh --source ./node-goblin-<version>`.
+
+The canonical main-repository bootstrap should download exactly the release asset `node-goblin-<version>.tar.gz` and `node-goblin-<version>.tar.gz.sha256` from this repository's matching `v<version>` release, verify the checksum, extract it, and execute the contained `deploy/install.sh`. It must not download generated-main-repository files, individual branch files, npm dependencies, or place controller secrets in the download URL or installer arguments.
 
 ### Operational metadata and activity
 
@@ -310,7 +317,7 @@ Gateway version metadata is advertised in the authenticated challenge response a
 
 The deployed service retains its established `burrow-host-gateway` paths and service name, while **Node Goblin** is its operator-facing name. A Node Goblin without a legacy enrollment token creates a durable Ed25519 identity in its protected state directory and opens an outbound TLS connection. It remains pending and cannot execute requests until an operator compares the displayed three-group pairing code (logged by the node and returned by `GET /pairings`) and approves it with `POST /pairings/:gatewayId/approve`. Approval stores the node public-key trust in encrypted mod secrets and immediately activates the live connection. Reconnects must prove possession of precisely that same key. `POST /pairings/:gatewayId/reject` disconnects the pending node and removes its request. Pending records are durable for visibility after controller recreation, but a stale request cannot be approved: approval requires its original live nonce-bound connection.
 
-Legacy HMAC enrollment remains supported for existing deployments. Pairing codes derive from the signed challenge transcript; no private key is returned by pairing, trust, status, or controller APIs. The daemon currently advertises its existing package version; this repository does not claim a SemVer migration when a calendar build version is unavailable.
+Legacy HMAC enrollment remains supported for existing deployments. Pairing codes derive from the signed challenge transcript; no private key is returned by pairing, trust, status, or controller APIs. The daemon advertises the calendar build version from `gateway/VERSION` in authenticated gateway metadata.
 
 ### Controller TLS and Node Goblin first pairing
 
