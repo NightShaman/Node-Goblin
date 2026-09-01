@@ -2,40 +2,67 @@ name: Release Node Goblin
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: node-goblin-release
+  cancel-in-progress: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Verify tag and package version
-        run: |
-          set -eu
-          version=$(cat gateway/VERSION)
-          if [ "${GITHUB_REF_TYPE:-}" = tag ]; then
-            [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "tag $GITHUB_REF_NAME does not match gateway/VERSION $version" >&2; exit 1; }
-          fi
-          (cd gateway && npm test)
-      - name: Build release assets
-        run: |
-          set -eu
-          SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD) gateway/deploy/build-release.sh gateway/dist
-      - name: Publish release assets
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Assign calendar version
+        id: version
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          version=$(cat gateway/VERSION)
-          tag="v$version"
-          if ! git rev-parse "$tag" >/dev/null 2>&1; then
-            git tag "$tag"
-            git push origin "$tag"
-          fi
-          gh release view "$tag" >/dev/null 2>&1 \
-            || gh release create "$tag" --title "Node Goblin $version" --notes "Calendar-versioned Node Goblin release $version."
-          gh release upload "$tag" gateway/dist/node-goblin-$version.tar.gz gateway/dist/node-goblin-$version.tar.gz.sha256 --clobber
+          base=$(date -u +%Y.%m.%d)
+          version=$base
+          suffix=0
+          while gh release view "v$version" >/dev/null 2>&1; do
+            suffix=$((suffix + 1))
+            version="$base.$suffix"
+          done
+          printf '%s\n' "$version" > gateway/VERSION
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+      - name: Verify and build release assets
+        run: |
+          set -eu
+          (cd gateway && npm test)
+          SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD) gateway/deploy/build-release.sh gateway/dist
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -eu
+          tag="v$VERSION"
+          git tag "$tag"
+          git push origin "$tag"
+          gh release create "$tag" \
+            --title "Node Goblin $VERSION" \
+            --notes "Calendar-versioned Node Goblin release $VERSION from source $GITHUB_SHA." \
+            "gateway/dist/node-goblin-$VERSION.tar.gz" \
+            "gateway/dist/node-goblin-$VERSION.tar.gz.sha256"
+      - name: Dispatch public Burrow release
+        env:
+          GH_TOKEN: ${{ secrets.BURROW_SOURCE_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -eu
+          gh api repos/NightShaman/Burrow/dispatches \
+            --method POST \
+            -f event_type=source-updated \
+            -f client_payload[source_repository]="$GITHUB_REPOSITORY" \
+            -f client_payload[source_sha]="$GITHUB_SHA" \
+            -f client_payload[node_goblin_version]="$VERSION"
