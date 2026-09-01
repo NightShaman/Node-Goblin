@@ -56,7 +56,7 @@ jobs:
             "gateway/dist/node-goblin-$VERSION.tar.gz.sha256"
       - name: Dispatch public Burrow release
         env:
-          GH_TOKEN: ${{ secrets.BURROW_SOURCE_TOKEN }}
+          GH_TOKEN: ${{ secrets.BURROW_DISPATCH_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -eu
