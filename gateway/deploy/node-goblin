@@ -75,6 +75,11 @@ fs.chmodSync(file, 0o600);
 NODE
     fi
     rm -f "$state/controller-trust.json"
+    # unpair runs as root but the daemon runs as burrow; retain its exclusive
+    # read/write access to the preserved node identity after rewriting it.
+    if [ "$ROOT" = / ] && getent passwd burrow >/dev/null 2>&1; then
+      chown burrow:burrow "$identity" 2>/dev/null || true
+    fi
     echo "Removed controller trust. Run 'sudo node-goblin connect' to pair with the configured controller."
     ;;
   status)
