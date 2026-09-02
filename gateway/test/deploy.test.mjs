@@ -23,6 +23,7 @@ test('host package installer stages idempotently without root or systemd and pre
     assert.equal(fs.existsSync(path.join(root, 'opt/burrow-host-gateway/cli.mjs')), true);
     const operatorCli = path.join(root, 'usr/local/bin/node-goblin');
     assert.equal(fs.existsSync(operatorCli), true);
+    assert.equal(fs.existsSync(path.join(root, 'opt/burrow-host-gateway/deploy/uninstall.sh')), true);
     assert.equal(fs.readlinkSync(path.join(root, 'usr/local/bin/burrow-host-gateway')), 'node-goblin');
     assert.equal(fs.existsSync(unit), true);
     assert.match(fs.readFileSync(unit, 'utf8'), /User=burrow\nGroup=burrow/);
@@ -37,6 +38,16 @@ test('host package installer stages idempotently without root or systemd and pre
     assert.match(configuredText, /^BURROW_GATEWAY_CONTROLLER_URL=tls:\/\/controller\.internal:7443$/m);
     assert.match(configuredText, /^BURROW_GATEWAY_ID=kitchen-node$/m);
     assert.equal(fs.statSync(config).mode & 0o777, 0o640);
+    const identityPath = path.join(state, 'node-identity.json');
+    fs.writeFileSync(identityPath, JSON.stringify({ version: 1, nodeId: 'stable', publicKey: 'public', privateKey: 'private', controllerPublicKey: 'old-controller', controllerTlsFingerprint: 'a'.repeat(64) }));
+    fs.writeFileSync(path.join(state, 'controller-trust.json'), 'durable');
+    const unpaired = spawnSync(operatorCli, ['unpair'], { encoding: 'utf8', env: { ...process.env, BURROW_GATEWAY_ROOT: root } });
+    assert.equal(unpaired.status, 0, unpaired.stderr);
+    const unpairedIdentity = JSON.parse(fs.readFileSync(identityPath, 'utf8'));
+    assert.equal(unpairedIdentity.nodeId, 'stable');
+    assert.equal(unpairedIdentity.controllerPublicKey, undefined);
+    assert.equal(unpairedIdentity.controllerTlsFingerprint, undefined);
+    assert.equal(fs.existsSync(path.join(state, 'controller-trust.json')), false);
     fs.writeFileSync(path.join(state, 'controller-trust.json'), 'durable');
     run(install, root, ['--skip-account', '--no-systemd']);
     assert.equal(fs.readFileSync(config, 'utf8'), configuredText);

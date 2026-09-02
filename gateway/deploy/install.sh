@@ -70,6 +70,8 @@ rm -rf "$tmp"; mkdir -p "$tmp"
 ( cd "$SOURCE" && tar --exclude='./deploy' --exclude='./test' -cf - . ) | ( cd "$tmp" && tar -xf - )
 rm -rf "$INSTALL_DIR.old"; [ -d "$INSTALL_DIR" ] && mv "$INSTALL_DIR" "$INSTALL_DIR.old"
 mv "$tmp" "$INSTALL_DIR"; rm -rf "$INSTALL_DIR.old"
+mkdir -p "$INSTALL_DIR/deploy"
+install -m 0755 "$SOURCE/deploy/uninstall.sh" "$INSTALL_DIR/deploy/uninstall.sh"
 install -m 0644 "$SOURCE/deploy/burrow-host-gateway.service" "$UNIT_DIR/burrow-host-gateway.service"
 BIN_DIR=$(root_path /usr/local/bin)
 mkdir -p "$BIN_DIR"

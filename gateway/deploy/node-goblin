@@ -8,11 +8,14 @@ usage() {
   cat >&2 <<'EOF'
 usage: node-goblin configure [CONTROLLER_ADDRESS NODE_ID]
        node-goblin connect
+       node-goblin unpair
        node-goblin status
+       node-goblin uninstall
 
 configure prompts for omitted, non-secret values. Existing enrollment and TLS
 settings are preserved. Put secrets in the protected configuration file, never
-in command arguments.
+in command arguments. unpair removes only controller trust so this node can be
+paired with a fresh controller; its node identity and operation journal remain.
 EOF
 }
 path() { printf '%s%s\n' "${ROOT%/}" "$1"; }
@@ -53,10 +56,37 @@ case "$command" in
     "$SYSTEMCTL" is-active --quiet "$SERVICE" || { "$SYSTEMCTL" status --no-pager "$SERVICE" >&2 || true; echo "Node Goblin did not become active" >&2; exit 1; }
     echo "Node Goblin is active. On first connection, compare its pairing code with the controller."
     ;;
+  unpair)
+    [ "$#" -eq 0 ] || { usage; exit 2; }; need_root unpair
+    state=$(path /var/lib/burrow-host-gateway)
+    [ "$ROOT" != / ] || "$SYSTEMCTL" stop "$SERVICE" || true
+    identity="$state/node-identity.json"
+    if [ -f "$identity" ]; then
+      node - "$identity" <<'NODE'
+const fs = require('node:fs');
+const file = process.argv[2];
+const identity = JSON.parse(fs.readFileSync(file, 'utf8'));
+delete identity.controllerPublicKey;
+delete identity.controllerTlsFingerprint;
+const temporary = `${file}.${process.pid}.tmp`;
+fs.writeFileSync(temporary, `${JSON.stringify(identity)}\n`, { mode: 0o600, flag: 'wx' });
+fs.renameSync(temporary, file);
+fs.chmodSync(file, 0o600);
+NODE
+    fi
+    rm -f "$state/controller-trust.json"
+    echo "Removed controller trust. Run 'sudo node-goblin connect' to pair with the configured controller."
+    ;;
   status)
     [ "$#" -eq 0 ] || { usage; exit 2; }
     [ "$ROOT" = / ] || { echo "status is unavailable under a staging root" >&2; exit 1; }
     exec "$SYSTEMCTL" status --no-pager "$SERVICE"
+    ;;
+  uninstall)
+    [ "$#" -eq 0 ] || { usage; exit 2; }; need_root uninstall
+    uninstaller=$(path /opt/burrow-host-gateway/deploy/uninstall.sh)
+    [ -x "$uninstaller" ] || { echo "installed uninstaller is missing" >&2; exit 1; }
+    exec "$uninstaller"
     ;;
   -h|--help|help) usage ;;
   *) usage; exit 2 ;;
