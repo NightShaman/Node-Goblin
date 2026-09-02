@@ -51,6 +51,24 @@ test('process execution emits accepted stream terminal and replay', async () => 
   assert.equal(replay.result.operationId, operationId);
 });
 
+test('structured git argv executes without shell reconstruction', async () => {
+  const request = { id: 'git', method: 'process.exec', params: { executable: 'git', args: ['--version'] } };
+  const messages = await collect(async ({ input }) => { input.write(JSON.stringify(request) + '\n'); });
+  const terminal = messages.find((message) => message.type === 'process.terminal');
+  assert.equal(terminal.evidence.mode, 'exec');
+  assert.equal(terminal.evidence.executable, 'git');
+  assert.deepEqual(terminal.evidence.args, ['--version']);
+  assert.equal(terminal.evidence.command, null);
+  assert.match(terminal.evidence.stdout, /^git version /);
+});
+
+test('rejects ambiguous process request forms before execution', async () => {
+  const messages = await collect(async ({ input }) => {
+    input.write(JSON.stringify({ id: 'ambiguous', method: 'process.exec', params: { command: 'echo no', executable: 'echo' } }) + '\n');
+  }, { waitMs: 50 });
+  assert.equal(messages[1].error.code, 'command_and_executable_mutually_exclusive');
+});
+
 test('restart replay survives daemon restart with durable journal', async () => {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-state-'));
   const journal = () => new OperationJournal({ stateDir });

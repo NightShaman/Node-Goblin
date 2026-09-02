@@ -27,6 +27,19 @@ function cleanId(value) {
   return id;
 }
 
+function cleanProcessRequest(value = {}) {
+  const command = value.command;
+  const executable = value.executable;
+  const args = value.args;
+  if (command != null && (typeof command !== 'string' || !command.trim())) throw problem('command_invalid');
+  if (executable != null && (typeof executable !== 'string' || !executable.trim())) throw problem('executable_invalid');
+  if (args != null && (!Array.isArray(args) || args.some((argument) => typeof argument !== 'string'))) throw problem('args_invalid');
+  if (command != null && executable != null) throw problem('command_and_executable_mutually_exclusive');
+  if (command == null && executable == null) throw problem('command_or_executable_required');
+  if (command != null && args?.length) throw problem('args_with_command_invalid');
+  return command != null ? { command: command.trim() } : { executable: executable.trim(), args: args ? [...args] : [] };
+}
+
 function cleanName(value) {
   const name = String(value ?? '').trim();
   if (!name) throw problem('target_name_required');
@@ -219,7 +232,7 @@ export function shellExecResult(request, dispatch) {
   return {
     tool: 'shell_exec',
     ok: evidence.exitCode === 0 && !cancelled && !timedOut,
-    command: request.process.command,
+    command: request.process.command || [request.process.executable, ...(request.process.args || [])].filter(Boolean).join(' '),
     reason: null,
     cwd: evidence.cwd ?? request.process.cwd ?? null,
     exitCode: evidence.exitCode ?? null,
@@ -250,8 +263,10 @@ export function createProcessController(service, { logger = console, operationSt
       const gatewayId = String(request.gatewayId ?? '').trim();
       if (!OPERATION_ID.test(operationId)) throw new Error('operation_id_invalid');
       if (!gatewayId) throw new Error('gateway_id_required');
-      if (!request.process || typeof request.process.command !== 'string' || !request.process.command.trim()) throw new Error('command_required');
-      const params = { operationId, command: request.process.command };
+      let process;
+      try { process = cleanProcessRequest(request.process); }
+      catch (error) { throw new Error(error.message); }
+      const params = { operationId, ...process };
       if (request.process.cwd) params.cwd = String(request.process.cwd);
       if (request.process.env) params.env = { ...request.process.env };
       if (request.process.timeoutMs != null) params.timeoutMs = Number(request.process.timeoutMs);
@@ -442,7 +457,8 @@ export async function activate({ api, settings, secrets, logger, processExecutio
   api.post('/gateways/:gatewayId/processes', async ({ params, body = {} }) => {
     const operationId = String(body.operationId ?? '').trim();
     if (!OPERATION_ID.test(operationId)) throw problem('operation_id_invalid');
-    try { return { ok: true, operationId, dispatch: await service.dispatchProcessExec(params.gatewayId, { ...body, operationId }) }; }
+    const process = cleanProcessRequest(body);
+    try { return { ok: true, operationId, dispatch: await service.dispatchProcessExec(params.gatewayId, { ...body, ...process, operationId }) }; }
     catch (error) { throw serviceError(error); }
   });
   api.post('/gateways/:gatewayId/operations/:operationId/cancel', async ({ params }) => {

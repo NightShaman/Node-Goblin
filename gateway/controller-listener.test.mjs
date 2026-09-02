@@ -115,6 +115,7 @@ test('dispatches process.exec, correlates accepted events terminal response, and
     authenticate(socket);
     const dispatch = listener.dispatchProcessExec('gateway-1', { operationId: 'op-1', executable: process.execPath, args: ['-e', "process.stdout.write('x')"] });
     const outbound = socket.messages().find((message) => message.method === 'process.exec');
+    assert.deepEqual(outbound.params, { operationId: 'op-1', executable: process.execPath, args: ['-e', "process.stdout.write('x')"] });
     socket.feed({ type: 'accepted', requestId: outbound.id, ok: true, operationId: 'op-1', protocolVersion: '1.0' });
     socket.feed({ type: 'process.stream', operationId: 'op-1', stream: 'stdout', seq: 1, data: 'x', truncated: false });
     socket.feed({ type: 'process.terminal', operationId: 'op-1', seq: 2, evidence: { type: 'process.result', stdout: 'x', stderr: '', exitCode: 0, cancelled: false, truncated: false, timedOut: false } });

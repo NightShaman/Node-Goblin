@@ -49,6 +49,8 @@ test('exposes live inventory and preserves gateway operation correlation for dis
   assert.deepEqual(value.routes.get('GET /operations')({ query: { limit: '999' } }), { ok: true, operations: service.listOperationActivity({ gatewayId: null, limit: 256 }), limit: 256 });
   const dispatched = await value.routes.get('POST /gateways/:gatewayId/processes')({ params: { gatewayId: 'host-1' }, body: { operationId: 'op-1', executable: '/bin/echo', args: ['hi'] } });
   assert.equal(dispatched.operationId, 'op-1'); assert.deepEqual(calls[0], ['exec', 'host-1', { operationId: 'op-1', executable: '/bin/echo', args: ['hi'] }]);
+  await assert.rejects(value.routes.get('POST /gateways/:gatewayId/processes')({ params: { gatewayId: 'host-1' }, body: { operationId: 'both', command: 'echo hi', executable: '/bin/echo' } }), /command_and_executable_mutually_exclusive/);
+  await assert.rejects(value.routes.get('POST /gateways/:gatewayId/processes')({ params: { gatewayId: 'host-1' }, body: { operationId: 'bad-args', executable: '/bin/echo', args: ['hi', 1] } }), /args_invalid/);
   await value.routes.get('POST /gateways/:gatewayId/operations/:operationId/cancel')({ params: { gatewayId: 'host-1', operationId: 'op-1' } });
   assert.deepEqual(calls[1], ['cancel', 'host-1', 'op-1']);
   await assert.rejects(value.routes.get('POST /gateways/:gatewayId/processes')({ params: { gatewayId: 'host-1' }, body: { executable: '/bin/echo' } }), /operation_id_invalid/);
@@ -100,6 +102,22 @@ test('process controller dispatches correlated shell command and maps terminal e
   const result = await createProcessController(service).executeProcess({ operationId: 'shell-abc', gatewayId: 'host-1', parentRunId: 'run-1', toolCallId: 'call-1', process: { command: 'printf ok', cwd: '/repo', env: { A: 'b' }, timeoutMs: 42 } });
   assert.deepEqual(calls, [['exec', 'host-1', { operationId: 'shell-abc', command: 'printf ok', cwd: '/repo', env: { A: 'b' }, timeoutMs: 42 }]]);
   assert.deepEqual(result, { tool: 'shell_exec', ok: true, command: 'printf ok', reason: null, cwd: '/repo', exitCode: 0, signal: null, timedOut: false, cancelled: false, killed: false, durationMs: 12, stdout: 'ok\n', stderr: '', stdoutTruncated: false, stderrTruncated: false, stdoutOriginalChars: 3, stderrOriginalChars: 0, error: null, artifacts: null, operationId: 'shell-abc', gatewayId: 'host-1' });
+});
+
+test('process controller preserves git executable argv through gateway dispatch', async () => {
+  const evidence = { type: 'process.result', cwd: '/repo', exitCode: 0, stdout: '## main\n', stderr: '', cancelled: false, timedOut: false };
+  let params;
+  const controller = createProcessController({
+    async dispatchProcessExec(_gatewayId, value) {
+      params = value;
+      return { accepted: { operationId: value.operationId }, events: [{ type: 'process.terminal', operationId: value.operationId, evidence }], response: { ok: true, result: { operationId: value.operationId, outcome: evidence } } };
+    },
+    dispatchCancel() {},
+  });
+  const result = await controller.executeProcess({ operationId: 'git-status', gatewayId: 'host-1', process: { executable: 'git', args: ['status', '--short', '--branch'], cwd: '/repo' } });
+  assert.deepEqual(params, { operationId: 'git-status', executable: 'git', args: ['status', '--short', '--branch'], cwd: '/repo' });
+  assert.equal(result.command, 'git status --short --branch');
+  assert.equal(result.stdout, '## main\n');
 });
 
 test('process controller uses response outcome for replay and rejects failed or uncorrelated evidence', async () => {

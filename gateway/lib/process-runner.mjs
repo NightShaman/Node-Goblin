@@ -3,13 +3,18 @@ import os from 'node:os';
 import process from 'node:process';
 import { DEFAULT_MAX_OUTPUT_BYTES, digestHex, truncateUtf8 } from './protocol.mjs';
 
-function normalizeExec(request) {
-  if (request.command && request.executable) throw new Error('invalid_process_request');
-  if (request.command) return { mode: 'shell', file: request.command, args: [], options: { shell: true } };
-  const executable = String(request.executable ?? '').trim();
-  if (!executable) throw new Error('executable_required');
-  const args = Array.isArray(request.args) ? request.args.map((value) => String(value)) : [];
-  return { mode: 'exec', file: executable, args, options: { shell: false } };
+function normalizeExec(request = {}) {
+  const command = request.command;
+  const executable = request.executable;
+  const args = request.args;
+  if (command != null && (typeof command !== 'string' || !command.trim())) throw new Error('command_invalid');
+  if (executable != null && (typeof executable !== 'string' || !executable.trim())) throw new Error('executable_invalid');
+  if (args != null && (!Array.isArray(args) || args.some((value) => typeof value !== 'string'))) throw new Error('args_invalid');
+  if (command != null && executable != null) throw new Error('command_and_executable_mutually_exclusive');
+  if (command == null && executable == null) throw new Error('command_or_executable_required');
+  if (command != null && args?.length) throw new Error('args_with_command_invalid');
+  if (command != null) return { mode: 'shell', file: command.trim(), args: [], options: { shell: true } };
+  return { mode: 'exec', file: executable.trim(), args: args ? [...args] : [], options: { shell: false } };
 }
 
 export function runProcess(request, { protectedEnv = null, emitEvent, signal, now = () => Date.now() } = {}) {
