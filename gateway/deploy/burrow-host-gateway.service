@@ -16,7 +16,6 @@ Restart=always
 RestartSec=5s
 UMask=0077
 PrivateTmp=yes
-ProtectSystem=full
 ReadWritePaths=/var/lib/burrow-host-gateway
 
 [Install]
