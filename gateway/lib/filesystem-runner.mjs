@@ -25,10 +25,11 @@ async function walk(root, { maxDepth, maxEntries, signal }) {
 export async function runFilesystem(params = {}, { signal, now = () => Date.now() } = {}) {
   const started = now();
   const tool = String(params.tool || '');
-  if (!SUPPORTED.has(tool)) throw new Error('native_filesystem_tool_unsupported');
-  const a = params.arguments && typeof params.arguments === 'object' ? params.arguments : {};
-  signal?.throwIfAborted();
+  const a = params.arguments && typeof params.arguments === 'object' && !Array.isArray(params.arguments) ? params.arguments : {};
   let result;
+  try {
+    if (!SUPPORTED.has(tool)) throw Object.assign(new Error('native_filesystem_tool_unsupported'), { code: 'native_filesystem_tool_unsupported' });
+    signal?.throwIfAborted();
   if (tool === 'files_read') {
     const filePath = path.resolve(String(a.filePath)); const stat = await fs.stat(filePath);
     const offsetBytes = Math.max(0, Number(a.offsetBytes) || 0); const maxBytes = Math.max(0, Number(a.maxBytes ?? 512000));
@@ -45,6 +46,13 @@ export async function runFilesystem(params = {}, { signal, now = () => Date.now(
     const filePath = path.resolve(String(a.filePath)); let existed = true; try { await fs.stat(filePath); } catch (e) { if (e.code === 'ENOENT') existed = false; else throw e; } await fs.mkdir(path.dirname(filePath), { recursive: true }); await fs.writeFile(filePath, String(a.content ?? ''), 'utf8'); result = { tool, ok: true, filePath, workspaceRoot: a.workspaceRoot || null, encoding: 'utf8', created: !existed, overwrote: existed, bytesWritten: Buffer.byteLength(String(a.content ?? '')), error: null, artifacts: null };
   } else {
     const filePath = path.resolve(String(a.filePath)); const before = await fs.readFile(filePath, 'utf8'); const oldText = String(a.oldText ?? ''); const count = oldText ? before.split(oldText).length - 1 : 0; if (count !== 1) throw new Error(count ? 'old_text_not_unique' : 'old_text_not_found'); await fs.writeFile(filePath, before.replace(oldText, String(a.newText ?? '')), 'utf8'); result = { tool, ok: true, filePath, replaced: 1, changedFiles: [filePath], error: null, artifacts: null };
+  }
+  } catch (error) {
+    const code = String(error?.code || error?.message || 'native_filesystem_failed').split(':')[0];
+    const base = { tool: tool || 'native_filesystem', ok: false, error: code, diagnostic: { code, message: code }, warnings: [], artifacts: null };
+    if (tool === 'files_read' || tool === 'files_write' || tool === 'files_edit') result = { ...base, filePath: typeof a.filePath === 'string' ? a.filePath : null };
+    else if (tool === 'files_inspect') result = { ...base, path: typeof a.path === 'string' ? a.path : null };
+    else result = { ...base, dirPath: typeof a.dirPath === 'string' ? a.dirPath : null };
   }
   result.durationMs = now() - started; result.resultFingerprint = fingerprint(result); result.execution = { kind: 'gateway', protocolMethod: 'filesystem.execute' }; return result;
 }

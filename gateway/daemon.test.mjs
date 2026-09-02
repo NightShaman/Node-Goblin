@@ -207,3 +207,27 @@ test('native filesystem execution returns correlated gateway evidence and replay
   assert.equal(first.result.outcome.execution.kind, 'gateway');
   assert.equal(messages.find((message) => message.requestId === 'f2').result.replay, true);
 });
+
+test('native filesystem failures are structured, replayable, and do not stop later calls', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-fs-failure-'));
+  const filePath = path.join(root, 'hello.txt');
+  fs.writeFileSync(filePath, 'hello');
+  const bad = { method: 'filesystem.execute', params: { operationId: 'fs-bad-1', parentRunId: 'run', toolCallId: 'bad', tool: 'files_list', arguments: { dirPath: filePath } } };
+  const good = { method: 'filesystem.execute', params: { operationId: 'fs-good-1', parentRunId: 'run', toolCallId: 'good', tool: 'files_read', arguments: { filePath } } };
+  const messages = await collect(async ({ input }) => {
+    input.write(JSON.stringify({ id: 'bad', ...bad }) + '\n');
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    input.write(JSON.stringify({ id: 'replay', ...bad }) + '\n');
+    input.write(JSON.stringify({ id: 'good', ...good }) + '\n');
+  }, { waitMs: 120 });
+  const failed = messages.find((m) => m.requestId === 'bad' && m.type === 'response');
+  assert.equal(failed.ok, true);
+  assert.equal(failed.result.outcome.ok, false);
+  assert.equal(failed.result.outcome.tool, 'files_list');
+  assert.equal(failed.result.outcome.error, 'ENOTDIR');
+  assert.equal(failed.result.outcome.diagnostic.message, 'ENOTDIR');
+  assert.equal(JSON.stringify(failed).includes(filePath), true);
+  assert.equal(JSON.stringify(failed).includes('at runFilesystem'), false);
+  assert.equal(messages.find((m) => m.requestId === 'replay').result.replay, true);
+  assert.equal(messages.find((m) => m.requestId === 'good' && m.type === 'response').result.outcome.content, 'hello');
+});

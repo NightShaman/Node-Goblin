@@ -190,3 +190,18 @@ test('enabled controller generates long-lived host-bound TLS into secrets and ex
   assert.match(options.serverOptions.cert, /CERTIFICATE/); assert.equal(JSON.stringify(state).includes('PRIVATE KEY'), false); assert.equal(JSON.stringify(state).includes('CERTIFICATE'), false);
   service.close();
 });
+
+test('controller preserves structured filesystem failures and operation arguments', async () => {
+  let seen;
+  const outcome = { tool: 'files_list', ok: false, dirPath: '/repo/file', error: 'ENOTDIR', diagnostic: { code: 'ENOTDIR', message: 'ENOTDIR' } };
+  const service = {
+    async dispatchFilesystem(gatewayId, params) { seen = { gatewayId, params }; return { accepted: { operationId: params.operationId }, response: { ok: true, result: { operationId: params.operationId, outcome } } }; },
+    async dispatchProcessExec() {}, async dispatchCancel() {},
+  };
+  const result = await createProcessController(service).executeNativeFilesystem({ operationId: 'fs-controller-1', gatewayId: 'host-1', parentRunId: 'run-1', toolCallId: 'call-1', operation: { tool: 'files_list', arguments: { dirPath: '/repo/file', maxDepth: 2 } } });
+  assert.equal(seen.params.tool, 'files_list');
+  assert.deepEqual(seen.params.arguments, { dirPath: '/repo/file', maxDepth: 2 });
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'ENOTDIR');
+  assert.equal(result.operationId, 'fs-controller-1');
+});
