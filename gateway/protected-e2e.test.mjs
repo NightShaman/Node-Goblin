@@ -68,8 +68,8 @@ test('authenticated controller to TLS transport injects protected child env with
   listener.on('gatewayEvent', ({ message }) => gatewayEvents.push(message));
   const values = new Map();
   const settings = {
-    get: (name, fallback) => values.has(name) ? structuredClone(values.get(name)) : fallback,
-    set: (name, value) => (values.set(name, structuredClone(value)), value),
+    get: async (name, fallback) => values.has(name) ? structuredClone(values.get(name)) : fallback,
+    set: async (name, value) => (values.set(name, structuredClone(value)), value),
   };
   const operationStore = createOperationCorrelationStore(settings);
   const controller = createProcessController(listener, { operationStore });
@@ -91,8 +91,8 @@ test('authenticated controller to TLS transport injects protected child env with
     assert.equal(streamText, '[redacted]');
     assert.equal(terminal.evidence.stdout, '[redacted]');
     assert.equal([JSON.stringify(result), JSON.stringify(gatewayEvents), journalText, correlationText].some((text) => text.includes(secret)), false);
-    assert.equal(operationStore.get('protected-e2e').parentRunId, 'run-secret');
-    assert.equal(operationStore.get('protected-e2e').toolCallId, 'call-secret');
+    assert.equal((await operationStore.get('protected-e2e')).parentRunId, 'run-secret');
+    assert.equal((await operationStore.get('protected-e2e')).toolCallId, 'call-secret');
   } finally {
     transport.stop();
     listener.close();

@@ -1,6 +1,7 @@
 {
   "id": "remote-nodes",
   "name": "Remote Nodes",
+  "system": true,
   "server": "server/index.mjs",
   "ui": {
     "settings": "ui/settings.js"
