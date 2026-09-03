@@ -2,26 +2,21 @@
   "id": "remote-nodes",
   "name": "Remote Nodes",
   "server": "server/index.mjs",
+  "ui": {
+    "settings": "ui/settings.js"
+  },
   "contributions": {
     "apiTargets": "/api/mods/remote-nodes/targets",
     "settings": [{
-      "id": "remote-targets",
+      "id": "remote-nodes",
       "navigation": {
-        "title": "Connections",
-        "description": "Configure remote Burrow nodes."
+        "title": "Remote Nodes",
+        "description": "Manage host gateways, pairing, assignments, and remote execution activity."
       },
       "primary": {
-        "title": "The Connections Card",
-        "description": "Add or edit a remote Burrow runtime.",
-        "capability": "apiTargets"
-      },
-      "inventory": {
-        "title": "Configured Connections",
-        "capability": "apiTargets",
-        "emptyState": {
-          "title": "No remote nodes",
-          "description": "Add one to begin."
-        }
+        "title": "Remote Nodes",
+        "description": "Configure the Remote Nodes execution environment.",
+        "capability": "settingsUi"
       }
     }]
   }
