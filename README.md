@@ -1,5 +1,7 @@
 # Node Goblin for Burrow
 
+This repository contains the **Node Goblin** Burrow mod and its small host runtime, the **Mini Node Goblin**. “Mini” is a product differentiator only; the runtime protocol, service paths, and compatibility identifiers remain unchanged.
+
 Node Goblin is a Burrow mod that stores additional Burrow API targets. Core Burrow uses those targets through its existing UI, API client, chat streaming, sessions, tools, settings, and other product surfaces.
 
 The mod does not reimplement Burrow screens or proxy Burrow APIs. Version 1 stores only:
@@ -28,7 +30,7 @@ Restart Burrow after installing or updating the mod.
 
 Other common runtime roots include `/var/lib/burrow` for a system installation and `/data` in Docker.
 
-## Standalone host gateway daemon foundation
+## Mini Node Goblin host runtime
 
 This repository also includes a dependency-free standalone Node package at `gateway/`. It does not replace the existing mod API, manifest, storage contract, or tests.
 

@@ -193,7 +193,7 @@ export async function handleSettingsAction(actionId, values) {
     await fetch('/api/mods/remote-nodes/controller/tls', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key, cert, ...(ca ? { ca } : {}) }) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()) || `TLS save failed (${response.status}).`); });
     return;
   }
-  if (actionId !== 'save-controller') throw new Error(`Unsupported Remote Nodes settings action: ${actionId}`);
+  if (actionId !== 'save-controller') throw new Error(`Unsupported Node Goblin settings action: ${actionId}`);
   const enabled = values.enabled === true;
   const host = String(values['bind-host'] || '127.0.0.1').trim();
   const port = Number(values['bind-port']);
