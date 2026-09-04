@@ -1,5 +1,5 @@
 {
-  "id": "remote-nodes",
+  "id": "node-goblin",
   "name": "Node Goblin",
   "system": true,
   "server": "server/index.mjs",
@@ -7,9 +7,9 @@
     "settings": "ui/settings.js"
   },
   "contributions": {
-    "apiTargets": "/api/mods/remote-nodes/targets",
+    "apiTargets": "/api/mods/node-goblin/targets",
     "settings": [{
-      "id": "remote-nodes",
+      "id": "node-goblin",
       "navigation": {
         "title": "Node Goblin",
         "description": "Manage host gateways, pairing, assignments, and remote execution activity."

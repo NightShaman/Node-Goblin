@@ -218,7 +218,7 @@ test('pairing persistence failures are caught opaquely without secret or raw err
   });
   pairingHandler({ gatewayId: 'host-1', publicKey: 'DO-NOT-LOG', status: 'pending' });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(logs, ['Remote Nodes pairing persistence failed: pairing_persistence_failed']);
+  assert.deepEqual(logs, ['Node Goblin pairing persistence failed: pairing_persistence_failed']);
   assert.equal(JSON.stringify(logs).includes('DO-NOT-LOG'), false);
   await service.close();
 });

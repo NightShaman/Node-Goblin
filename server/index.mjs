@@ -123,7 +123,7 @@ function generateControllerTls(host) {
   const certFile = path.join(directory, 'cert.pem');
   const san = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.includes(':') ? `IP:${host}` : `DNS:${host}`;
   try {
-    execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:3072', '-nodes', '-sha256', '-days', '3650', '-subj', '/CN=Burrow Remote Nodes Controller', '-addext', `subjectAltName=${san}`, '-keyout', keyFile, '-out', certFile], { stdio: 'pipe' });
+    execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:3072', '-nodes', '-sha256', '-days', '3650', '-subj', '/CN=Burrow Node Goblin Controller', '-addext', `subjectAltName=${san}`, '-keyout', keyFile, '-out', certFile], { stdio: 'pipe' });
     const key = fs.readFileSync(keyFile, 'utf8');
     const cert = fs.readFileSync(certFile, 'utf8');
     if (!key.includes('PRIVATE KEY') || !cert.includes('CERTIFICATE')) throw new Error('generated_tls_invalid');
@@ -291,7 +291,7 @@ export function createProcessController(service, { logger = console, operationSt
       let cancelPromise = null;
       const cancel = () => {
         if (!cancelPromise) cancelPromise = Promise.resolve(service.dispatchCancel(gatewayId, operationId)).catch((error) => {
-          logger.warn?.('Remote Nodes cancellation dispatch failed: cancellation_dispatch_failed');
+          logger.warn?.('Node Goblin cancellation dispatch failed: cancellation_dispatch_failed');
         });
       };
       await operationStore?.begin(request, 'process', params);
@@ -317,7 +317,7 @@ export function createProcessController(service, { logger = console, operationSt
       if (!gatewayId) throw new Error('gateway_id_required');
       const params = { operationId, parentRunId: request.parentRunId, toolCallId: request.toolCallId, tool: request.operation?.tool, arguments: { ...(request.operation?.arguments || {}) } };
       let cancelPromise = null;
-      const cancel = () => { if (!cancelPromise) cancelPromise = Promise.resolve(service.dispatchCancel(gatewayId, operationId)).catch((error) => logger.warn?.('Remote Nodes cancellation dispatch failed: cancellation_dispatch_failed')); };
+      const cancel = () => { if (!cancelPromise) cancelPromise = Promise.resolve(service.dispatchCancel(gatewayId, operationId)).catch((error) => logger.warn?.('Node Goblin cancellation dispatch failed: cancellation_dispatch_failed')); };
       await operationStore?.begin(request, 'filesystem', params);
       const dispatchPromise = service.dispatchFilesystem(gatewayId, params);
       if (abortSignal?.aborted) cancel(); else abortSignal?.addEventListener('abort', cancel, { once: true });
@@ -354,7 +354,7 @@ export async function createControllerService({ settings, secrets, listenerFacto
       await settings?.set?.(TLS_METADATA_NAME, generated.metadata); tlsMetadata = generated.metadata;
     } catch (error) {
       startError = 'controller_tls_generation_failed';
-      logger.error?.('Remote Nodes controller TLS generation failed: controller_tls_generation_failed');
+      logger.error?.('Node Goblin controller TLS generation failed: controller_tls_generation_failed');
     }
   }
   if (!tlsMetadata && key && cert) { tlsMetadata = { source: 'configured' }; await settings?.set?.(TLS_METADATA_NAME, tlsMetadata); }
@@ -368,7 +368,7 @@ export async function createControllerService({ settings, secrets, listenerFacto
         listener.listen(config.port, config.host);
       } catch (error) {
         startError = 'controller_listener_start_failed';
-        logger.error?.('Remote Nodes controller listener failed: controller_listener_start_failed');
+        logger.error?.('Node Goblin controller listener failed: controller_listener_start_failed');
       }
     }
   }
@@ -379,7 +379,7 @@ export async function createControllerService({ settings, secrets, listenerFacto
       const index = values.findIndex((entry) => entry.gatewayId === pairing.gatewayId);
       if (index < 0) values.push(pairing); else values[index] = pairing;
       await settings.set(PENDING_PAIRINGS_NAME, values);
-    })().catch(() => logger.error?.('Remote Nodes pairing persistence failed: pairing_persistence_failed'));
+    })().catch(() => logger.error?.('Node Goblin pairing persistence failed: pairing_persistence_failed'));
   });
   return Object.freeze({
     state,

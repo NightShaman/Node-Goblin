@@ -16,7 +16,7 @@ Install the mod into the `mods` directory of a Burrow runtime:
 BURROW_RUNTIME_ROOT="${BURROW_RUNTIME_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/burrow}"
 mkdir -p "$BURROW_RUNTIME_ROOT/mods"
 git clone https://github.com/NightShaman/Node-Goblin.git \
-  "$BURROW_RUNTIME_ROOT/mods/remote-nodes"
+  "$BURROW_RUNTIME_ROOT/mods/node-goblin"
 ```
 
 Restart Burrow after installing or updating the mod.
@@ -24,7 +24,7 @@ Restart Burrow after installing or updating the mod.
 To update an existing checkout:
 
 ```bash
-git -C "$BURROW_RUNTIME_ROOT/mods/remote-nodes" pull --ff-only
+git -C "$BURROW_RUNTIME_ROOT/mods/node-goblin" pull --ff-only
 ```
 
 ## Mini Node Goblin

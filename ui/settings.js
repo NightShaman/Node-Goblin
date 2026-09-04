@@ -154,14 +154,14 @@ export async function createSettingsContribution(context) {
 export async function handleSettingsAction(actionId, values) {
   if (actionId.startsWith('revoke-gateway:')) {
     const gatewayId = actionId.slice('revoke-gateway:'.length);
-    await fetch(`/api/mods/remote-nodes/gateway-trust/${encodeURIComponent(gatewayId)}`, { method: 'DELETE' }).then(async (response) => {
+    await fetch(`/api/mods/node-goblin/gateway-trust/${encodeURIComponent(gatewayId)}`, { method: 'DELETE' }).then(async (response) => {
       if (!response.ok) throw new Error((await response.text()) || `Gateway revoke failed (${response.status}).`);
     });
     return;
   }
   if (actionId.startsWith('approve-pairing:') || actionId.startsWith('reject-pairing:')) {
     const [operation, gatewayId] = actionId.split(':');
-    await fetch(`/api/mods/remote-nodes/pairings/${encodeURIComponent(gatewayId)}/${operation === 'approve-pairing' ? 'approve' : 'reject'}`, { method: 'POST' }).then(async (response) => {
+    await fetch(`/api/mods/node-goblin/pairings/${encodeURIComponent(gatewayId)}/${operation === 'approve-pairing' ? 'approve' : 'reject'}`, { method: 'POST' }).then(async (response) => {
       if (!response.ok) throw new Error((await response.text()) || `Pairing action failed (${response.status}).`);
     });
     return;
@@ -180,17 +180,17 @@ export async function handleSettingsAction(actionId, values) {
     const controllerId = String(values['enroll-controller-id'] || 'controller').trim() || 'controller';
     const secret = String(values['enroll-secret'] || '');
     if (!id || !secret) throw new Error('Gateway ID and enrollment secret are required.');
-    await fetch(`/api/mods/remote-nodes/gateway-trust/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ controllerId, secret }) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()) || `Gateway enrollment failed (${response.status}).`); });
+    await fetch(`/api/mods/node-goblin/gateway-trust/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ controllerId, secret }) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()) || `Gateway enrollment failed (${response.status}).`); });
     return;
   }
   if (actionId === 'clear-tls') {
-    await fetch('/api/mods/remote-nodes/controller/tls', { method: 'DELETE' }).then(async (response) => { if (!response.ok) throw new Error((await response.text()) || `TLS clear failed (${response.status}).`); });
+    await fetch('/api/mods/node-goblin/controller/tls', { method: 'DELETE' }).then(async (response) => { if (!response.ok) throw new Error((await response.text()) || `TLS clear failed (${response.status}).`); });
     return;
   }
   if (actionId === 'save-tls') {
     const key = String(values['tls-key'] || '').trim(); const cert = String(values['tls-cert'] || '').trim(); const ca = String(values['tls-ca'] || '').trim();
     if (!key || !cert) throw new Error('TLS private key and certificate are required.');
-    await fetch('/api/mods/remote-nodes/controller/tls', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key, cert, ...(ca ? { ca } : {}) }) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()) || `TLS save failed (${response.status}).`); });
+    await fetch('/api/mods/node-goblin/controller/tls', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key, cert, ...(ca ? { ca } : {}) }) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()) || `TLS save failed (${response.status}).`); });
     return;
   }
   if (actionId !== 'save-controller') throw new Error(`Unsupported Node Goblin settings action: ${actionId}`);
@@ -198,7 +198,7 @@ export async function handleSettingsAction(actionId, values) {
   const host = String(values['bind-host'] || '127.0.0.1').trim();
   const port = Number(values['bind-port']);
   if (!host || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error('A valid bind host and port are required.');
-  await fetch('/api/mods/remote-nodes/controller', {
+  await fetch('/api/mods/node-goblin/controller', {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ enabled, host, port }),
