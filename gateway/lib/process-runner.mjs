@@ -25,7 +25,7 @@ export function runProcess(request, { protectedEnv = null, emitEvent, signal, no
   const secretEnv = protectedEnv && typeof protectedEnv === 'object'
     ? Object.fromEntries(Object.entries(protectedEnv).map(([key, value]) => [key, String(value)])) : null;
   const maxOutputBytes = Number.isInteger(request.maxOutputBytes) && request.maxOutputBytes > 0 ? request.maxOutputBytes : DEFAULT_MAX_OUTPUT_BYTES;
-  const timeoutMs = Number.isInteger(request.timeoutMs) && request.timeoutMs > 0 ? request.timeoutMs : null;
+  const timeoutMs = Number.isInteger(request.timeoutMs) && request.timeoutMs > 0 ? request.timeoutMs : 30_000;
   const deadlineMs = Number.isInteger(request.deadlineMs) ? request.deadlineMs : null;
   const exec = normalizeExec(request);
   const child = spawn(exec.file, exec.args, {
@@ -40,7 +40,8 @@ export function runProcess(request, { protectedEnv = null, emitEvent, signal, no
   let stderr = '';
   let seq = 0;
   let truncated = false;
-  let killRequested = false;
+  let killed = false;
+  let settled = false;
   let timeoutTriggered = false;
   let timeoutReason = null;
   const timers = [];
@@ -87,43 +88,56 @@ export function runProcess(request, { protectedEnv = null, emitEvent, signal, no
   };
 
   const terminate = (reasonSignal = 'SIGTERM') => {
-    if (killRequested) return;
-    killRequested = true;
-    if (process.platform === 'win32') child.kill(reasonSignal);
-    else {
-      try { process.kill(-child.pid, reasonSignal); } catch { child.kill(reasonSignal); }
+    if (!child.pid) return false;
+    try {
+      if (process.platform !== 'win32') process.kill(-child.pid, reasonSignal);
+      else child.kill(reasonSignal);
+      return true;
+    } catch {
+      try { return child.kill(reasonSignal); } catch { return false; }
     }
   };
 
-  if (timeoutMs) timers.push(setTimeout(() => {
-    timeoutTriggered = true;
-    timeoutReason = 'timeoutMs';
-    terminate('SIGTERM');
-  }, timeoutMs));
+  let forceSettle = null;
+  const stop = (reason) => {
+    if (settled) return;
+    if (reason === 'timeoutMs' || reason === 'deadlineMs') {
+      timeoutTriggered = true;
+      timeoutReason = reason;
+    }
+    killed = terminate('SIGTERM') || killed;
+    const killTimer = setTimeout(() => { killed = terminate('SIGKILL') || killed; }, 1_000);
+    const fallbackTimer = setTimeout(() => forceSettle?.(null, 'SIGTERM'), 1_100);
+    killTimer.unref?.();
+    fallbackTimer.unref?.();
+    timers.push(killTimer, fallbackTimer);
+  };
+
+  timers.push(setTimeout(() => stop('timeoutMs'), timeoutMs));
 
   if (deadlineMs !== null) {
     const delay = deadlineMs - now();
     if (delay <= 0) {
-      timeoutTriggered = true;
-      timeoutReason = 'deadlineMs';
-      terminate('SIGTERM');
+      stop('deadlineMs');
     } else {
       timers.push(setTimeout(() => {
-        timeoutTriggered = true;
-        timeoutReason = 'deadlineMs';
-        terminate('SIGTERM');
+        stop('deadlineMs');
       }, delay));
     }
   }
 
-  signal?.addEventListener('abort', () => terminate('SIGTERM'), { once: true });
+  const onAbort = () => stop('abort');
+  if (signal?.aborted) onAbort();
+  else signal?.addEventListener('abort', onAbort, { once: true });
   child.stdout.on('data', (chunk) => noteChunk('stdout', chunk));
   child.stderr.on('data', (chunk) => noteChunk('stderr', chunk));
 
   return new Promise((resolve, reject) => {
-    child.once('error', reject);
-    child.once('close', (code, closeSignal) => {
+    const finish = (code, closeSignal) => {
+      if (settled) return;
+      settled = true;
       for (const timer of timers) clearTimeout(timer);
+      signal?.removeEventListener?.('abort', onAbort);
       drainRedacted('stdout', true);
       drainRedacted('stderr', true);
       const endedAt = new Date().toISOString();
@@ -144,6 +158,7 @@ export function runProcess(request, { protectedEnv = null, emitEvent, signal, no
         exitCode: code,
         signal: closeSignal,
         cancelled: signal?.aborted === true,
+        killed,
         truncated,
         timedOut: timeoutTriggered,
         timeoutReason,
@@ -156,6 +171,9 @@ export function runProcess(request, { protectedEnv = null, emitEvent, signal, no
       };
       emitEvent?.({ type: 'process.terminal', seq: ++seq, evidence: result });
       resolve(result);
-    });
+    };
+    forceSettle = finish;
+    child.once('error', reject);
+    child.once('close', finish);
   });
 }
