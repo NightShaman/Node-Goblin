@@ -58,8 +58,9 @@ jobs:
       # Keep dispatch available when the optional cross-repo token is configured,
       # but do not fail a standalone Node Goblin release when it is absent.
       - name: Dispatch public Burrow release
-        if: ${{ secrets.BURROW_DISPATCH_TOKEN != '' }}
+        if: ${{ env.BURROW_DISPATCH_TOKEN != '' }}
         env:
+          BURROW_DISPATCH_TOKEN: ${{ secrets.BURROW_DISPATCH_TOKEN }}
           GH_TOKEN: ${{ secrets.BURROW_DISPATCH_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
