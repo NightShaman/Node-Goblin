@@ -385,16 +385,35 @@ export async function createControllerService({ settings, secrets, listenerFacto
     state,
     listPendingPairings: async () => listener?.listPending?.() ?? await pendingPairings(settings),
     async approvePairing(gatewayId) {
-      const pairing = listener?.approvePending?.(gatewayId);
+      const pairing = listener?.preparePendingApproval?.(gatewayId);
       if (!pairing) throw Object.assign(new Error('pairing_not_found'), { code: 'pairing_not_found' });
-      const gateways = (await configuredGatewayIdentities(settings, secrets)).map(({ gatewayId: id, controllerId, status, approved, revoked, method }) => ({ gatewayId: id, controllerId, status, approved, revoked, method }));
-      const index = gateways.findIndex((entry) => entry.gatewayId === gatewayId);
+      const publicKeyName = `controller.gateway.publicKey.${gatewayId}`;
+      const previousGateways = await settings.get(CONTROLLER_GATEWAYS_NAME, []);
+      const previousPairings = await settings.get(PENDING_PAIRINGS_NAME, []);
+      const previousPublicKey = await secrets?.get?.(publicKeyName);
+      const gateways = Array.isArray(previousGateways) ? previousGateways.map((entry) => ({ ...entry })) : [];
+      const index = gateways.findIndex((entry) => entry?.gatewayId === gatewayId);
       const trusted = { gatewayId, controllerId: pairing.controllerId };
       if (index < 0) gateways.push(trusted); else gateways[index] = trusted;
-      await settings.set(CONTROLLER_GATEWAYS_NAME, gateways);
-      await secrets?.set?.(`controller.gateway.publicKey.${gatewayId}`, pairing.publicKey);
-      await settings.set(PENDING_PAIRINGS_NAME, (await pendingPairings(settings)).filter((entry) => entry.gatewayId !== gatewayId));
-      return { gatewayId: pairing.gatewayId, controllerId: pairing.controllerId, pairingCode: pairing.pairingCode, status: 'approved', trusted: true };
+      try {
+        await secrets?.set?.(publicKeyName, pairing.publicKey);
+        await settings.set(CONTROLLER_GATEWAYS_NAME, gateways);
+        const pairings = Array.isArray(previousPairings) ? previousPairings.filter((entry) => entry?.gatewayId !== gatewayId) : [];
+        await settings.set(PENDING_PAIRINGS_NAME, pairings);
+      } catch {
+        // Keep both durable and live state pending if any persistence step fails.
+        // Rollback is best-effort and deliberately emits no credential material.
+        try {
+          if (previousPublicKey == null) await secrets?.clear?.(publicKeyName);
+          else await secrets?.set?.(publicKeyName, previousPublicKey);
+          await settings.set(CONTROLLER_GATEWAYS_NAME, previousGateways);
+          await settings.set(PENDING_PAIRINGS_NAME, previousPairings);
+        } catch {}
+        throw Object.assign(new Error('pairing_persistence_failed'), { code: 'pairing_persistence_failed' });
+      }
+      const approved = listener?.commitPendingApproval?.(gatewayId, pairing);
+      if (!approved) throw Object.assign(new Error('pairing_commit_failed'), { code: 'pairing_commit_failed' });
+      return { gatewayId: approved.gatewayId, controllerId: approved.controllerId, pairingCode: approved.pairingCode, status: 'approved', trusted: true };
     },
     async rejectPairing(gatewayId) {
       const pairing = listener?.rejectPending?.(gatewayId);
@@ -418,6 +437,10 @@ export async function createControllerService({ settings, secrets, listenerFacto
     async dispatchCancel(gatewayId, operationId) {
       if (!listener) throw Object.assign(new Error(startError || 'controller_not_running'), { code: startError || 'controller_not_running' });
       return redact(await listener.dispatchCancel(gatewayId, operationId), secretValues);
+    },
+    async revokeGateway(gatewayId) {
+      await settings.set(PENDING_PAIRINGS_NAME, (await pendingPairings(settings)).filter((entry) => entry.gatewayId !== gatewayId));
+      return listener?.revokeGateway?.(gatewayId) ?? false;
     },
     close: () => listener?.close(),
   });
@@ -479,8 +502,11 @@ export async function activate({ api, settings, secrets, logger, processExecutio
     const current = await configuredGatewayIdentities(settings, secrets);
     const existing = current.find((entry) => entry.gatewayId === gatewayId);
     const gateways = current.filter((entry) => entry.gatewayId !== gatewayId).map(({ gatewayId: id, controllerId, status, approved, revoked, method }) => ({ gatewayId: id, controllerId, status, approved, revoked, method }));
-    gateways.push({ gatewayId, controllerId: existing?.controllerId || 'controller', status: 'revoked', approved: false, revoked: true, method: existing?.method || null });
-    await settings.set(CONTROLLER_GATEWAYS_NAME, gateways); await secrets.clear?.(`controller.gateway.${gatewayId}`); await secrets.clear?.(`controller.gateway.publicKey.${gatewayId}`);
+    await settings.set(CONTROLLER_GATEWAYS_NAME, gateways);
+    await settings.set(PENDING_PAIRINGS_NAME, (await pendingPairings(settings)).filter((entry) => entry.gatewayId !== gatewayId));
+    await secrets.clear?.(`controller.gateway.${gatewayId}`);
+    await secrets.clear?.(`controller.gateway.publicKey.${gatewayId}`);
+    await service.revokeGateway?.(gatewayId);
     return { ok: true, gateway: { gatewayId, controllerId: existing?.controllerId || 'controller', status: 'revoked', approved: false, revoked: true, trusted: false, method: existing?.method || null }, restartRequired: true };
   });
   api.get('/gateways', () => ({ ok: true, gateways: service.listGateways?.() ?? service.listLiveGateways() }));

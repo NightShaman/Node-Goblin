@@ -272,12 +272,46 @@ export class GatewayControllerListener extends EventEmitter {
     const value = { ...registration, status: 'pending', requestedAt: existing?.requestedAt || new Date().toISOString() }; this.pending.set(registration.gatewayId, value); this.emit('gatewayPairingPending', value); return value;
   }
   listPending() { return [...this.pending.values()].filter((entry) => entry.status === 'pending').map((entry) => ({ ...entry })); }
-  approvePending(gatewayId) { const entry = this.pending.get(gatewayId); const connection = this.connections.get(gatewayId); // A persisted request is only informational after restart: approval must bind this live challenge.
-    if (!entry || entry.status !== 'pending' || !connection || connection.state !== 'pending' || connection.nonce !== entry.nonce || connection.gatewayId !== gatewayId) return null;
-    this.gatewayRecords.set(gatewayId, { controllerId: entry.controllerId, publicKey: entry.publicKey, secret: null }); this.pending.delete(gatewayId);
-    if (!this.bindGatewayIdentity(gatewayId, connection)) return null; connection.state = 'ready'; connection.health = { status: 'ok', activeOperations: [] }; connection.send({ type: 'auth.ok', connectionId: connection.connectionId });
-    const approved = { ...entry, status: 'approved' }; this.emit('gatewayPairingApproved', approved); return approved; }
+  preparePendingApproval(gatewayId) {
+    const entry = this.pending.get(gatewayId);
+    const connection = this.connections.get(gatewayId);
+    // Persisted pairing requests are informational after restart. Approval must
+    // bind the exact live challenge that produced this request.
+    if (!entry || entry.status !== 'pending' || !connection || connection.state !== 'pending'
+      || connection.nonce !== entry.nonce || connection.gatewayId !== gatewayId) return null;
+    return { ...entry };
+  }
+
+  commitPendingApproval(gatewayId, expected = {}) {
+    const entry = this.preparePendingApproval(gatewayId);
+    const connection = this.connections.get(gatewayId);
+    if (!entry || entry.nonce !== expected.nonce || entry.publicKey !== expected.publicKey) return null;
+    this.gatewayRecords.set(gatewayId, { controllerId: entry.controllerId, publicKey: entry.publicKey, secret: null });
+    this.pending.delete(gatewayId);
+    connection.state = 'ready';
+    connection.health = { status: 'ok', activeOperations: [] };
+    connection.send({ type: 'auth.ok', connectionId: connection.connectionId });
+    const approved = { ...entry, status: 'approved' };
+    this.emit('gatewayPairingApproved', approved);
+    return approved;
+  }
   rejectPending(gatewayId) { const entry = this.pending.get(gatewayId); if (!entry) return null; this.pending.delete(gatewayId); const rejected = { ...entry, status: 'rejected' }; for (const connection of this.connections.values()) if (connection.gatewayId === gatewayId && connection.state === 'pending') connection.fail('pairing_rejected'); this.emit('gatewayPairingRejected', rejected); return rejected; }
+
+  revokeGateway(gatewayId) {
+    const id = String(gatewayId ?? '').trim();
+    const connection = this.connections.get(id);
+    const removed = Boolean(connection || this.gatewayRecords.has(id) || this.pending.has(id) || this.gatewayHealth.has(id)
+      || this.activity.some((entry) => entry.gatewayId === id));
+    // Delete controller-owned identity state before destroying the socket. The
+    // close callback therefore cannot recreate a disconnected health record.
+    this.connections.delete(id);
+    this.gatewayRecords.delete(id);
+    this.pending.delete(id);
+    this.gatewayHealth.delete(id);
+    this.activity = this.activity.filter((entry) => entry.gatewayId !== id);
+    if (connection) connection.socket.destroy();
+    return removed;
+  }
 
   bindGatewayIdentity(gatewayId, connection) {
     const existing = this.connections.get(gatewayId);

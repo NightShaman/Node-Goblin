@@ -48,6 +48,8 @@ test('host package installer stages idempotently without root or systemd and pre
     assert.equal(unpairedIdentity.controllerPublicKey, undefined);
     assert.equal(unpairedIdentity.controllerTlsFingerprint, undefined);
     assert.equal(fs.existsSync(path.join(state, 'controller-trust.json')), false);
+    assert.equal(fs.existsSync(path.join(state, 'controller-enrollment-consumed')), true);
+    assert.equal(fs.existsSync(path.join(state, 'pairing-code.json')), false);
     fs.writeFileSync(path.join(state, 'controller-trust.json'), 'durable');
     run(install, root, ['--skip-account', '--no-systemd']);
     assert.equal(fs.readFileSync(config, 'utf8'), configuredText);

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import process from 'node:process';
 import { GatewayDaemon } from './lib/daemon.mjs';
 import { OperationJournal } from './lib/journal.mjs';
-import { OutboundGatewayTransport } from './lib/network-transport.mjs';
+import { OutboundGatewayTransport, writePairingCode } from './lib/network-transport.mjs';
 
 function fileFromEnv(name) {
   return process.env[name] ? fs.readFileSync(process.env[name]) : undefined;
@@ -31,7 +31,11 @@ if (process.env.BURROW_GATEWAY_CONTROLLER_URL) {
     key: fileFromEnv('BURROW_GATEWAY_KEY_FILE'),
     daemon,
   }).start();
-  service.on('pairingPending', ({ gatewayId, pairingCode }) => console.error(`Node Goblin pairing pending for ${gatewayId}; verify code ${pairingCode} in the controller.`));
+  service.on('pairingPending', ({ gatewayId, pairingCode }) => {
+    const message = `Node Goblin pairing pending for ${gatewayId}; pairing code: ${pairingCode}`;
+    console.error(message);
+    try { writePairingCode(stateDir, { gatewayId, pairingCode }); } catch {}
+  });
 } else {
   service = new GatewayDaemon();
   service.start();

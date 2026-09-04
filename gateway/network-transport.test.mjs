@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { authenticationProof, enrollController, OutboundGatewayTransport, readControllerTrust } from './lib/network-transport.mjs';
+import { authenticationProof, enrollController, enrollmentConsumedPath, markEnrollmentConsumed, OutboundGatewayTransport, pairingCodePath, readControllerTrust, writePairingCode } from './lib/network-transport.mjs';
 import { controllerIdentity } from './lib/pairing.mjs';
 
 class FakeSocket extends EventEmitter {
@@ -48,6 +48,27 @@ test('one-time enrollment persists private trust and cannot be replaced by a lat
   assert.deepEqual(second, readControllerTrust(stateDir));
   assert.equal(second.controllerId, 'primary');
   assert.equal(fs.statSync(path.join(stateDir, 'controller-trust.json')).mode & 0o777, 0o600);
+});
+
+test('consumed bootstrap enrollment cannot recreate trust after unpair', () => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-enroll-consumed-'));
+  try {
+    markEnrollmentConsumed(stateDir);
+    assert.equal(enrollController({ stateDir, token: 'must-not-reappear' }), null);
+    assert.equal(fs.existsSync(path.join(stateDir, 'controller-trust.json')), false);
+    assert.equal(fs.existsSync(enrollmentConsumedPath(stateDir)), true);
+  } finally { fs.rmSync(stateDir, { recursive: true, force: true }); }
+});
+
+test('pairing code is written as protected local state for operator display', () => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-pairing-code-'));
+  try {
+    writePairingCode(stateDir, { gatewayId: 'gateway-1', pairingCode: 'ABCD-1234-5678' });
+    const file = pairingCodePath(stateDir);
+    assert.equal(fs.existsSync(file), true);
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).pairingCode, 'ABCD-1234-5678');
+  } finally { fs.rmSync(stateDir, { recursive: true, force: true }); }
 });
 
 test('controller challenge authenticates with a bound HMAC proof', () => {

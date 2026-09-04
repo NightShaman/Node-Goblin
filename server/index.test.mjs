@@ -67,7 +67,7 @@ test('administers controller trust and TLS through secrets without returning mat
   assert.equal(value.secretValues.get('controller.gateway.host-1'), 'shared-secret');
   const listed = await value.routes.get('GET /gateway-trust')({}); assert.deepEqual(listed.gateways, [{ gatewayId: 'host-1', controllerId: 'controller-a', status: 'approved', approved: true, revoked: false, trusted: true, method: 'hmac' }]); assert.equal(JSON.stringify(listed).includes('shared-secret'), false);
   assert.deepEqual(await value.routes.get('DELETE /gateway-trust/:gatewayId')({ params: { gatewayId: 'host-1' } }), { ok: true, gateway: { gatewayId: 'host-1', controllerId: 'controller-a', status: 'revoked', approved: false, revoked: true, trusted: false, method: 'hmac' }, restartRequired: true }); assert.equal(value.secretValues.has('controller.gateway.host-1'), false);
-  assert.deepEqual((await value.routes.get('GET /gateway-trust')({})).gateways, [{ gatewayId: 'host-1', controllerId: 'controller-a', status: 'revoked', approved: false, revoked: true, trusted: false, method: 'hmac' }]);
+  assert.deepEqual((await value.routes.get('GET /gateway-trust')({})).gateways, []);
   value.values.set('controllerGateways', [{ gatewayId: 'paired-node', controllerId: 'controller-a' }]);
   value.secretValues.set('controller.gateway.publicKey.paired-node', 'PUBLIC-KEY');
   assert.deepEqual((await value.routes.get('GET /gateway-trust')({})).gateways, [{ gatewayId: 'paired-node', controllerId: 'controller-a', status: 'approved', approved: true, revoked: false, trusted: true, method: 'ed25519' }]);
@@ -236,4 +236,65 @@ test('controller preserves structured filesystem failures and operation argument
   assert.equal(result.ok, false);
   assert.equal(result.error, 'ENOTDIR');
   assert.equal(result.operationId, 'fs-controller-1');
+});
+
+test('pairing approval persists trust before auth.ok commit and survives controller recreation', async () => {
+  const value = harness();
+  await value.settings.set('controller', { enabled: true, host: '127.0.0.1', port: 7443 });
+  await value.secrets.set('controller.tls.key', 'private-key');
+  await value.secrets.set('controller.tls.cert', 'certificate');
+  await value.settings.set('pendingControllerPairings', [{ gatewayId: 'fresh-node', controllerId: 'controller', publicKey: 'PUBLIC', pairingCode: 'AAAA-BBBB-CCCC', nonce: 'nonce', status: 'pending' }]);
+  const order = [];
+  const pairing = { gatewayId: 'fresh-node', controllerId: 'controller', publicKey: 'PUBLIC', pairingCode: 'AAAA-BBBB-CCCC', nonce: 'nonce', status: 'pending' };
+  const listener = { on() {}, listen() {}, close() {}, listPending: () => [pairing], preparePendingApproval: () => pairing,
+    commitPendingApproval() { order.push(['commit', value.secretValues.get('controller.gateway.publicKey.fresh-node'), value.values.get('controllerGateways')]); return { ...pairing, status: 'approved' }; },
+    listLiveGateways: () => [] };
+  const originalSet = value.settings.set;
+  value.settings.set = async (name, stored) => { order.push(['settings', name]); return originalSet(name, stored); };
+  const originalSecretSet = value.secrets.set;
+  value.secrets.set = async (name, stored) => { order.push(['secret', name]); return originalSecretSet(name, stored); };
+  const service = await createControllerService({ settings: value.settings, secrets: value.secrets, listenerFactory: () => listener });
+  const approved = await service.approvePairing('fresh-node');
+  assert.equal(approved.status, 'approved');
+  assert.deepEqual(order.at(-1), ['commit', 'PUBLIC', [{ gatewayId: 'fresh-node', controllerId: 'controller' }]]);
+  const recreated = await createControllerService({ settings: value.settings, secrets: value.secrets, listenerFactory: (options) => ({ ...listener, options }) });
+  assert.deepEqual((await value.settings.get('controllerGateways'))[0], { gatewayId: 'fresh-node', controllerId: 'controller' });
+  assert.equal(await value.secrets.get('controller.gateway.publicKey.fresh-node'), 'PUBLIC');
+  service.close(); recreated.close();
+});
+
+test('pairing persistence failure leaves live pairing pending and sends no approval', async () => {
+  const value = harness();
+  await value.settings.set('controller', { enabled: true, host: '127.0.0.1', port: 7443 });
+  await value.secrets.set('controller.tls.key', 'private-key'); await value.secrets.set('controller.tls.cert', 'certificate');
+  const pairing = { gatewayId: 'fresh-node', controllerId: 'controller', publicKey: 'DO-NOT-LOG', pairingCode: 'AAAA-BBBB-CCCC', nonce: 'nonce', status: 'pending' };
+  let committed = false;
+  const listener = { on() {}, listen() {}, close() {}, listPending: () => [pairing], preparePendingApproval: () => pairing,
+    commitPendingApproval() { committed = true; }, listLiveGateways: () => [] };
+  const normalSet = value.settings.set;
+  value.settings.set = async (name, stored) => { if (name === 'controllerGateways') throw new Error('raw private failure DO-NOT-LOG'); return normalSet(name, stored); };
+  const service = await createControllerService({ settings: value.settings, secrets: value.secrets, listenerFactory: () => listener });
+  await assert.rejects(service.approvePairing('fresh-node'), (error) => error.code === 'pairing_persistence_failed' && error.message === 'pairing_persistence_failed');
+  assert.equal(committed, false);
+  assert.deepEqual(listener.listPending(), [pairing]);
+  assert.equal(await value.secrets.get('controller.gateway.publicKey.fresh-node'), null);
+  service.close();
+});
+
+test('revoke clears durable trust, both credential forms, pending pairing, and live state idempotently', async () => {
+  const removed = [];
+  const service = { state: () => ({}), listLiveGateways: () => [], listGateways: () => [], close() {},
+    revokeGateway: async (id) => { removed.push(id); } };
+  const value = await readyHarness({ controllerService: service });
+  value.values.set('controllerGateways', [{ gatewayId: 'node', controllerId: 'controller' }]);
+  value.values.set('pendingNodeGoblinPairings', [{ gatewayId: 'node', publicKey: 'NODE-PUBLIC', status: 'pending' }, { gatewayId: 'other', publicKey: 'OTHER-PUBLIC', status: 'pending' }]);
+  value.secretValues.set('controller.gateway.node', 'SECRET'); value.secretValues.set('controller.gateway.publicKey.node', 'PUBLIC');
+  const revoke = value.routes.get('DELETE /gateway-trust/:gatewayId');
+  await revoke({ params: { gatewayId: 'node' } });
+  await revoke({ params: { gatewayId: 'node' } });
+  assert.deepEqual(value.values.get('controllerGateways'), []);
+  assert.deepEqual(value.values.get('pendingNodeGoblinPairings'), [{ gatewayId: 'other', publicKey: 'OTHER-PUBLIC', status: 'pending' }]);
+  assert.equal(value.secretValues.has('controller.gateway.node'), false);
+  assert.equal(value.secretValues.has('controller.gateway.publicKey.node'), false);
+  assert.deepEqual(removed, ['node', 'node']);
 });

@@ -18,12 +18,40 @@ export function enrollmentPath(stateDir) {
   return path.join(stateDir, 'controller-trust.json');
 }
 
-// The enrollment token is a one-time out-of-band shared secret. Once persisted,
-// subsequent supplied tokens are deliberately ignored rather than rotating trust.
+export function enrollmentConsumedPath(stateDir) {
+  return path.join(stateDir, 'controller-enrollment-consumed');
+}
+
+export function markEnrollmentConsumed(stateDir) {
+  const file = enrollmentConsumedPath(stateDir);
+  fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  if (!fs.existsSync(file)) fs.writeFileSync(file, `${new Date().toISOString()}\n`, { mode: 0o600, flag: 'wx' });
+}
+
+export function pairingCodePath(stateDir) {
+  return path.join(stateDir, 'pairing-code.json');
+}
+
+export function writePairingCode(stateDir, value) {
+  const file = pairingCodePath(stateDir);
+  const temporary = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  fs.writeFileSync(temporary, `${JSON.stringify({ gatewayId: value.gatewayId, pairingCode: value.pairingCode, updatedAt: new Date().toISOString() })}\n`, { mode: 0o600, flag: 'wx' });
+  fs.renameSync(temporary, file);
+  fs.chmodSync(file, 0o600);
+}
+
+export function clearPairingCode(stateDir) {
+  fs.rmSync(pairingCodePath(stateDir), { force: true });
+}
+
+// The enrollment token is a one-time out-of-band shared secret. Once the first
+// authentication succeeds, it cannot silently recreate trust after an explicit
+// unpair; a later connection must use the normal pairing flow.
 export function enrollController({ stateDir, token, controllerId = 'controller' }) {
   requireText(stateDir, 'state_dir');
   const file = enrollmentPath(stateDir);
   if (fs.existsSync(file)) return readControllerTrust(stateDir);
+  if (fs.existsSync(enrollmentConsumedPath(stateDir))) return null;
   requireText(token, 'enrollment_token');
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const trust = { version: 1, controllerId, secret: token, enrolledAt: new Date().toISOString() };
@@ -70,7 +98,9 @@ export class OutboundGatewayTransport extends EventEmitter {
     this.port = Number(port);
     if (!Number.isInteger(this.port) || this.port < 1 || this.port > 65535) throw new Error('invalid_port');
     this.gatewayId = requireText(gatewayId, 'gateway_id');
-    this.trust = enrollmentToken ? enrollController({ stateDir, token: enrollmentToken }) : (fs.existsSync(enrollmentPath(stateDir)) ? readControllerTrust(stateDir) : null);
+    const hadTrust = fs.existsSync(enrollmentPath(stateDir));
+    this.trust = enrollmentToken ? enrollController({ stateDir, token: enrollmentToken }) : (hadTrust ? readControllerTrust(stateDir) : null);
+    this.enrollmentTokenUsed = Boolean(enrollmentToken && !hadTrust && this.trust);
     this.nodeIdentity = loadNodeIdentity(stateDir); this.stateDir = stateDir; this.pendingControllerPublicKey = null; this.pendingControllerTlsFingerprint = null;
     this.hasExplicitCa = Boolean(ca);
     // Only an entirely unpaired node without an explicit CA gets a temporary
@@ -198,6 +228,8 @@ export class OutboundGatewayTransport extends EventEmitter {
       }
       if (message?.type === 'auth.ok' && this.proofSent) {
         this.authenticated = true;
+        if (this.enrollmentTokenUsed) markEnrollmentConsumed(this.stateDir);
+        clearPairingCode(this.stateDir);
         if (!this.trust && !this.nodeIdentity.controllerPublicKey) {
           if (!this.pendingControllerPublicKey || !this.pendingControllerTlsFingerprint) { this.reject('controller_identity_missing'); this.socket.destroy(); return; }
           this.nodeIdentity.controllerPublicKey = this.pendingControllerPublicKey;

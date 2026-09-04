@@ -10,6 +10,7 @@ usage: node-goblin configure [CONTROLLER_ADDRESS NODE_ID]
        node-goblin connect
        node-goblin unpair
        node-goblin status
+       node-goblin pairing-code
        node-goblin uninstall
 
 configure prompts for omitted, non-secret values. Existing enrollment and TLS
@@ -55,6 +56,17 @@ case "$command" in
     "$SYSTEMCTL" enable --now "$SERVICE"
     "$SYSTEMCTL" is-active --quiet "$SERVICE" || { "$SYSTEMCTL" status --no-pager "$SERVICE" >&2 || true; echo "Node Goblin did not become active" >&2; exit 1; }
     echo "Node Goblin is active. On first connection, compare its pairing code with the controller."
+    pairing_code="$(path /var/lib/burrow-host-gateway)/pairing-code.json"
+    if [ -r "$pairing_code" ]; then
+      node - "$pairing_code" <<'NODE'
+const fs = require('node:fs');
+const file = process.argv[2];
+try {
+  const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (value?.gatewayId && value?.pairingCode) console.log(`Pairing code for ${value.gatewayId}: ${value.pairingCode}`);
+} catch {}
+NODE
+    fi
     ;;
   unpair)
     [ "$#" -eq 0 ] || { usage; exit 2; }; need_root unpair
@@ -75,6 +87,10 @@ fs.chmodSync(file, 0o600);
 NODE
     fi
     rm -f "$state/controller-trust.json"
+    # Consume any bootstrap token permanently after an explicit unpair. A later
+    # start must use the normal pairing flow rather than silently re-enrolling.
+    printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$state/controller-enrollment-consumed"
+    rm -f "$state/pairing-code.json"
     # unpair runs as root but the daemon runs as burrow; retain its exclusive
     # read/write access to the preserved node identity after rewriting it.
     if [ "$ROOT" = / ] && getent passwd burrow >/dev/null 2>&1; then
@@ -82,10 +98,41 @@ NODE
     fi
     echo "Removed controller trust. Run 'sudo node-goblin connect' to pair with the configured controller."
     ;;
+  pairing-code)
+    [ "$#" -eq 0 ] || { usage; exit 2; }
+    state=$(path /var/lib/burrow-host-gateway)
+    pairing_code="$state/pairing-code.json"
+    [ -r "$pairing_code" ] || { echo "No pairing code is currently pending." >&2; exit 1; }
+    node - "$pairing_code" <<'NODE'
+const fs = require('node:fs');
+const file = process.argv[2];
+try {
+  const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!value?.gatewayId || !value?.pairingCode) process.exit(1);
+  console.log(`Pairing pending for ${value.gatewayId}`);
+  console.log(`Pairing code: ${value.pairingCode}`);
+} catch { process.exit(1); }
+NODE
+    ;;
   status)
     [ "$#" -eq 0 ] || { usage; exit 2; }
     [ "$ROOT" = / ] || { echo "status is unavailable under a staging root" >&2; exit 1; }
-    exec "$SYSTEMCTL" status --no-pager "$SERVICE"
+    state=$(path /var/lib/burrow-host-gateway)
+    "$SYSTEMCTL" status --no-pager "$SERVICE"
+    pairing_code="$state/pairing-code.json"
+    if [ -r "$pairing_code" ]; then
+      node - "$pairing_code" <<'NODE'
+const fs = require('node:fs');
+const file = process.argv[2];
+try {
+  const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (value?.gatewayId && value?.pairingCode) {
+    console.log(`Pairing pending for ${value.gatewayId}`);
+    console.log(`Pairing code: ${value.pairingCode}`);
+  }
+} catch {}
+NODE
+    fi
     ;;
   uninstall)
     [ "$#" -eq 0 ] || { usage; exit 2; }; need_root uninstall

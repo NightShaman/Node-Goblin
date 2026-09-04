@@ -153,6 +153,19 @@ test('disconnect rejects pending work with actionable error and reconnect permit
   }
 });
 
+test('revoking a gateway removes its live connection and inventory immediately', () => {
+  const { listener, server } = listenerFixture();
+  const socket = server.connect();
+  authenticate(socket);
+  try {
+    assert.equal(listener.listGateways()[0].gatewayId, 'gateway-1');
+    assert.equal(listener.revokeGateway('gateway-1'), true);
+    assert.equal(socket.destroyed, true);
+    assert.equal(listener.liveGateway('gateway-1'), null);
+    assert.deepEqual(listener.listGateways(), []);
+  } finally { listener.close(); }
+});
+
 test('dispatches cancellation and reports malformed frames without corrupting live tracking', async () => {
   const { listener, server } = listenerFixture();
   const socket = server.connect();
@@ -214,5 +227,41 @@ test('retains disconnected last-seen health and marks pending operations reconne
   const activity = listener.listOperationActivity()[0];
   assert.equal(activity.state, 'interrupted');
   assert.equal(activity.reconnectRequired, true);
+  listener.close();
+});
+
+test('pending approval is committed only after its live challenge is revalidated', async () => {
+  const { controllerIdentity, loadNodeIdentity, signPairing } = await import('./lib/pairing.mjs');
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'listener-pairing-'));
+  const pairingIdentity = controllerIdentity();
+  const { listener, server } = listenerFixture({ gateways: [], pairingIdentity });
+  const socket = server.connect();
+  const identity = loadNodeIdentity(stateDir);
+  try {
+    const nonce = socket.messages()[0].nonce;
+    socket.feed({ type: 'auth.response', gatewayId: 'fresh-node', controllerId: 'controller', nodePublicKey: identity.publicKey,
+      pairingSignature: signPairing(identity, nonce, 'fresh-node', pairingIdentity.publicKey) });
+    const pending = listener.preparePendingApproval('fresh-node');
+    assert.equal(pending.gatewayId, 'fresh-node');
+    assert.equal(socket.messages().some((message) => message.type === 'auth.ok'), false);
+    assert.equal(listener.liveGateway('fresh-node').state, 'pending');
+    const approved = listener.commitPendingApproval('fresh-node', pending);
+    assert.equal(approved.status, 'approved');
+    assert.equal(socket.messages().at(-1).type, 'auth.ok');
+    assert.equal(listener.liveGateway('fresh-node').state, 'ready');
+  } finally { listener.close(); fs.rmSync(stateDir, { recursive: true, force: true }); }
+});
+
+test('revoke removes pending and operation activity and is idempotent', () => {
+  const { listener } = listenerFixture();
+  listener.pending.set('gateway-1', { gatewayId: 'gateway-1', status: 'pending' });
+  listener.putActivity({ gatewayId: 'gateway-1', operationId: 'stale-op' });
+  assert.equal(listener.revokeGateway('gateway-1'), true);
+  assert.deepEqual(listener.listPending(), []);
+  assert.deepEqual(listener.listOperationActivity(), []);
+  assert.equal(listener.revokeGateway('gateway-1'), false);
   listener.close();
 });
