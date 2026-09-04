@@ -82,6 +82,15 @@ export async function createSettingsContribution(context) {
       ],
     };
   });
+  const trusted = Array.isArray(trustResult?.gateways) ? trustResult.gateways : [];
+  const live = Array.isArray(gatewayResult?.gateways) ? gatewayResult.gateways : [];
+  const gatewayOptions = [{ value: '', label: 'Select a gateway' }, ...trusted
+    .filter((item) => {
+      const connection = live.find((candidate) => candidate.gatewayId === item.gatewayId);
+      return !item.revoked || Boolean(connection?.connected);
+    })
+    .filter((item, index, entries) => entries.findIndex((candidate) => candidate.gatewayId === item.gatewayId) === index)
+    .map((item) => ({ value: String(item.gatewayId), label: String(item.gatewayId) }))];
   const assignmentItems = (Array.isArray(context.agents) ? context.agents : []).map((agent) => {
     const current = agent.executionEnvironment || {};
     const kind = current.kind === 'gateway' ? 'gateway' : 'local';
@@ -93,7 +102,7 @@ export async function createSettingsContribution(context) {
       meta: `${kind === 'gateway' ? `Gateway: ${hostId || 'not selected'}` : 'Local controller'} · ${current.workspaceRoot || 'Workspace not set'}`,
       fields: [
         { id: `assignment-kind:${agent.id}`, label: 'Runs on', control: 'select', value: kind, options: [{ value: 'local', label: 'Local controller' }, { value: 'gateway', label: 'Configured gateway' }] },
-        { id: `assignment-gateway:${agent.id}`, label: 'Gateway', control: 'text', value: hostId, description: 'Required when using a gateway.' },
+        { id: `assignment-gateway:${agent.id}`, label: 'Gateway', control: 'select', value: hostId, options: gatewayOptions, description: 'Required when using a gateway.' },
         { id: `assignment-workspace:${agent.id}`, label: 'Default workspace root', control: 'text', value: String(current.workspaceRoot || ''), description: 'Use an absolute workspace path.' },
       ],
       actions: [{ id: `save-assignment:${agent.id}`, label: 'Save assignment', tone: 'primary' }],
@@ -125,8 +134,6 @@ export async function createSettingsContribution(context) {
       { id: 'clear-tls', label: 'Clear TLS', tone: 'danger', confirm: 'Clear controller TLS credentials?' },
     ],
   };
-  const trusted = Array.isArray(trustResult?.gateways) ? trustResult.gateways : [];
-  const live = Array.isArray(gatewayResult?.gateways) ? gatewayResult.gateways : [];
   const gatewayItems = trusted.map((item) => {
     const connection = live.find((candidate) => candidate.gatewayId === item.gatewayId);
     const connected = Boolean(connection?.connected);
