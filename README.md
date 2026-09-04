@@ -1,7 +1,7 @@
 # Node Goblin
 
 <p align="center">
-  <img src="NG-Logo.png" alt="Node Goblin" width="240">
+  <img src="NG-Logo.png" alt="Node Goblin" width="480">
 </p>
 
 Node Goblin is the Burrow mod for connecting and managing additional Burrow nodes.
@@ -29,9 +29,13 @@ git -C "$BURROW_RUNTIME_ROOT/mods/remote-nodes" pull --ff-only
 
 ## Mini Node Goblin
 
-Mini Node Goblin runs on the host you want Burrow to reach. Download the latest release from [GitHub Releases](https://github.com/NightShaman/Node-Goblin/releases), or use the files in `gateway/` for local development.
+Install Mini Node Goblin on the host you want Burrow to reach:
 
-The host deployment scripts are in [`gateway/deploy/`](gateway/deploy/).
+```bash
+curl -fsSL https://raw.githubusercontent.com/NightShaman/Burrow/main/install-node-goblin.sh | sudo sh
+```
+
+The installer sets up the host runtime and service. Follow its instructions to configure and connect it to Burrow.
 
 ## Links
 
