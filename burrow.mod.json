@@ -1,6 +1,6 @@
 {
   "id": "remote-nodes",
-  "name": "Remote Nodes",
+  "name": "Node Goblin",
   "system": true,
   "server": "server/index.mjs",
   "ui": {
@@ -11,12 +11,12 @@
     "settings": [{
       "id": "remote-nodes",
       "navigation": {
-        "title": "Remote Nodes",
+        "title": "Node Goblin",
         "description": "Manage host gateways, pairing, assignments, and remote execution activity."
       },
       "primary": {
-        "title": "Remote Nodes",
-        "description": "Configure the Remote Nodes execution environment.",
+        "title": "Node Goblin",
+        "description": "Configure the Node Goblin execution environment.",
         "capability": "settingsUi"
       }
     }]

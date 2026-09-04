@@ -1,6 +1,6 @@
 [Unit]
 Description=Burrow Node Goblin (outbound controller client)
-Documentation=https://github.com/NightShaman/burrow-mod-remote-nodes
+Documentation=https://github.com/NightShaman/Node-Goblin
 Wants=network-online.target
 After=network-online.target
 

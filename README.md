@@ -1,6 +1,6 @@
-# Remote Nodes for Burrow
+# Node Goblin for Burrow
 
-Remote Nodes is a small Burrow mod that stores additional Burrow API targets. Core Burrow uses those targets through its existing UI, API client, chat streaming, sessions, tools, settings, and other product surfaces.
+Node Goblin is a Burrow mod that stores additional Burrow API targets. Core Burrow uses those targets through its existing UI, API client, chat streaming, sessions, tools, settings, and other product surfaces.
 
 The mod does not reimplement Burrow screens or proxy Burrow APIs. Version 1 stores only:
 
@@ -20,7 +20,7 @@ Choose the runtime root used by your Burrow installation, then clone this reposi
 ```bash
 BURROW_RUNTIME_ROOT="${BURROW_RUNTIME_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/burrow}"
 mkdir -p "$BURROW_RUNTIME_ROOT/mods"
-git clone https://github.com/NightShaman/burrow-mod-remote-nodes.git \
+git clone https://github.com/NightShaman/Node-Goblin.git \
   "$BURROW_RUNTIME_ROOT/mods/remote-nodes"
 ```
 
