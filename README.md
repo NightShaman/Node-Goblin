@@ -19,15 +19,9 @@ git clone https://github.com/NightShaman/Node-Goblin.git \
   "$BURROW_RUNTIME_ROOT/mods/node-goblin"
 ```
 
-Grant the mod the Core-owned execution-provider capability in Burrow's runtime environment:
+Node Goblin declares the Core-owned `execution-provider-v1` capability in its installed manifest. No separate environment grant is required.
 
-```bash
-BURROW_SYSTEM_MOD_CAPABILITIES='{"node-goblin":"execution-provider-v1"}'
-```
-
-Merge this entry with any existing capability grants rather than replacing them. Node Goblin declares the capability in its manifest, but Core grants privileged capabilities only through operator-owned runtime configuration.
-
-Restart Burrow after installing, updating, or changing the grant.
+Restart Burrow after installing or updating the mod.
 
 To update an existing checkout:
 
