@@ -1,3 +1,9 @@
+export function formatGatewayTimestamp(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+}
+
 export const settingsSections = Object.freeze([
   { id: 'controller', label: 'Controller & TLS' },
   { id: 'pairings', label: 'Pending pairings' },
@@ -144,7 +150,7 @@ export async function createSettingsContribution(context) {
       label: String(item.gatewayId),
       description: approved ? 'Approved gateway.' : 'Approval status unavailable.',
       meta: `${revoked ? 'Revoked' : approved ? 'Approved' : 'Pending'} · ${connected ? 'Connected' : 'Disconnected'}`,
-      detail: `${connection?.name || 'Gateway daemon'}${connection?.version ? ` · v${connection.version}` : ''}${connection?.protocolVersion ? ` · protocol ${connection.protocolVersion}` : ''} · Connected ${connection?.connectedAt || '—'} · Last seen ${connection?.lastSeenAt || '—'}`,
+      detail: `${connection?.name || 'Gateway daemon'}${connection?.version ? ` · v${connection.version}` : ''}${connection?.protocolVersion ? ` · protocol ${connection.protocolVersion}` : ''} · Connected ${formatGatewayTimestamp(connection?.connectedAt)} · Last seen ${formatGatewayTimestamp(connection?.lastSeenAt)}`,
       actions: revoked ? [] : [{ id: `revoke-gateway:${item.gatewayId}`, label: 'Revoke gateway', tone: 'danger', confirm: 'Revoke this gateway? It will no longer be allowed to execute.' }],
     };
   });
