@@ -93,16 +93,16 @@ export async function createSettingsContribution(context) {
     .map((item) => ({ value: String(item.gatewayId), label: String(item.gatewayId) }))];
   const assignmentItems = (Array.isArray(context.agents) ? context.agents : []).map((agent) => {
     const current = agent.executionEnvironment || {};
-    const kind = current.kind === 'gateway' ? 'gateway' : 'local';
-    const hostId = kind === 'gateway' ? String(current.hostId || '') : '';
+    const kind = current.kind === 'remote' ? 'remote' : 'local';
+    const targetId = kind === 'remote' && current.providerId === 'node-goblin' ? String(current.targetId || '') : '';
     return {
       id: String(agent.id),
       label: String(agent.name || agent.id),
       description: 'Controller-owned assignment for future turns. The model cannot switch hosts mid-turn.',
-      meta: `${kind === 'gateway' ? `Gateway: ${hostId || 'not selected'}` : 'Local controller'} · ${current.workspaceRoot || 'Workspace not set'}`,
+      meta: `${kind === 'remote' ? `Gateway: ${targetId || 'not selected'}` : 'Local controller'} · ${current.workspaceRoot || 'Workspace not set'}`,
       fields: [
-        { id: `assignment-kind:${agent.id}`, label: 'Runs on', control: 'select', value: kind, options: [{ value: 'local', label: 'Local controller' }, { value: 'gateway', label: 'Configured gateway' }] },
-        { id: `assignment-gateway:${agent.id}`, label: 'Gateway', control: 'select', value: hostId, options: gatewayOptions, description: 'Required when using a gateway.' },
+        { id: `assignment-kind:${agent.id}`, label: 'Runs on', control: 'select', value: kind, options: [{ value: 'local', label: 'Local controller' }, { value: 'remote', label: 'Configured gateway' }] },
+        { id: `assignment-gateway:${agent.id}`, label: 'Gateway', control: 'select', value: targetId, options: gatewayOptions, description: 'Required when using a gateway.' },
         { id: `assignment-workspace:${agent.id}`, label: 'Default workspace root', control: 'text', value: String(current.workspaceRoot || ''), description: 'Use an absolute workspace path.' },
       ],
       actions: [{ id: `save-assignment:${agent.id}`, label: 'Save assignment', tone: 'primary' }],
@@ -177,9 +177,9 @@ export async function handleSettingsAction(actionId, values) {
     const agentId = actionId.slice('save-assignment:'.length);
     const kind = String(values[`assignment-kind:${agentId}`] || 'local');
     const workspaceRoot = String(values[`assignment-workspace:${agentId}`] || '').trim();
-    const hostId = String(values[`assignment-gateway:${agentId}`] || '').trim();
-    if (!workspaceRoot.startsWith('/') || (kind === 'gateway' && !hostId)) throw new Error('Execution environment needs an absolute workspace root and gateway.');
-    await fetch(`/api/agents/${encodeURIComponent(agentId)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ executionEnvironment: { kind, workspaceRoot, ...(kind === 'gateway' ? { hostId } : {}) } }) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()) || `Assignment save failed (${response.status}).`); });
+    const targetId = String(values[`assignment-gateway:${agentId}`] || '').trim();
+    if (!workspaceRoot.startsWith('/') || (kind === 'remote' && !targetId)) throw new Error('Execution environment needs an absolute workspace root and gateway.');
+    await fetch(`/api/agents/${encodeURIComponent(agentId)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ executionEnvironment: { kind, workspaceRoot, ...(kind === 'remote' ? { providerId: 'node-goblin', targetId } : {}) } }) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()) || `Assignment save failed (${response.status}).`); });
     return;
   }
   if (actionId === 'enroll-gateway') {

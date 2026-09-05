@@ -99,9 +99,9 @@ test('process controller dispatches correlated shell command and maps terminal e
     },
     async dispatchCancel(gatewayId, operationId) { calls.push(['cancel', gatewayId, operationId]); },
   };
-  const result = await createProcessController(service).executeProcess({ operationId: 'shell-abc', gatewayId: 'host-1', parentRunId: 'run-1', toolCallId: 'call-1', process: { command: 'printf ok', cwd: '/repo', env: { A: 'b' }, timeoutMs: 42 } });
+  const result = await createProcessController(service).executeProcess({ operationId: 'shell-abc', targetId: 'host-1', parentRunId: 'run-1', toolCallId: 'call-1', process: { command: 'printf ok', cwd: '/repo', env: { A: 'b' }, timeoutMs: 42 } });
   assert.deepEqual(calls, [['exec', 'host-1', { operationId: 'shell-abc', command: 'printf ok', cwd: '/repo', env: { A: 'b' }, timeoutMs: 42 }]]);
-  assert.deepEqual(result, { tool: 'shell_exec', ok: true, command: 'printf ok', reason: null, cwd: '/repo', exitCode: 0, signal: null, timedOut: false, cancelled: false, killed: false, durationMs: 12, stdout: 'ok\n', stderr: '', stdoutTruncated: false, stderrTruncated: false, stdoutOriginalChars: 3, stderrOriginalChars: 0, error: null, artifacts: null, operationId: 'shell-abc', gatewayId: 'host-1' });
+  assert.deepEqual(result, { tool: 'shell_exec', ok: true, command: 'printf ok', reason: null, cwd: '/repo', exitCode: 0, signal: null, timedOut: false, cancelled: false, killed: false, durationMs: 12, stdout: 'ok\n', stderr: '', stdoutTruncated: false, stderrTruncated: false, stdoutOriginalChars: 3, stderrOriginalChars: 0, error: null, artifacts: null, operationId: 'shell-abc', targetId: 'host-1' });
 });
 
 test('process controller preserves git executable argv through gateway dispatch', async () => {
@@ -114,14 +114,14 @@ test('process controller preserves git executable argv through gateway dispatch'
     },
     dispatchCancel() {},
   });
-  const result = await controller.executeProcess({ operationId: 'git-status', gatewayId: 'host-1', process: { executable: 'git', args: ['status', '--short', '--branch'], cwd: '/repo' } });
+  const result = await controller.executeProcess({ operationId: 'git-status', targetId: 'host-1', process: { executable: 'git', args: ['status', '--short', '--branch'], cwd: '/repo' } });
   assert.deepEqual(params, { operationId: 'git-status', executable: 'git', args: ['status', '--short', '--branch'], cwd: '/repo' });
   assert.equal(result.command, 'git status --short --branch');
   assert.equal(result.stdout, '## main\n');
 });
 
 test('process controller uses response outcome for replay and rejects failed or uncorrelated evidence', async () => {
-  const request = { operationId: 'shell-replay', gatewayId: 'host-1', process: { command: 'false' } };
+  const request = { operationId: 'shell-replay', targetId: 'host-1', process: { command: 'false' } };
   const evidence = { type: 'process.result', exitCode: 7, stdout: '', stderr: 'no', cancelled: false, timedOut: false };
   const replay = createProcessController({ dispatchProcessExec: async () => ({ response: { ok: true, result: { operationId: 'shell-replay', replay: true, outcome: evidence } } }), dispatchCancel() {} });
   assert.equal((await replay.executeProcess(request)).ok, false);
@@ -138,7 +138,7 @@ test('process controller propagates AbortSignal cancellation with the same opera
     dispatchCancel: async (gatewayId, operationId) => { calls.push(['cancel', gatewayId, operationId]); },
   };
   const abort = new AbortController();
-  const pending = createProcessController(service).executeProcess({ operationId: 'shell-cancel', gatewayId: 'host-1', process: { command: 'sleep 10' } }, { abortSignal: abort.signal });
+  const pending = createProcessController(service).executeProcess({ operationId: 'shell-cancel', targetId: 'host-1', process: { command: 'sleep 10' } }, { abortSignal: abort.signal });
   abort.abort();
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(calls.slice(0, 2), [['exec', 'host-1', 'shell-cancel'], ['cancel', 'host-1', 'shell-cancel']]);
@@ -230,7 +230,7 @@ test('controller preserves structured filesystem failures and operation argument
     async dispatchFilesystem(gatewayId, params) { seen = { gatewayId, params }; return { accepted: { operationId: params.operationId }, response: { ok: true, result: { operationId: params.operationId, outcome } } }; },
     async dispatchProcessExec() {}, async dispatchCancel() {},
   };
-  const result = await createProcessController(service).executeNativeFilesystem({ operationId: 'fs-controller-1', gatewayId: 'host-1', parentRunId: 'run-1', toolCallId: 'call-1', operation: { tool: 'files_list', arguments: { dirPath: '/repo/file', maxDepth: 2 } } });
+  const result = await createProcessController(service).executeNativeFilesystem({ operationId: 'fs-controller-1', targetId: 'host-1', parentRunId: 'run-1', toolCallId: 'call-1', operation: { tool: 'files_list', arguments: { dirPath: '/repo/file', maxDepth: 2 } } });
   assert.equal(seen.params.tool, 'files_list');
   assert.deepEqual(seen.params.arguments, { dirPath: '/repo/file', maxDepth: 2 });
   assert.equal(result.ok, false);

@@ -78,7 +78,7 @@ test('authenticated controller to TLS transport injects protected child env with
     transport.start();
     await once(transport, 'authenticated');
     const result = await controller.executeProcess({
-      operationId: 'protected-e2e', gatewayId: 'gateway-1', parentRunId: 'run-secret', toolCallId: 'call-secret',
+      operationId: 'protected-e2e', targetId: 'gateway-1', parentRunId: 'run-secret', toolCallId: 'call-secret',
       process: { command: `${process.execPath} -e "process.stdout.write(process.env.TOKEN.slice(0,7));setTimeout(()=>process.stdout.write(process.env.TOKEN.slice(7)),10)"` },
       protectedValues: { TOKEN: secret },
       protectedBindingMetadata: [{ name: 'TOKEN', ref: 'protected://token' }],

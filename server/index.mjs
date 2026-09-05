@@ -199,11 +199,11 @@ export function createOperationCorrelationStore(settings) {
         const digest = requestDigest(payload);
         const records = await read();
         const existing = records.find((entry) => entry.operationId === request.operationId);
-        if (existing && (existing.requestDigest !== digest || existing.gatewayId !== request.gatewayId || existing.kind !== kind)) {
+        if (existing && (existing.requestDigest !== digest || existing.targetId !== request.targetId || existing.kind !== kind)) {
           throw Object.assign(new Error('operation_correlation_conflict'), { code: 'operation_correlation_conflict' });
         }
         return existing || writeRecord(records, { operationId: request.operationId, parentRunId: request.parentRunId, toolCallId: request.toolCallId,
-          gatewayId: request.gatewayId, kind, requestDigest: digest, state: 'dispatching', terminalReference: null, updatedAt: new Date().toISOString() });
+          targetId: request.targetId, kind, requestDigest: digest, state: 'dispatching', terminalReference: null, updatedAt: new Date().toISOString() });
       });
     },
     terminal(operationId, dispatch) {
@@ -263,7 +263,7 @@ export function shellExecResult(request, dispatch) {
     error: null,
     artifacts: null,
     operationId,
-    gatewayId: request.gatewayId,
+    targetId: request.targetId,
   };
 }
 
@@ -273,9 +273,10 @@ export function createProcessController(service, { logger = console, operationSt
   return Object.freeze({
     async executeProcess(request = {}, { abortSignal = null } = {}) {
       const operationId = String(request.operationId ?? '').trim();
-      const gatewayId = String(request.gatewayId ?? '').trim();
+      const targetId = String(request.targetId ?? '').trim();
+      const gatewayId = targetId;
       if (!OPERATION_ID.test(operationId)) throw new Error('operation_id_invalid');
-      if (!gatewayId) throw new Error('gateway_id_required');
+      if (!targetId) throw new Error('target_id_required');
       let process;
       try { process = cleanProcessRequest(request.process); }
       catch (error) { throw new Error(error.message); }
@@ -312,9 +313,10 @@ export function createProcessController(service, { logger = console, operationSt
     },
     async executeNativeFilesystem(request = {}, { abortSignal = null } = {}) {
       const operationId = String(request.operationId ?? '').trim();
-      const gatewayId = String(request.gatewayId ?? '').trim();
+      const targetId = String(request.targetId ?? '').trim();
+      const gatewayId = targetId;
       if (!OPERATION_ID.test(operationId)) throw new Error('operation_id_invalid');
-      if (!gatewayId) throw new Error('gateway_id_required');
+      if (!targetId) throw new Error('target_id_required');
       const params = { operationId, parentRunId: request.parentRunId, toolCallId: request.toolCallId, tool: request.operation?.tool, arguments: { ...(request.operation?.arguments || {}) } };
       let cancelPromise = null;
       const cancel = () => { if (!cancelPromise) cancelPromise = Promise.resolve(service.dispatchCancel(gatewayId, operationId)).catch((error) => logger.warn?.('Node Goblin cancellation dispatch failed: cancellation_dispatch_failed')); };
@@ -327,7 +329,7 @@ export function createProcessController(service, { logger = console, operationSt
         const correlated = [dispatch.accepted?.operationId, dispatch.response?.result?.operationId].filter(Boolean);
         if (correlated.some((id) => id !== operationId)) throw new Error('gateway_operation_id_mismatch');
         await operationStore?.terminal(operationId, dispatch);
-        return { ...dispatch.response.result.outcome, operationId, gatewayId, parentRunId: request.parentRunId, toolCallId: request.toolCallId, execution: { kind: 'gateway', gatewayId } };
+        return { ...dispatch.response.result.outcome, operationId, targetId, parentRunId: request.parentRunId, toolCallId: request.toolCallId, execution: { kind: 'remote', targetId } };
       } finally { abortSignal?.removeEventListener?.('abort', cancel); }
     },
   });

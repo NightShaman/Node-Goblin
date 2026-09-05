@@ -8,17 +8,22 @@
   },
   "contributions": {
     "apiTargets": "/api/mods/node-goblin/targets",
-    "settings": [{
-      "id": "node-goblin",
-      "navigation": {
-        "title": "Node Goblin",
-        "description": "Manage host gateways, pairing, assignments, and remote execution activity."
-      },
-      "primary": {
-        "title": "Node Goblin",
-        "description": "Configure the Node Goblin execution environment.",
-        "capability": "settingsUi"
+    "settings": [
+      {
+        "id": "node-goblin",
+        "navigation": {
+          "title": "Node Goblin",
+          "description": "Manage host gateways, pairing, assignments, and remote execution activity."
+        },
+        "primary": {
+          "title": "Node Goblin",
+          "description": "Configure the Node Goblin execution environment.",
+          "capability": "settingsUi"
+        }
       }
-    }]
-  }
+    ]
+  },
+  "systemCapabilities": [
+    "execution-provider-v1"
+  ]
 }
