@@ -12,9 +12,7 @@ export const settingsSections = Object.freeze([
   { id: 'operations', label: 'Operation activity' },
 ]);
 
-// Declarative metadata is intentionally limited to the host-owned Settings contract.
-// Live values and actions remain on the legacy adapter until the host data/action
-// bindings are migrated in a later slice.
+// Node Goblin owns settings data and actions; the host owns their presentation.
 export const settingsContribution = Object.freeze({
   sections: Object.freeze([
     {
@@ -157,18 +155,26 @@ export async function createSettingsContribution(context) {
         { label: 'Connected', value: formatGatewayTimestamp(connection?.connectedAt) },
         { label: 'Last seen', value: formatGatewayTimestamp(connection?.lastSeenAt) },
       ],
-      actions: revoked ? [] : [
+      editLabel: 'Rotate credentials',
+      fields: [
+        { id: `rotate-controller:${item.gatewayId}`, label: 'Controller ID', value: String(item.controllerId || 'controller') },
+        { id: `rotate-secret:${item.gatewayId}`, label: 'New secret', control: 'password', description: 'Update the gateway to match and restart Burrow after saving.' },
+      ],
+      actions: [
+        { id: `rotate-gateway:${item.gatewayId}`, label: 'Save new secret', tone: 'primary', confirm: `Replace credentials for ${item.gatewayId}? Update the gateway to match and restart Burrow.` },
+        ...(revoked ? [] : [
         { id: `revoke-gateway:${item.gatewayId}`, label: 'Revoke', tone: 'danger', confirm: `Revoke ${item.gatewayId}? It will no longer be allowed to execute after Burrow restarts.` },
+        ]),
       ],
     };
   });
   return {
     ...settingsContribution,
     sections: settingsContribution.sections.map((section) => section.id === 'controller' ? controllerSection : section.id === 'pairings' ? { ...section, items } : section.id === 'gateways' ? { ...section, fields: [
-      { id: 'enroll-gateway-id', label: 'Gateway ID', control: 'text', description: 'Use an existing gateway ID to rotate its credentials.' },
+      { id: 'enroll-gateway-id', label: 'Gateway ID', control: 'text', description: 'For a new gateway. Select a saved gateway on the right to rotate credentials.' },
       { id: 'enroll-controller-id', label: 'Controller ID', control: 'text', value: 'controller' },
       { id: 'enroll-secret', label: 'Enrollment secret', control: 'password', description: 'One-time input; never displayed after submission.' },
-    ], actions: [{ id: 'enroll-gateway', label: 'Enroll or rotate gateway', tone: 'primary', confirm: 'Save these gateway credentials? An existing gateway ID replaces its secret. Update the gateway to match and restart Burrow.' }], items: gatewayItems } : section.id === 'assignments' ? { ...section, items: assignmentItems } : section.id === 'operations' ? { ...section, items: operations } : section),
+    ], actions: [{ id: 'enroll-gateway', label: 'Enroll gateway', tone: 'primary', confirm: 'Enroll this gateway? Update the gateway to match and restart Burrow.' }], items: gatewayItems } : section.id === 'assignments' ? { ...section, items: assignmentItems } : section.id === 'operations' ? { ...section, items: operations } : section),
   };
 }
 
@@ -196,10 +202,11 @@ export async function handleSettingsAction(actionId, values) {
     await fetch(`/api/agents/${encodeURIComponent(agentId)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ executionEnvironment: { kind, workspaceRoot, ...(kind === 'remote' ? { providerId: 'node-goblin', targetId } : {}) } }) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()) || `Assignment save failed (${response.status}).`); });
     return;
   }
-  if (actionId === 'enroll-gateway') {
-    const id = String(values['enroll-gateway-id'] || '').trim();
-    const controllerId = String(values['enroll-controller-id'] || 'controller').trim() || 'controller';
-    const secret = String(values['enroll-secret'] || '');
+  if (actionId === 'enroll-gateway' || actionId.startsWith('rotate-gateway:')) {
+    const rotating = actionId.startsWith('rotate-gateway:');
+    const id = rotating ? actionId.slice('rotate-gateway:'.length) : String(values['enroll-gateway-id'] || '').trim();
+    const controllerId = String(values[rotating ? `rotate-controller:${id}` : 'enroll-controller-id'] || 'controller').trim() || 'controller';
+    const secret = String(values[rotating ? `rotate-secret:${id}` : 'enroll-secret'] || '');
     if (!id || !secret) throw new Error('Gateway ID and enrollment secret are required.');
     await fetch(`/api/mods/node-goblin/gateway-trust/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ controllerId, secret }) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()) || `Gateway enrollment failed (${response.status}).`); });
     return;
