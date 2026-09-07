@@ -41,7 +41,7 @@ export const settingsContribution = Object.freeze({
     {
       id: 'gateways',
       label: 'Gateways',
-      description: 'Enroll a new gateway, or manage a saved gateway on the right. Trust changes require a Burrow restart.',
+      description: 'Enroll a gateway or rotate its credentials using the form. Saved gateways and revoke actions are on the right. Trust changes require a Burrow restart.',
       layout: 'form-inventory',
       items: Object.freeze([]),
     },
@@ -49,7 +49,7 @@ export const settingsContribution = Object.freeze({
       id: 'assignments',
       label: 'Agent assignments',
       description: 'Choose where each agent executes future turns. Assignments are controller-owned and apply to future turns only.',
-      layout: 'list-detail',
+      layout: 'form-inventory',
       items: Object.freeze([]),
     },
     {
@@ -157,24 +157,18 @@ export async function createSettingsContribution(context) {
         { label: 'Connected', value: formatGatewayTimestamp(connection?.connectedAt) },
         { label: 'Last seen', value: formatGatewayTimestamp(connection?.lastSeenAt) },
       ],
-      editLabel: 'Rotate secret',
-      fields: revoked ? [] : [
-        { id: `rotate-controller:${item.gatewayId}`, label: 'Controller ID', value: String(item.controllerId || 'controller'), control: 'text' },
-        { id: `rotate-secret:${item.gatewayId}`, label: 'New secret', control: 'password', description: 'One-time input; cleared after saving or cancelling.' },
-      ],
       actions: revoked ? [] : [
-        { id: `rotate-gateway:${item.gatewayId}`, label: 'Save new secret', tone: 'primary', confirm: `Replace the secret for ${item.gatewayId}? Update the gateway to match and restart Burrow. This replaces its existing trust credentials.` },
-        { id: `revoke-gateway:${item.gatewayId}`, label: 'Revoke gateway', tone: 'danger', confirm: `Revoke ${item.gatewayId}? It will no longer be allowed to execute after Burrow restarts.` },
+        { id: `revoke-gateway:${item.gatewayId}`, label: 'Revoke', tone: 'danger', confirm: `Revoke ${item.gatewayId}? It will no longer be allowed to execute after Burrow restarts.` },
       ],
     };
   });
   return {
     ...settingsContribution,
     sections: settingsContribution.sections.map((section) => section.id === 'controller' ? controllerSection : section.id === 'pairings' ? { ...section, items } : section.id === 'gateways' ? { ...section, fields: [
-      { id: 'enroll-gateway-id', label: 'Gateway ID', control: 'text', description: 'Identity of the new gateway.' },
+      { id: 'enroll-gateway-id', label: 'Gateway ID', control: 'text', description: 'Use an existing gateway ID to rotate its credentials.' },
       { id: 'enroll-controller-id', label: 'Controller ID', control: 'text', value: 'controller' },
       { id: 'enroll-secret', label: 'Enrollment secret', control: 'password', description: 'One-time input; never displayed after submission.' },
-    ], actions: [{ id: 'enroll-gateway', label: 'Enroll gateway', tone: 'primary' }], items: gatewayItems } : section.id === 'assignments' ? { ...section, items: assignmentItems } : section.id === 'operations' ? { ...section, items: operations } : section),
+    ], actions: [{ id: 'enroll-gateway', label: 'Enroll or rotate gateway', tone: 'primary', confirm: 'Save these gateway credentials? An existing gateway ID replaces its secret. Update the gateway to match and restart Burrow.' }], items: gatewayItems } : section.id === 'assignments' ? { ...section, items: assignmentItems } : section.id === 'operations' ? { ...section, items: operations } : section),
   };
 }
 
@@ -202,17 +196,10 @@ export async function handleSettingsAction(actionId, values) {
     await fetch(`/api/agents/${encodeURIComponent(agentId)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ executionEnvironment: { kind, workspaceRoot, ...(kind === 'remote' ? { providerId: 'node-goblin', targetId } : {}) } }) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()) || `Assignment save failed (${response.status}).`); });
     return;
   }
-  if (actionId === 'enroll-gateway' || actionId.startsWith('rotate-gateway:')) {
-    const rotating = actionId.startsWith('rotate-gateway:');
-    const id = rotating ? actionId.slice('rotate-gateway:'.length) : String(values['enroll-gateway-id'] || '').trim();
-    const controllerId = String(values[rotating ? `rotate-controller:${id}` : 'enroll-controller-id'] || 'controller').trim() || 'controller';
-    const secret = String(values[rotating ? `rotate-secret:${id}` : 'enroll-secret'] || '');
-    if (!rotating && id) {
-      const response = await fetch('/api/mods/node-goblin/gateway-trust');
-      if (!response.ok) throw new Error('Could not check existing gateways. Enrollment was not submitted.');
-      const existing = await response.json();
-      if (existing.gateways?.some(item => item.gatewayId === id)) throw new Error('This gateway already exists. Use its Rotate secret action instead.');
-    }
+  if (actionId === 'enroll-gateway') {
+    const id = String(values['enroll-gateway-id'] || '').trim();
+    const controllerId = String(values['enroll-controller-id'] || 'controller').trim() || 'controller';
+    const secret = String(values['enroll-secret'] || '');
     if (!id || !secret) throw new Error('Gateway ID and enrollment secret are required.');
     await fetch(`/api/mods/node-goblin/gateway-trust/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ controllerId, secret }) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()) || `Gateway enrollment failed (${response.status}).`); });
     return;
