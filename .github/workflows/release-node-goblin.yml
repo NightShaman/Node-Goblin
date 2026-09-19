@@ -17,6 +17,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -29,11 +32,11 @@ jobs:
           base=$(date -u +%Y.%m.%d)
           version=$base
           suffix=0
-          while gh release view "v$version" >/dev/null 2>&1; do
+          while git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; do
             suffix=$((suffix + 1))
             version="$base.$suffix"
           done
-          printf '%s\n' "$version" > gateway/VERSION
+          node gateway/deploy/set-release-version.mjs "$version"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
       - name: Verify and build release assets
         run: |
@@ -47,11 +50,17 @@ jobs:
         run: |
           set -eu
           tag="v$VERSION"
+          node gateway/deploy/set-release-version.mjs "$VERSION" --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add burrow.mod.json gateway/VERSION gateway/package.json
+          git diff --cached --quiet || git commit -m "Release Node Goblin $VERSION"
+          git push origin HEAD:main
           git tag "$tag"
           git push origin "$tag"
           gh release create "$tag" \
             --title "Node Goblin $VERSION" \
-            --notes "Calendar-versioned Node Goblin release $VERSION from source $GITHUB_SHA." \
+            --notes "Calendar-versioned Node Goblin release $VERSION from source $(git rev-parse HEAD)." \
             "gateway/dist/node-goblin-$VERSION.tar.gz" \
             "gateway/dist/node-goblin-$VERSION.tar.gz.sha256"
       # Burrow's assembly workflow independently consumes this public repo.
