@@ -5,9 +5,10 @@ import crypto from 'node:crypto';
 const SUPPORTED = new Set(['files_read', 'files_list', 'files_find', 'files_inspect', 'files_search', 'files_write', 'files_edit']);
 const fingerprint = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16);
 
-// null means unbounded, matching the developer-tools filesystem contract. Explicit
-// finite limits remain configurable by callers; the gateway must not invent a cap.
-const bound = (value) => value == null || value === '' ? Infinity : Math.max(1, Math.floor(Number(value)));
+// Defaults bound recursive work and response volume; explicit positive caller
+// limits override them. Null/omitted values select defaults, never one entry.
+const bound = (value, fallback) => value == null || value === '' || !Number.isSafeInteger(Number(value)) || Number(value) < 1 ? fallback : Number(value);
+const traversalBudget = () => bound(process.env.BURROW_FILESYSTEM_TRAVERSAL_ENTRIES, 4000);
 const globRegex = (pattern) => {
   let source = '^';
   for (let i = 0; i < pattern.length; i += 1) {
@@ -27,11 +28,14 @@ const globRegex = (pattern) => {
 
 async function walk(root, { maxDepth, maxEntries, signal }) {
   const entries = [];
+  const warnings = [];
   let depthTruncated = false;
   let entryBudgetExhausted = false;
   async function visit(dir, depth) {
     signal?.throwIfAborted();
-    const children = (await fs.readdir(dir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
+    let children;
+    try { children = (await fs.readdir(dir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name)); }
+    catch (error) { if (dir === root) throw error; warnings.push(`unreadable_directory:${path.relative(root, dir)}:${error.code || 'error'}`); return; }
     for (const item of children) {
       if (item.name.startsWith('.') || item.name === 'node_modules') continue;
       if (entries.length >= maxEntries) { entryBudgetExhausted = true; return; }
@@ -40,24 +44,27 @@ async function walk(root, { maxDepth, maxEntries, signal }) {
       entries.push({ path: path.relative(root, absolute), type: isDirectory ? 'directory' : item.isFile() ? 'file' : item.isSymbolicLink() ? 'symlink' : 'other' });
       if (isDirectory) {
         if (depth < maxDepth) await visit(absolute, depth + 1);
-        else depthTruncated = true;
+        else {
+          try { const hidden = await fs.readdir(absolute); if (hidden.some(name => !name.startsWith('.') && name !== 'node_modules')) depthTruncated = true; }
+          catch (error) { warnings.push(`unreadable_directory:${path.relative(root, absolute)}:${error.code || 'error'}`); }
+        }
       }
       if (entryBudgetExhausted) return;
     }
   }
   await visit(root, 0);
-  return { entries, depthTruncated, entryBudgetExhausted };
+  return { entries, depthTruncated, entryBudgetExhausted, warnings };
 }
 
 const traversalMeta = (listing, extra = {}) => {
   const depthTruncated = listing?.depthTruncated === true;
   const entryBudgetExhausted = listing?.entryBudgetExhausted === true;
   const truncated = depthTruncated || entryBudgetExhausted || extra.resultLimitReached === true;
-  const warnings = [];
+  const warnings = [...(listing?.warnings || [])];
   if (depthTruncated) warnings.push('depth limit reached; some directories were not traversed');
   if (entryBudgetExhausted) warnings.push('entry budget reached; some entries were not returned');
   if (extra.resultLimitReached) warnings.push('result limit reached; some matches were not returned');
-  return { truncated, depthTruncated, entryBudgetExhausted, incomplete: truncated, warnings };
+  return { truncated, depthTruncated, entryBudgetExhausted, incomplete: truncated || warnings.length > 0, warnings };
 };
 
 export async function runFilesystem(params = {}, { signal, now = () => Date.now() } = {}) {
@@ -77,18 +84,18 @@ export async function runFilesystem(params = {}, { signal, now = () => Date.now(
       const target = path.resolve(String(a.path)); try { const stat = await fs.lstat(target); result = { tool, ok: true, path: target, exists: true, type: stat.isDirectory() ? 'directory' : stat.isFile() ? 'file' : stat.isSymbolicLink() ? 'symlink' : 'other', size: stat.size, modifiedAt: stat.mtime.toISOString(), symlinkTarget: stat.isSymbolicLink() ? await fs.readlink(target) : null, error: null, artifacts: null }; } catch (error) { if (error.code !== 'ENOENT') throw error; result = { tool, ok: true, path: target, exists: false, type: null, size: null, modifiedAt: null, symlinkTarget: null, error: null, artifacts: null }; }
     } else if (tool === 'files_list' || tool === 'files_find' || tool === 'files_search') {
       const root = path.resolve(String(a.dirPath));
-      const listing = await walk(root, { maxDepth: bound(a.maxDepth), maxEntries: tool === 'files_list' ? bound(a.maxEntries) : bound(a.maxTraversalEntries), signal });
+      const listing = await walk(root, { maxDepth: bound(a.maxDepth, tool === 'files_list' ? 4 : 8), maxEntries: tool === 'files_list' ? bound(a.maxEntries, 500) : bound(a.maxTraversalEntries, traversalBudget()), signal });
       if (tool === 'files_list') result = { tool, ok: true, dirPath: root, entries: listing.entries, ...traversalMeta(listing), error: null, artifacts: null };
       else if (tool === 'files_find') {
         const pattern = String(a.pattern || '*'); const paths = listing.entries.map(e => e.path).filter(p => globRegex(pattern).test(p));
-        const limit = bound(a.maxEntries); const limited = paths.length > limit;
+        const limit = bound(a.maxEntries, 500); const limited = paths.length > limit;
         result = { tool, ok: true, dirPath: root, pattern, paths: paths.slice(0, limit), ...traversalMeta(listing, { resultLimitReached: limited }), error: null, artifacts: null };
       } else {
         const query = String(a.query || ''); if (!query) throw new Error('query_required');
-        const matches = []; const limit = bound(a.maxMatches); let resultLimitReached = false;
+        const matches = []; const limit = bound(a.maxMatches, 200); let resultLimitReached = false;
         for (const entry of listing.entries) {
           signal?.throwIfAborted(); if (entry.type !== 'file') continue;
-          let text; try { text = await fs.readFile(path.join(root, entry.path), 'utf8'); } catch { continue; }
+          let text; try { text = await fs.readFile(path.join(root, entry.path), 'utf8'); } catch (error) { listing.warnings.push(`unreadable_file:${entry.path}:${error.code || 'error'}`); continue; }
           for (const [i, line] of text.split(/\r?\n/).entries()) if (line.includes(query)) {
             if (matches.length >= limit) { resultLimitReached = true; break; }
             matches.push({ filePath: entry.path, line: i + 1, text: line.slice(0, 1000) });

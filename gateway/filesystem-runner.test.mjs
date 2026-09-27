@@ -17,7 +17,7 @@ test('filesystem operation matrix preserves kinds and structures path/type failu
  assert.equal((await runFilesystem({tool:'files_read',arguments:{filePath:made}})).content,'after');
 });
 
-test('filesystem traversal reports depth and entry truncation without hidden default caps', async () => {
+test('filesystem traversal reports depth and entry truncation with explicit bounds', async () => {
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'fs-bounds-')); fs.mkdirSync(path.join(root,'one','two'),{recursive:true});
  fs.writeFileSync(path.join(root,'one','two','deep.mjs'),'x'); fs.writeFileSync(path.join(root,'sibling.mjs'),'x');
  const complete=await runFilesystem({tool:'files_list',arguments:{dirPath:root}});
@@ -41,4 +41,21 @@ test('files_find and files_search distinguish result limits from complete traver
  assert.equal(found.paths.length,1); assert.equal(found.truncated,true); assert.equal(found.entryBudgetExhausted,false);
  const searched=await runFilesystem({tool:'files_search',arguments:{dirPath:root,query:'hit',maxMatches:1}});
  assert.equal(searched.matches.length,1); assert.equal(searched.truncated,true); assert.equal(searched.incomplete,true); assert.match(searched.warnings.join(' '),/result limit/);
+});
+
+test('null bounds select defaults and depth truncation does not hide siblings or empty directories', async t => {
+  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'gateway-defaults-'));
+  t.after(() => fs.promises.rm(root, {recursive:true,force:true}));
+  await fs.promises.mkdir(path.join(root,'a','nested','deep'),{recursive:true});
+  await fs.promises.writeFile(path.join(root,'a','nested','deep','file.mjs'),'x');
+  await fs.promises.mkdir(path.join(root,'z','empty'),{recursive:true});
+  const list=await runFilesystem({tool:'files_list',arguments:{dirPath:root,maxDepth:null,maxEntries:null}});
+  assert.ok(list.entries.some(e=>e.path==='z'));
+  assert.ok(list.entries.some(e=>e.path==='a/nested/deep/file.mjs'));
+  const partial=await runFilesystem({tool:'files_list',arguments:{dirPath:root,maxDepth:1,maxEntries:200}});
+  assert.ok(partial.entries.some(e=>e.path==='z/empty'));
+  assert.equal(partial.depthTruncated,true);
+  await fs.promises.rm(path.join(root,'a'),{recursive:true});
+  const complete=await runFilesystem({tool:'files_list',arguments:{dirPath:root,maxDepth:1,maxEntries:200}});
+  assert.equal(complete.truncated,false);
 });

@@ -44,3 +44,15 @@ The installer sets up the host runtime and service. Follow its instructions to c
 - [Burrow](https://github.com/NightShaman/Burrow)
 - [Releases](https://github.com/NightShaman/Node-Goblin/releases)
 - [Issues](https://github.com/NightShaman/Node-Goblin/issues)
+
+### Filesystem traversal evidence
+
+Mini Node Goblin defaults to depth 4 for listings and 8 for find/search,
+500 returned entries/paths, and 200 search matches. Explicit positive tool
+bounds override these defaults; omitted/null bounds select defaults rather
+than one entry. Find/search traversal uses a 4,000-entry resource budget to
+bound recursive memory/work, configurable with
+`BURROW_FILESYSTEM_TRAVERSAL_ENTRIES` (positive integer) on the gateway host.
+Results distinguish `depthTruncated`, `entryBudgetExhausted`, and `truncated`;
+unreadable entries produce warnings and `incomplete`, never a complete-map
+claim. Result limits do not imply that an empty match set searched every path.
