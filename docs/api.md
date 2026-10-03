@@ -1,5 +1,7 @@
 # HTTP API reference
 
+*On narrow screens, swipe tables horizontally to see every column.*
+
 The server module registers relative routes with BURROW's mod API. Their public prefix is **`/api/mods/node-goblin`**. Authentication, session handling, request admission, and route hosting belong to BURROW Core; this repository does not implement a standalone HTTP authentication layer. Do not expose these administrative routes independently.
 
 A route success usually contains `ok: true`. Validation throws an error carrying an HTTP status, normally 400. The host determines final HTTP serialization. A dispatch response can contain an unsuccessful nested process/filesystem outcome even when the route request was accepted.

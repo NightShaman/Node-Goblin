@@ -1,5 +1,7 @@
 # Configuration reference
 
+*On narrow screens, swipe tables horizontally to see every column.*
+
 Configuration lives on both controller and gateway. Changing one side does not automatically rewrite the other.
 
 ## Gateway environment

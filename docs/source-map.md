@@ -1,5 +1,7 @@
 # Source map and coverage
 
+*On narrow screens, swipe tables horizontally to see every column.*
+
 These docs were prepared against **NightShaman/Node-Goblin** main commit **`12d0f1daf74516e1f0120c80ad4716bd09e1dead`**, verified 2026-10-03 UTC, release metadata **2026.09.27**. Documentation-only changes do not change that runtime baseline.
 
 The repository has 41 tracked baseline files, including one image asset, tests, release automation, and metadata. The runtime implementation is small enough to map directly. No `AGENTS.md` or repository `.agents/skills` files were present in this snapshot.

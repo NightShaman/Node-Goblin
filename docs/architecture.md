@@ -1,8 +1,12 @@
 # Architecture
 
+*On narrow screens, swipe tables horizontally to see every column.*
+
 The repository has three runtime components: a BURROW mod server, a settings contribution, and a standalone gateway package. Node Goblin remains an independent mod. Core owns the generic execution-provider contract, agent assignment, host admission, and permission decisions.
 
 ## Component map
+
+<div class="diagram-scroll diagram-scroll-wide" role="region" tabindex="0" aria-label="Scrollable architecture diagram" markdown="1">
 
 ```mermaid
 flowchart TB
@@ -25,6 +29,10 @@ flowchart TB
   NET <-->|TLS JSON lines| TLS
 ```
 
+</div>
+
+*On narrow screens, scroll the diagram horizontally to read all labels.*
+
 ## Manifest and activation
 
 `burrow.mod.json` declares ID `node-goblin`, system-mod status, `server/index.mjs`, `ui/settings.js`, the API-target contribution, and `execution-provider-v1`. The version appears in the manifest and gateway package/release files.
@@ -43,6 +51,8 @@ Pairing approval first stores the trusted public key and gateway record, removes
 
 ## Connection and execution lifecycle
 
+<div class="diagram-scroll" role="region" tabindex="0" aria-label="Scrollable architecture diagram" markdown="1">
+
 ```mermaid
 stateDiagram-v2
   [*] --> Authenticating
@@ -53,6 +63,10 @@ stateDiagram-v2
   Ready --> Closed: Socket closes or identity revoked
   Closed --> Authenticating: Host reconnects
 ```
+
+</div>
+
+*On narrow screens, scroll the diagram horizontally to read all labels.*
 
 The host transport reconnects with exponential backoff from 100 ms to a maximum 5 seconds. Authentication success resets the attempt counter. A disconnected controller rejects pending dispatch promises with `gateway_disconnected`; that is uncertainty about execution completion, not a rollback.
 

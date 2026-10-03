@@ -1,5 +1,7 @@
 # Command reference
 
+*On narrow screens, swipe tables horizontally to see every column.*
+
 There are two command surfaces. The installed shell command manages a systemd service. The JavaScript CLI starts the daemon directly.
 
 ## Installed operator command

@@ -4,14 +4,20 @@ Node Goblin deliberately enables remote host execution. Its trust model depends 
 
 ## Boundaries
 
+<div class="diagram-scroll diagram-scroll-narrow" role="region" tabindex="0" aria-label="Scrollable architecture diagram" markdown="1">
+
 ```mermaid
-flowchart LR
+flowchart TB
   USER[Authorized BURROW operator] --> CORE[Core authentication and policy]
   CORE --> MOD[Node Goblin provider]
   MOD --> CHANNEL[Authenticated TLS channel]
   CHANNEL --> HOST[Gateway service account]
   HOST --> DATA[All OS-permitted processes and files]
 ```
+
+</div>
+
+*On narrow screens, scroll the diagram horizontally to read all labels.*
 
 Core decides who may configure and use the provider. The mod manages gateway identity and routes execution. The gateway executes with its account's permissions. It does not introduce a container, VM, chroot, or mandatory filesystem allowlist.
 

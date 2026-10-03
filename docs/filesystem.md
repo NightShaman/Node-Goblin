@@ -1,5 +1,7 @@
 # Native filesystem operations
 
+*On narrow screens, swipe tables horizontally to see every column.*
+
 `filesystem.execute` dispatches seven tools on the gateway host. The daemon wraps the result with operation ID/replay information, while the Core adapter adds target, parent-run, tool-call, and remote execution provenance.
 
 ```json

@@ -173,8 +173,17 @@ def main():
                     viewportWidth: window.innerWidth,
                     documentWidth: document.documentElement.scrollWidth,
                     heading: document.querySelector('article h1')?.textContent?.trim(),
+                    diagrams: [...document.querySelectorAll('.diagram-scroll:not(.diagram-scroll-narrow) .mermaid')].map(el => ({width: el.getBoundingClientRect().width, containerWidth: el.closest('.diagram-scroll').getBoundingClientRect().width})),
+                    tables: [...document.querySelectorAll('.md-typeset__scrollwrap')].map(el => {
+                        const needsScroll = el.scrollWidth > el.clientWidth + 1;
+                        const previous = el.scrollLeft;
+                        el.scrollLeft = 40;
+                        const canScroll = el.scrollLeft > 0;
+                        el.scrollLeft = previous;
+                        return {needsScroll, canScroll};
+                    }),
                 })''')
-                mobile['result'] = 'pass' if mobile['heading'] and mobile['documentWidth'] <= mobile['viewportWidth'] + 1 else 'fail'
+                mobile['result'] = 'pass' if mobile['heading'] and mobile['documentWidth'] <= mobile['viewportWidth'] + 1 and all(d['width'] >= 600 for d in mobile['diagrams']) and all(not t['needsScroll'] or t['canScroll'] for t in mobile['tables']) else 'fail'
                 save_artifacts(page, args.artifacts / 'mobile' if args.artifacts else None, relative_path, mobile)
                 if mobile['result'] != 'pass':
                     raise RuntimeError(f'{relative_path}: mobile layout failed: {mobile}')

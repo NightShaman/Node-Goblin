@@ -1,5 +1,7 @@
 # Node Goblin
 
+*On narrow screens, swipe tables horizontally to see every column.*
+
 Node Goblin connects a BURROW controller to additional execution hosts. Install the **Node Goblin mod** in BURROW and **Mini Node Goblin** on each host that will execute work. Mini is the host-side part of the same implementation and protocol.
 
 These pages cover the operator workflow, the developer contracts, and the behavior present in source release **2026.09.27**. They describe the repository, not the state of a deployed host. The [source map](source-map.md) identifies the exact baseline and ownership boundaries.
@@ -17,8 +19,10 @@ These pages cover the operator workflow, the developer contracts, and the behavi
 
 ## What runs where
 
+<div class="diagram-scroll" role="region" tabindex="0" aria-label="Scrollable architecture diagram" markdown="1">
+
 ```mermaid
-flowchart LR
+flowchart TB
   O[Operator] --> U[BURROW settings UI]
   U --> M[Node Goblin mod]
   C[BURROW Core execution provider] --> M
@@ -27,6 +31,10 @@ flowchart LR
   G --> P[Host processes]
   G --> F[Host filesystem]
 ```
+
+</div>
+
+*On narrow screens, scroll the diagram horizontally to read all labels.*
 
 The gateway opens the outbound connection. The controller sends operations over that established connection. It does not need to SSH into the host. Core owns agent assignments and permission decisions; Node Goblin supplies the execution transport and host implementation.
 

@@ -41,6 +41,7 @@ plugins:
 markdown_extensions:
   - admonition
   - attr_list
+  - md_in_html
   - tables
   - toc:
       permalink: true
@@ -63,6 +64,9 @@ validation:
     anchors: warn
     absolute_links: warn
     unrecognized_links: warn
+extra_css:
+  - assets/stylesheets/extra.css
+
 nav:
   - Home: index.md
   - Start:

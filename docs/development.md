@@ -1,5 +1,7 @@
 # Development and documentation
 
+*On narrow screens, swipe tables horizontally to see every column.*
+
 Work in this repository for Node Goblin-specific behavior. Keep Core interfaces generic and use the registered `execution-provider-v1` contract instead of adding Node Goblin implementation details into BURROW Core.
 
 ## Source and runtime setup

@@ -4,6 +4,8 @@ Pairing establishes permission for a controller to execute on a host. Treat appr
 
 ## First connection with key pairing
 
+<div class="diagram-scroll" role="region" tabindex="0" aria-label="Scrollable architecture diagram" markdown="1">
+
 ```mermaid
 sequenceDiagram
   participant O as Operator
@@ -20,6 +22,10 @@ sequenceDiagram
   H->>H: Persist controller key and TLS fingerprint
   C->>H: Authorized execution requests
 ```
+
+</div>
+
+*On narrow screens, scroll the diagram horizontally to read all labels.*
 
 1. Configure the controller and restart BURROW after listener/TLS changes.
 2. Configure and start the host as described in [installation](installation.md).

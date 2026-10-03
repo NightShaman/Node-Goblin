@@ -1,5 +1,7 @@
 # Wire protocol and process execution
 
+*On narrow screens, swipe tables horizontally to see every column.*
+
 The daemon accepts one JSON request per line and emits JSON lines. Protocol version is `1.0`. It can run over local stdio or over the authenticated outbound TLS connection. These are application envelopes rather than a claim of JSON-RPC compatibility.
 
 ## Request and response shapes
@@ -68,6 +70,8 @@ One-shot protected values and delivery bindings are excluded from the canonical 
 
 ## Replay guarantees and limits
 
+<div class="diagram-scroll" role="region" tabindex="0" aria-label="Scrollable architecture diagram" markdown="1">
+
 ```mermaid
 flowchart TD
   R[Execution request] --> J{Completed journal entry?}
@@ -79,6 +83,10 @@ flowchart TD
   RUN --> STORE[Store terminal outcome]
   STORE --> RES[Return response]
 ```
+
+</div>
+
+*On narrow screens, scroll the diagram horizontally to read all labels.*
 
 The journal defaults to five minutes and 256 completed operations. Entries are expired/evicted, so ID reuse outside that retained window can execute again. Only completed outcomes are journaled. A crash between side effects and journal persistence leaves an ambiguous result. The implementation therefore provides bounded completed-operation replay, not a universal exactly-once guarantee.
 

@@ -1,5 +1,7 @@
 # Settings guide
 
+*On narrow screens, swipe tables horizontally to see every column.*
+
 Node Goblin supplies declarative settings data and action handlers. BURROW renders the controls. The mod does not ship a standalone web server or a standalone settings application.
 
 | Section | Purpose | Important behavior |

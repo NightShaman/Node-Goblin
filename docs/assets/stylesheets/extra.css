@@ -1,0 +1,14 @@
+/* Keep diagram labels legible; limit horizontal scrolling to the diagram. */
+.md-typeset .diagram-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding: 0.5rem 0;
+}
+.md-typeset .diagram-scroll .mermaid { min-width: 35rem; }
+.md-typeset .diagram-scroll-wide .mermaid { min-width: 55rem; }
+.md-typeset .diagram-scroll-narrow .mermaid { min-width: 0; }
+.md-typeset .diagram-scroll:focus-visible {
+  outline: 2px solid var(--md-accent-fg-color);
+  outline-offset: 2px;
+}

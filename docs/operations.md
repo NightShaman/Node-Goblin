@@ -1,5 +1,7 @@
 # Operations and recovery
 
+*On narrow screens, swipe tables horizontally to see every column.*
+
 Operate Node Goblin as a host-execution service. Check service health, controller connection, trust, and actual operation evidence separately.
 
 ## First verification
