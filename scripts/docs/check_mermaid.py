@@ -95,6 +95,23 @@ def save_artifacts(page, directory, relative_path, report):
     destination = directory / relative_path.with_suffix('')
     destination.parent.mkdir(parents=True, exist_ok=True)
     try:
+        # Resize can leave offscreen, internally scrolling code layers unpainted
+        # in a full-page capture. Inspect/capture each block in its own viewport
+        # first, then let Chromium paint the top of the page before the overview.
+        code_reports = []
+        for index, code in enumerate(page.locator('article pre > code').all(), 1):
+            code.scroll_into_view_if_needed()
+            code.evaluate('(el) => { el.scrollLeft = 0; }')
+            text = code.inner_text()
+            if not text.strip():
+                raise RuntimeError(f'Empty code block {index}')
+            code.screenshot(path=str(destination.with_name(destination.name + f'-code-{index}').with_suffix('.png')), timeout=15000)
+            code_reports.append({'index': index, 'text_characters': len(text), 'visible': code.is_visible()})
+        report['code_blocks'] = code_reports
+        page.evaluate('''async () => {
+            window.scrollTo(0, 0);
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        }''')
         page.screenshot(path=str(destination.with_suffix('.png')), full_page=True, timeout=15000)
     except Exception as exc:
         # A crashed browser must not hide the original failure or its diagnostics.
