@@ -1,0 +1,89 @@
+site_name: Node Goblin
+site_description: Operator and developer documentation for the independent BURROW remote execution mod
+site_url: https://nightshaman.github.io/Node-Goblin/
+repo_url: https://github.com/NightShaman/Node-Goblin
+repo_name: NightShaman/Node-Goblin
+edit_uri: edit/main/docs/
+strict: true
+
+theme:
+  name: material
+  language: en
+  logo: assets/node-goblin-logo.png
+  favicon: assets/node-goblin-logo.png
+  font: false
+  palette:
+    - media: '(prefers-color-scheme: light)'
+      scheme: default
+      primary: green
+      accent: lime
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: '(prefers-color-scheme: dark)'
+      scheme: slate
+      primary: green
+      accent: lime
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+plugins:
+  - search
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+    absolute_links: warn
+  links:
+    not_found: warn
+    anchors: warn
+    absolute_links: warn
+    unrecognized_links: warn
+extra_css:
+  - assets/stylesheets/extra.css
+
+nav:
+  - Home: index.md
+  - Start:
+      - Installation: installation.md
+      - Pairing and assignment: pairing.md
+      - Settings guide: settings.md
+  - Architecture:
+      - Overview: architecture.md
+      - Wire protocol: protocol.md
+      - Native filesystem: filesystem.md
+  - Operate:
+      - Operations and recovery: operations.md
+      - Security: security.md
+  - Reference:
+      - Configuration: configuration.md
+      - Commands: cli.md
+      - HTTP API: api.md
+  - Develop:
+      - Development and docs: development.md
+      - Source map: source-map.md

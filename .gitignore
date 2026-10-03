@@ -1,3 +1,9 @@
 node_modules/
 gateway/dist/
 .DS_Store
+
+# Documentation build and local verification outputs
+site/
+.venv-docs/
+docs-browser-artifacts/
+__pycache__/

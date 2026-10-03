@@ -8,6 +8,13 @@ Node Goblin is the Burrow mod for connecting and managing additional Burrow node
 
 This repository also contains **Mini Node Goblin**, the small host runtime that runs on a node and connects back to Burrow. “Mini” is only a differentiator; it does not describe a separate protocol or implementation.
 
+## Documentation
+
+[Read the operator and developer guide](docs/index.md) for installation, pairing,
+architecture, APIs, configuration, security, recovery, and contributor workflows.
+The documentation site can be built locally with MkDocs Material; see
+[documentation development](docs/development.md#documentation-setup).
+
 ## Install the mod
 
 Install the mod into the `mods` directory of a Burrow runtime:
