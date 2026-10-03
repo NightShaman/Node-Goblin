@@ -1,0 +1,2 @@
+# Browser-based diagram validation, separate from the static-site build.
+playwright==1.62.0
