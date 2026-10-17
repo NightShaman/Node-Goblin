@@ -63,20 +63,3 @@ jobs:
             --notes "Calendar-versioned Node Goblin release $VERSION from source $(git rev-parse HEAD)." \
             "gateway/dist/node-goblin-$VERSION.tar.gz" \
             "gateway/dist/node-goblin-$VERSION.tar.gz.sha256"
-      # Burrow's assembly workflow independently consumes this public repo.
-      # Keep dispatch available when the optional cross-repo token is configured,
-      # but do not fail a standalone Node Goblin release when it is absent.
-      - name: Dispatch public Burrow release
-        if: ${{ env.BURROW_DISPATCH_TOKEN != '' }}
-        env:
-          BURROW_DISPATCH_TOKEN: ${{ secrets.BURROW_DISPATCH_TOKEN }}
-          GH_TOKEN: ${{ secrets.BURROW_DISPATCH_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -eu
-          gh api repos/NightShaman/Burrow/dispatches \
-            --method POST \
-            -f event_type=source-updated \
-            -f client_payload[source_repository]="$GITHUB_REPOSITORY" \
-            -f client_payload[source_sha]="$GITHUB_SHA" \
-            -f client_payload[node_goblin_version]="$VERSION"

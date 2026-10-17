@@ -54,13 +54,13 @@ If no TLS key and certificate are configured, Node Goblin generates them using O
 
 ### 3. Install and start Mini Node Goblin on the execution host
 
-This command downloads and runs Burrow's bootstrap installer as root. Review the script first, or use the [selected-release installation procedure](docs/installation.md#install-mini-node-goblin) if you want to inspect and pin a package.
+Node Goblin owns its release version, gateway archives, checksum, and bootstrap installer. Burrow does not rebuild or republish them under a Burrow version. This command downloads the latest Node Goblin release from this repository and runs its verified installer as root. Review [`install.sh`](install.sh) first, or use the [selected-release installation procedure](docs/installation.md#install-mini-node-goblin) to inspect and pin a package.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/GoblinKing-Burrow/Burrow/main/install-node-goblin.sh | sudo sh
+curl -fsSL https://raw.githubusercontent.com/GoblinKing-Burrow/Node-Goblin/main/install.sh | sudo sh
 ```
 
-The package installer creates or adopts the `burrow` account and installs the service. It does not start it until you connect.
+The package installer creates or adopts the `burrow` account and installs the service. It does not start it until you connect. To pin a specific release, pass its Node Goblin version (for example `--version 2026.10.17.8`).
 
 Replace the example controller address and host ID below with your own:
 
