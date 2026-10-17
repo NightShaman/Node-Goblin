@@ -1,11 +1,12 @@
 # Installation
 
-Install the mod on the controller and the host runtime on each execution host. The checked-in package installer targets **Linux with systemd**. The JavaScript runtime uses Node built-ins and has no declared third-party runtime dependencies. Release CI uses **Node 24**; the repository does not declare a minimum supported Node version in `engines`.
+Install the mod on the controller and the host runtime on each execution host. The checked-in package installer targets **Linux with systemd**. The JavaScript runtime uses Node built-ins and has no declared third-party runtime dependencies. The host package declares **Node 24.x** (`>=24 <25`) in `engines`.
 
 ## Prerequisites
 
 - A working BURROW installation that supports the Core-owned `execution-provider-v1` mod capability
-- Node available to `/usr/bin/env node` for the system service
+- Node 24.x available to `/usr/bin/env node` for the system service
+- Python 3 on the host for `node-goblin confirm-pairing`
 - Linux systemd for the packaged host service
 - `tar`, GNU tar for deterministic release builds, and standard installation/account utilities
 - OpenSSL on the controller if it will generate its own TLS certificate
