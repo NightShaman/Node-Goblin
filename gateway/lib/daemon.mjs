@@ -1,5 +1,8 @@
 import { boundOutputFrame, boundCompletedOutcome } from './output-frame.mjs';
 import readline from 'node:readline';
+import { readFileSync } from 'node:fs';
+
+const RELEASE_VERSION = readFileSync(new URL('../VERSION', import.meta.url), 'utf8').trim();
 import process from 'node:process';
 import { OperationJournal } from './journal.mjs';
 import { PROTOCOL_VERSION, operationIdFromRequest, requestDigestFromParams } from './protocol.mjs';
@@ -15,7 +18,7 @@ export class GatewayDaemon {
     this.journal = journal;
     this.identity = {
       name: 'burrow-host-gateway',
-      version: '2026.09.01',
+      version: RELEASE_VERSION,
       protocolVersion: PROTOCOL_VERSION,
       transport: 'stdio-jsonl',
       ...identity,
@@ -53,10 +56,17 @@ export class GatewayDaemon {
       return;
     }
     if (method === 'shutdown') {
+      if (this.controllers.size) {
+        this.sendProtocolError(message.id ?? null, 'shutdown_requires_idle');
+        return;
+      }
       this.stopping = true;
-      for (const controller of this.controllers.values()) controller.abort();
       this.send({ type: 'response', requestId: message.id ?? null, ok: true, result: { status: 'stopping' } });
       queueMicrotask(() => this.stop());
+      return;
+    }
+    if (this.stopping) {
+      this.sendProtocolError(message.id ?? null, 'gateway_stopping');
       return;
     }
     if (method !== 'process.exec' && method !== 'filesystem.execute') throw new Error('unknown_method');

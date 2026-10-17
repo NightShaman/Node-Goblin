@@ -82,3 +82,43 @@ When updating docs, link to the reviewed source revision, distinguish Core-owned
 - [`.github/workflows/release-node-goblin.yml`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/.github/workflows/release-node-goblin.yml)
 - [`gateway/deploy/build-release.sh`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/deploy/build-release.sh)
 - [`gateway/deploy/set-release-version.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/deploy/set-release-version.mjs)
+
+### Runtime cleanup contracts
+
+Node Goblin supports Node 24.x. The read-only pull-request runtime workflow runs
+all gateway, controller/server, deployment/package and UI settings contract tests;
+publishing remains in the separate main-branch release workflow. Runtime identity
+reads `gateway/VERSION`; the release stamper checks that file, the package and mod
+manifest together. Protocol version `1.0` is independent of the calendar release.
+
+The controller retains the most recently updated 256 **terminal** correlation
+records. Unresolved dispatches are never evicted by that limit. This is bounded
+history, not an exactly-once guarantee; after eviction, gateway journal retention
+still governs replay. The settings API supports aggregate storage here, so writes
+are still serialized array updates rather than a claimed keyed-store migration.
+The gateway journal only rewrites on mutations or actual expiry/limit cleanup.
+
+The local development `GatewayClient` rejects outstanding requests on EOF, parse
+failure, stream error and child exit. Requests may opt into `timeoutMs` or an
+`AbortSignal`; neither imposes a default deadline nor cancels remote execution.
+Call `close()` to end input and await the child, and retain caller-owned process
+termination for a child that refuses to exit. The local spawn helper explicitly
+selects stdio even when a controller URL exists in the caller's environment.
+
+Protocol `shutdown` is idle-only: active work returns `shutdown_requires_idle`
+without cancelling it or entering stopping state. After an idle shutdown begins,
+new execution requests return `gateway_stopping`. Listener close is awaitable and
+drains every accepted socket, including pre-authentication sockets. Authentication
+and pending pairing have a 60-second lifetime per connection; operators can retry
+pairing after a fresh connection if approval takes longer.
+
+Legacy shared-secret changes for Ed25519 identities return HTTP 409
+`gateway_credential_method_ed25519`, without modifying credentials. These actions
+do not migrate a paired identity. The Smatchet-owned settings UI must hide or
+disable shared-secret replacement for `method: ed25519`, and label HMAC actions
+as legacy-only; that renderer change is not part of this runtime cleanup.
+
+Release archives use an explicit runtime/deployment allowlist. Default, external,
+and custom in-tree output directories are supported; output under `lib` or
+`deploy`, or the gateway source root itself, is rejected to prevent output from
+becoming runtime input.

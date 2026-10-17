@@ -99,7 +99,7 @@ async function configuredGatewayIdentities(settings, secrets) {
     try {
       const identity = cleanGatewayIdentity(value);
       const hasSharedSecret = Boolean(await (secrets?.has?.(`controller.gateway.${identity.gatewayId}`) ?? secrets?.get?.(`controller.gateway.${identity.gatewayId}`)));
-      const hasPublicKey = Boolean(await (secrets?.has?.(`controller.gateway.publicKey.${identity.gatewayId}`) ?? secrets?.get?.(`controller.gateway.publicKey.${identity.gatewayId}`)));
+      const hasPublicKey = Boolean(value.publicKey || await (secrets?.has?.(`controller.gateway.publicKey.${identity.gatewayId}`) ?? secrets?.get?.(`controller.gateway.publicKey.${identity.gatewayId}`)));
       const revoked = value?.status === 'revoked' || value?.revoked === true;
       const method = hasPublicKey ? 'ed25519' : (hasSharedSecret ? 'hmac' : (value?.method || null));
       const approved = !revoked && !interrupted.includes(identity.gatewayId) && (hasSharedSecret || hasPublicKey || value?.status === 'approved' || value?.approved === true);
@@ -177,7 +177,8 @@ function requestDigest(value) {
 }
 
 /** Durable controller-owned correlation. The gateway journal remains authoritative for execution replay. */
-export function createOperationCorrelationStore(settings) {
+export function createOperationCorrelationStore(settings, { terminalLimit = 256 } = {}) {
+  if (!Number.isInteger(terminalLimit) || terminalLimit < 1) throw new Error('invalid_terminal_limit');
   // Serialize read-modify-write transactions so concurrent operations cannot
   // overwrite one another through the asynchronous host RPC boundary.
   let queue = Promise.resolve();
@@ -192,7 +193,13 @@ export function createOperationCorrelationStore(settings) {
   };
   const writeRecord = async (records, record) => {
     const index = records.findIndex((entry) => entry.operationId === record.operationId);
-    if (index < 0) records.push(record); else records[index] = record;
+    if (index >= 0) records.splice(index, 1);
+    records.push(record);
+    // Only completed correlation is evictable; unresolved work has no expiry.
+    const terminal = records.filter((entry) => entry.state === 'terminal')
+      .reverse().sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+    const retained = new Set(terminal.slice(0, terminalLimit));
+    records = records.filter((entry) => entry.state !== 'terminal' || retained.has(entry));
     await settings?.set?.(OPERATIONS_NAME, records);
     return record;
   };
@@ -562,6 +569,10 @@ export async function activate({ api, settings, secrets, logger, processExecutio
   api.get('/gateway-trust', async () => ({ ok: true, gateways: await configuredGatewayIdentities(settings, secrets) }));
   api.put('/gateway-trust/:gatewayId', async ({ params, body = {} }) => {
     const identity = cleanGatewayIdentity(body, params.gatewayId);
+    const effective = (await configuredGatewayIdentities(settings, secrets)).find((entry) => entry.gatewayId === identity.gatewayId);
+    if (effective?.method === 'ed25519' || await secrets?.get?.(`controller.gateway.publicKey.${identity.gatewayId}`)) {
+      throw problem('gateway_credential_method_ed25519', 409);
+    }
     const secret = String(body.secret ?? '');
     if (!secret.trim()) throw problem('gateway_secret_required');
     await service.setGatewayTrust(identity, secret);

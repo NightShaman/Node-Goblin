@@ -7,8 +7,9 @@
   "bin": {
     "burrow-host-gateway": "./cli.mjs"
   },
+  "engines": { "node": ">=24 <25" },
   "scripts": {
-    "test": "node --test *.test.mjs test/*.test.mjs ../server/index.test.mjs",
+    "test": "node --test *.test.mjs test/*.test.mjs ../server/index.test.mjs ../ui/*.test.mjs",
     "install:host": "./deploy/install.sh",
     "uninstall:host": "./deploy/uninstall.sh"
   }

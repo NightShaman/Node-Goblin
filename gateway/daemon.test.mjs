@@ -231,3 +231,35 @@ test('native filesystem failures are structured, replayable, and do not stop lat
   assert.equal(messages.find((m) => m.requestId === 'replay').result.replay, true);
   assert.equal(messages.find((m) => m.requestId === 'good' && m.type === 'response').result.outcome.content, 'hello');
 });
+
+test('administrative shutdown requires idle and rejects work once stopping', async () => {
+  const output = new PassThrough(); let text = '';
+  output.on('data', (chunk) => { text += chunk; });
+  const daemon = new GatewayDaemon({ output });
+  const controller = new AbortController();
+  daemon.controllers.set('busy', { controller, requestDigest: 'digest' });
+  await daemon.handle({ id: 'busy-stop', method: 'shutdown' });
+  assert.equal(daemon.stopping, false);
+  assert.equal(controller.signal.aborted, false);
+  assert.equal(JSON.parse(text.trim()).error.code, 'shutdown_requires_idle');
+  daemon.controllers.clear(); text = '';
+  // Keep the output available for inspection after the queued stop.
+  daemon.stop = () => {};
+  await daemon.handle({ id: 'idle-stop', method: 'shutdown' });
+  await daemon.handle({ id: 'late-work', method: 'process.exec', params: {} });
+  const messages = text.trim().split('\n').map(JSON.parse);
+  assert.equal(messages[0].result.status, 'stopping');
+  assert.equal(messages[1].error.code, 'gateway_stopping');
+});
+
+test('journal persists only mutations, once per put, retaining replay and conflicts', () => {
+  const journal = new OperationJournal({ ttlMs: 10, limit: 2 });
+  let writes = 0; journal.save = () => { writes++; };
+  assert.equal(journal.inspect('missing', 0), null); assert.equal(writes, 0);
+  journal.put('one', 'digest', { ok: true }, 0); assert.equal(writes, 1);
+  assert.equal(journal.inspect('one', 1).requestDigest, 'digest'); assert.equal(writes, 1);
+  journal.put('two', 'digest2', {}, 2); assert.equal(writes, 2);
+  journal.put('three', 'digest3', {}, 3); assert.equal(writes, 3);
+  assert.equal(journal.inspect('one', 4), null); assert.equal(writes, 3);
+  assert.equal(journal.inspect('two', 12), null); assert.equal(writes, 4);
+});

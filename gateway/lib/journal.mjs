@@ -35,26 +35,24 @@ export class OperationJournal {
     fs.renameSync(tempPath, this.filePath);
   }
 
-  prune(current = nowMs()) {
+  prune(current = nowMs(), persist = true) {
+    let changed = false;
     for (const [key, entry] of this.entries) {
-      if (entry.expiresAt <= current) this.entries.delete(key);
+      if (entry.expiresAt <= current) { this.entries.delete(key); changed = true; }
     }
     while (this.entries.size > this.limit) {
       const oldestKey = this.entries.keys().next().value;
       this.entries.delete(oldestKey);
+      changed = true;
     }
-    this.save();
+    if (changed && persist) this.save();
+    return changed;
   }
 
   inspect(id, current = nowMs()) {
     this.prune(current);
     const entry = this.entries.get(id);
     if (!entry) return null;
-    if (entry.expiresAt <= current) {
-      this.entries.delete(id);
-      this.save();
-      return null;
-    }
     return { requestDigest: entry.requestDigest, result: clone(entry.result), expiresAt: entry.expiresAt };
   }
 
@@ -63,8 +61,9 @@ export class OperationJournal {
   }
 
   put(id, requestDigest, result, current = nowMs()) {
-    this.prune(current);
+    this.prune(current, false);
     this.entries.set(id, { requestDigest, result: clone(result), expiresAt: current + this.ttlMs });
-    this.prune(current);
+    this.prune(current, false);
+    this.save();
   }
 }

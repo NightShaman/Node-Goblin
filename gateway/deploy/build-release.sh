@@ -10,14 +10,12 @@ OUT=${1:-"$SOURCE/dist"}
 NAME="node-goblin-$VERSION"
 EPOCH=${SOURCE_DATE_EPOCH:-0}
 mkdir -p "$OUT"
-OUT=$(CDPATH= cd -- "$OUT" && pwd)
-# Exclude the actual output path, including custom in-tree build directories.
-case "$OUT" in "$SOURCE") echo "output must not be the source root" >&2; exit 1;; esac
-exclude=./dist
-case "$OUT" in "$SOURCE"/*) exclude="./${OUT#"$SOURCE"/}";; esac
+OUT=$(CDPATH= cd -- "$OUT" && pwd -P)
+case "$OUT" in "$SOURCE"|"$SOURCE/lib"|"$SOURCE/lib/"*|"$SOURCE/deploy"|"$SOURCE/deploy/"*) echo "Unsafe build output directory" >&2; exit 1;; esac
 stage=$(mktemp -d); trap 'rm -rf "$stage"' EXIT HUP INT TERM
 mkdir -p "$stage/$NAME"
-( cd "$SOURCE" && tar --exclude='./dist' --exclude="$exclude" --exclude='./test' -cf "$stage/source.tar" . )
+# Package only runtime/deployment authorities, never arbitrary build outputs.
+( cd "$SOURCE" && tar -cf "$stage/source.tar" cli.mjs node-goblin.mjs index.mjs lib deploy package.json VERSION )
 ( cd "$stage/$NAME" && tar -xf "$stage/source.tar" )
 validate_package "$stage/$NAME"
 find "$stage/$NAME" -type d -exec chmod 0755 {} +

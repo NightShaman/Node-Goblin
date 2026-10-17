@@ -33,3 +33,25 @@ test('calendar release is deterministic and directly installable', () => {
     fs.rmSync(stage, { recursive: true, force: true });
   }
 });
+
+test('default, external and custom in-tree output builds are identical and never recursive', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'goblin-custom-build-'));
+  try {
+    const source = path.join(root, 'gateway');
+    fs.cpSync(gateway, source, { recursive: true, filter: (entry) => !entry.includes('/dist') });
+    const script = path.join(source, 'deploy/build-release.sh');
+    const version = fs.readFileSync(path.join(source, 'VERSION'), 'utf8').trim();
+    let expected;
+    for (const output of [undefined, path.join(root, 'external'), path.join(source, 'release-output')]) {
+      for (let iteration = 0; iteration < 2; iteration++) {
+        const result = spawnSync(script, output ? [output] : [], { encoding: 'utf8', env: { ...process.env, SOURCE_DATE_EPOCH: '0' } });
+        assert.equal(result.status, 0, result.stderr);
+        const bytes = fs.readFileSync(path.join(output ?? path.join(source, 'dist'), `node-goblin-${version}.tar.gz`));
+        expected ??= bytes;
+        assert.deepEqual(bytes, expected);
+      }
+    }
+    const unsafe = spawnSync(script, [path.join(source, 'lib/output')], { encoding: 'utf8' });
+    assert.notEqual(unsafe.status, 0); assert.match(unsafe.stderr, /Unsafe build output/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

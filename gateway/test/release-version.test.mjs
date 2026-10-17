@@ -19,3 +19,16 @@ test('release version stamps and verifies all tagged version authorities', () =>
     assert.throws(() => execFileSync(process.execPath, [script, 'invalid'], {stdio:'pipe'}));
   } finally { rmSync(root, {recursive:true,force:true}); }
 });
+
+test('runtime hello and all release authorities agree without changing protocol version', async () => {
+  const { GatewayDaemon } = await import('../lib/daemon.mjs');
+  const root = new URL('../../', import.meta.url);
+  const version = readFileSync(new URL('gateway/VERSION', root), 'utf8').trim();
+  assert.equal(JSON.parse(readFileSync(new URL('burrow.mod.json', root))).version, version);
+  assert.equal(JSON.parse(readFileSync(new URL('gateway/package.json', root))).version, version);
+  let response;
+  const daemon = new GatewayDaemon({ output: { write: (line) => { response = JSON.parse(line); } } });
+  await daemon.handle({ id: 'version', method: 'hello' });
+  assert.equal(response.result.version, version);
+  assert.equal(response.result.protocolVersion, '1.0');
+});

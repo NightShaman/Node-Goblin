@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -80,7 +81,7 @@ test('controller challenge authenticates with a bound HMAC proof', () => {
     assert.deepEqual(response, {
       type: 'auth.response', gatewayId: 'gateway-1', controllerId: 'controller',
       proof: authenticationProof('one-time-secret', 'gateway-1', nonce),
-      gateway: { name: 'burrow-host-gateway', version: '2026.09.01', protocolVersion: '1.0' },
+      gateway: { name: 'burrow-host-gateway', version: readFileSync(new URL('./VERSION', import.meta.url), 'utf8').trim(), protocolVersion: '1.0' },
     });
     assert.notEqual(response.proof, authenticationProof('wrong', 'gateway-1', nonce));
   } finally { transport.stop(); }

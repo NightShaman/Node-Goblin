@@ -307,4 +307,26 @@ test('listener forwards actual server listening, error and close lifecycle event
   server.emit('error', Object.assign(new Error('bind failed'), { code: 'EADDRINUSE' }));
   server.emit('close');
   assert.deepEqual(events, ['listening', 'EADDRINUSE', 'close']);
+
+test('listener drains authenticating and ready sockets and rejects pending dispatch', async () => {
+  const { listener, server } = listenerFixture();
+  const authenticating = server.connect();
+  const ready = server.connect(); authenticate(ready);
+  const dispatched = listener.dispatchProcessExec('gateway-1', { operationId: 'drain' });
+  const rejected = assert.rejects(dispatched, { code: 'gateway_disconnected' });
+  await listener.close(); await rejected;
+  await listener.close();
+  assert.equal(authenticating.destroyed, true);
+  assert.equal(ready.destroyed, true);
+  assert.equal(listener.sockets.size, 0);
+  const late = server.connect(); assert.equal(late.destroyed, true);
+});
+
+test('listener bounds authentication lifetime', async () => {
+  const { listener, server } = listenerFixture({ handshakeTimeoutMs: 5 });
+  const socket = server.connect();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(socket.destroyed, true);
+  assert.equal(socket.messages().at(-1).error.code, 'authentication_timeout');
+  await listener.close();
 });

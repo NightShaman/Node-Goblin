@@ -87,6 +87,8 @@ class GatewayConnection extends EventEmitter {
     this.pendingRequests = new Map();
     this.activeOperationRequests = new Map();
     this.health = { status: 'authenticating', activeOperations: [] };
+    this.authTimer = setTimeout(() => this.fail('authentication_timeout'), listener.handshakeTimeoutMs);
+    this.authTimer.unref?.();
     socket.setEncoding('utf8');
     socket.on('data', (chunk) => this.onData(chunk));
     socket.on('error', (error) => this.listener.emit('gatewaySocketError', { connection: this, error }));
@@ -153,6 +155,7 @@ class GatewayConnection extends EventEmitter {
     this.gatewayId = gatewayId;
     this.controllerId = controllerId;
     this.gatewayMetadata = safeGatewayMetadata(message.gateway);
+    clearTimeout(this.authTimer);
     this.state = 'ready';
     this.health = { status: 'ok', activeOperations: [] };
     this.send({ type: 'auth.ok', connectionId: this.connectionId });
@@ -233,6 +236,8 @@ class GatewayConnection extends EventEmitter {
   }
 
   onClose() {
+    if (this.state === 'closed') return;
+    clearTimeout(this.authTimer);
     this.listener.unbindGatewayIdentity(this);
     this.state = 'closed';
     this.health = { status: 'disconnected', activeOperations: [] };
@@ -248,24 +253,38 @@ class GatewayConnection extends EventEmitter {
 }
 
 export class GatewayControllerListener extends EventEmitter {
-  constructor({ gateways = [], pairings = [], pairingIdentity = controllerIdentity(), serverOptions = {}, tlsServer = tls.createServer, nonceFactory = challengeNonce, activityLimit = DEFAULT_ACTIVITY_LIMIT } = {}) {
+  constructor({ gateways = [], pairings = [], pairingIdentity = controllerIdentity(), serverOptions = {}, tlsServer = tls.createServer, nonceFactory = challengeNonce, activityLimit = DEFAULT_ACTIVITY_LIMIT, handshakeTimeoutMs = 60_000 } = {}) {
     super();
     this.gatewayRecords = toGatewayRecords(gateways);
     for (const entry of gateways) if (entry.publicKey && this.gatewayRecords.has(entry.gatewayId)) this.gatewayRecords.get(entry.gatewayId).publicKey = entry.publicKey;
     this.pairingIdentity = pairingIdentity; this.pending = new Map(pairings.map((entry) => [entry.gatewayId, entry]));
     this.connections = new Map();
+    this.sockets = new Set();
+    this.closing = false;
+    this.handshakeTimeoutMs = Math.max(1, Number(handshakeTimeoutMs) || 60_000);
     this.gatewayHealth = new Map([...this.gatewayRecords.keys()].map((gatewayId) => [gatewayId, { gatewayId, status: 'disconnected', connected: false, connectedAt: null, lastSeenAt: null, activeOperations: [], name: null, version: null, protocolVersion: null }]));
     this.activityLimit = Math.max(1, Math.min(1000, Number(activityLimit) || DEFAULT_ACTIVITY_LIMIT));
     this.activity = [];
     this.nonceFactory = nonceFactory;
-    this.server = tlsServer(serverOptions, (socket) => this.onSocket(socket));
+    this.server = tlsServer({ handshakeTimeout: this.handshakeTimeoutMs, ...serverOptions }, (socket) => this.onSocket(socket));
+    this.server.on('connection', (socket) => this.trackSocket(socket));
     this.server.on('tlsClientError', (error, socket) => this.emit('tlsClientError', { error, socket }));
     this.server.on('listening', () => this.emit('listening'));
     this.server.on('close', () => this.emit('close'));
     this.server.on('error', (error) => this.emit('listenerError', error));
   }
 
+  trackSocket(socket) {
+    if (!this.sockets.has(socket)) {
+      this.sockets.add(socket);
+      socket.once('close', () => this.sockets.delete(socket));
+    }
+    if (this.closing) socket.destroy();
+  }
+
   onSocket(socket) {
+    this.trackSocket(socket);
+    if (this.closing) return null;
     this.emit('gatewaySocketAccepted', { socket });
     return new GatewayConnection(this, socket, this.nonceFactory());
   }
@@ -294,6 +313,7 @@ export class GatewayControllerListener extends EventEmitter {
     if (!entry || entry.nonce !== expected.nonce || entry.publicKey !== expected.publicKey || entry.generation !== expected.generation) return null;
     this.gatewayRecords.set(gatewayId, { controllerId: entry.controllerId, publicKey: entry.publicKey, secret: null });
     this.pending.delete(gatewayId);
+    clearTimeout(connection.authTimer);
     connection.state = 'ready';
     connection.health = { status: 'ok', activeOperations: [] };
     connection.send({ type: 'auth.ok', connectionId: connection.connectionId });
@@ -335,13 +355,26 @@ export class GatewayControllerListener extends EventEmitter {
   }
 
   listen(...args) {
+    this.closing = false;
+    this.closePromise = null;
     this.server.listen(...args);
     return this;
   }
 
   close(callback) {
-    for (const connection of this.connections.values()) connection.socket.destroy();
-    this.server.close(callback);
+    if (!this.closePromise) {
+      this.closing = true;
+      const drained = [...this.sockets].map((socket) => new Promise((resolve) => {
+        socket.once('close', resolve);
+        socket.destroy();
+      }));
+      const stopped = new Promise((resolve, reject) => {
+        this.server.close((error) => error && error.code !== 'ERR_SERVER_NOT_RUNNING' ? reject(error) : resolve());
+      });
+      this.closePromise = Promise.all([...drained, stopped]).then(() => undefined);
+    }
+    if (callback) this.closePromise.then(() => callback(), callback);
+    return this.closePromise;
   }
 
   liveGateway(gatewayId) {

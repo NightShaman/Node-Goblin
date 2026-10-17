@@ -413,3 +413,29 @@ test('controller readiness follows listening, async error, close and subsequent 
   listener.emit('listening'); assert.equal(service.state().running, true);
   service.close(); assert.equal(service.state().running, false);
 });
+
+test('terminal correlation retention bounds history without pruning unresolved operations', async () => {
+  const value = harness();
+  const store = createOperationCorrelationStore(value.settings, { terminalLimit: 3 });
+  const request = (id) => ({ operationId: id, targetId: 'gateway-1', parentRunId: 'run', toolCallId: id });
+  await store.begin(request('unresolved'), 'process', { command: 'echo pending' });
+  for (let index = 0; index < 20; index++) {
+    const id = `done-${index}`;
+    await store.begin(request(id), 'process', { command: 'echo done' });
+    await store.terminal(id, { response: { result: { operationId: id, outcome: {} } } });
+  }
+  assert.equal(value.values.get('controllerOperations').length, 4);
+  assert.equal((await store.get('unresolved')).state, 'dispatching');
+  assert.equal((await store.get('done-19')).state, 'terminal');
+  const restored = createOperationCorrelationStore(value.settings, { terminalLimit: 3 });
+  assert.equal((await restored.get('unresolved')).operationId, 'unresolved');
+});
+
+test('legacy credential mutation refuses key-paired identities without misleading success or writes', async () => {
+  const value = await readyHarness();
+  value.values.set('controllerGateways', [{ gatewayId: 'paired-node', controllerId: 'controller-a' }]);
+  value.secretValues.set('controller.gateway.publicKey.paired-node', 'PUBLIC-KEY');
+  await assert.rejects(value.routes.get('PUT /gateway-trust/:gatewayId')({ params: { gatewayId: 'paired-node' }, body: { secret: 'new-secret' } }), /gateway_credential_method_ed25519/);
+  assert.equal(value.secretValues.has('controller.gateway.paired-node'), false);
+  assert.equal((await value.routes.get('GET /gateway-trust')({})).gateways[0].method, 'ed25519');
+});
