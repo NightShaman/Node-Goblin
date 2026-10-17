@@ -38,7 +38,7 @@ git clone https://github.com/GoblinKing-Burrow/Node-Goblin.git \
   "$BURROW_RUNTIME_ROOT/mods/node-goblin"
 ```
 
-Restart Burrow to load the mod. The manifest declares the Core-owned `execution-provider-v1` capability; no separate environment grant is required.
+Restart Burrow to load the mod. Node Goblin is installed and managed through the normal mod lifecycle. Its manifest marks it as a system mod and requests only the Core-owned `execution-provider-v1` privileged capability; system status does not grant unrelated Core access, and no separate environment grant is required.
 
 ### 2. Enable the controller listener
 

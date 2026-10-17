@@ -35,9 +35,13 @@ flowchart TB
 
 ## Manifest and activation
 
-`burrow.mod.json` declares ID `node-goblin`, system-mod status, `server/index.mjs`, `ui/settings.js`, the API-target contribution, and `execution-provider-v1`. The version appears in the manifest and gateway package/release files.
+`burrow.mod.json` declares ID `node-goblin`, `system: true`, `server/index.mjs`, `ui/settings.js`, the API-target contribution, and the privileged `execution-provider-v1` capability. The version appears in the manifest and gateway package/release files.
 
-`activate()` creates or accepts a controller service, registers a Core process controller when `processExecution.registerController` exists, and registers the mod's HTTP routes. Its returned `close()` unregisters the controller and closes the listener.
+A system mod uses the same install, update, enable, disable, and uninstall lifecycle as any other mod. `system: true` is a trust classification: it permits the manifest to request explicitly named privileged Core capabilities that regular mods cannot request. It does not grant every privileged interface, change installation mechanics, imply that the mod is bundled, or make it non-removable. Core exposes only the declared capabilities it supports and rejects undeclared or unsupported requests.
+
+Node Goblin requests only `execution-provider-v1`. That capability lets it register the controller-side process and native-filesystem execution provider. It does not grant privileged settings, diagnostics, mod-management, database, arbitrary filesystem, or arbitrary process access inside the Burrow controller. Core continues to own target admission, agent assignment, routing, and permission decisions.
+
+`activate()` creates or accepts a controller service, registers a Core process controller when the declared `processExecution.registerController` interface exists, and registers the mod's HTTP routes. Its returned `close()` unregisters the controller and closes the listener.
 
 The adapter exposes `executeProcess(request, { abortSignal })` and `executeNativeFilesystem(request, { abortSignal })`. Core supplies correlated operation IDs and target IDs. The target ID becomes the gateway ID. Process results are translated into the `shell_exec` result shape; filesystem results preserve their tool result and add remote execution provenance.
 
