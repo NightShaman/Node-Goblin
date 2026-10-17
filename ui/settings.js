@@ -39,7 +39,7 @@ export const settingsContribution = Object.freeze({
     {
       id: 'gateways',
       label: 'Gateways',
-      description: 'Enroll a gateway or rotate its credentials using the form. Saved gateways and revoke actions are on the right. Trust changes require a Burrow restart.',
+      description: 'Enroll or replace credentials for legacy HMAC gateways using the form. Ed25519 gateway identities are key-paired and cannot use shared-secret replacement. Saved gateways and revoke actions are on the right. Trust changes require a Burrow restart.',
       layout: 'form-inventory',
       items: Object.freeze([]),
     },
@@ -143,27 +143,36 @@ export async function createSettingsContribution(context) {
     const connected = Boolean(connection?.connected);
     const revoked = Boolean(item.revoked) && !connected;
     const approved = Boolean(item.approved || item.trusted || connected);
+    const method = String(item.method || 'hmac').toLowerCase();
+    const usesEd25519 = method === 'ed25519';
     return {
       id: String(item.gatewayId),
       label: String(item.gatewayId),
-      description: approved ? 'Approved gateway.' : 'Approval status unavailable.',
-      meta: `${revoked ? 'Revoked' : approved ? 'Approved' : 'Pending'} · ${connected ? 'Connected' : 'Disconnected'}`,
+      description: usesEd25519
+        ? 'Ed25519 key-paired gateway. Shared-secret replacement does not apply.'
+        : approved ? 'Approved gateway using legacy HMAC credentials.' : 'Legacy HMAC gateway; approval status unavailable.',
+      meta: `${revoked ? 'Revoked' : approved ? 'Approved' : 'Pending'} · ${connected ? 'Connected' : 'Disconnected'} · ${usesEd25519 ? 'Ed25519' : 'Legacy HMAC'}`,
       metadata: [
+        { label: 'Credential method', value: usesEd25519 ? 'Ed25519' : 'Legacy HMAC' },
         { label: 'Implementation', value: String(connection?.name || 'Gateway daemon') },
         { label: 'Version', value: String(connection?.version || '—') },
         { label: 'Protocol', value: String(connection?.protocolVersion || '—') },
         { label: 'Connected', value: formatGatewayTimestamp(connection?.connectedAt) },
         { label: 'Last seen', value: formatGatewayTimestamp(connection?.lastSeenAt) },
       ],
-      editLabel: 'Rotate credentials',
-      fields: [
-        { id: `rotate-controller:${item.gatewayId}`, label: 'Controller ID', value: String(item.controllerId || 'controller') },
-        { id: `rotate-secret:${item.gatewayId}`, label: 'New secret', control: 'password', description: 'Update the gateway to match and restart Burrow after saving.' },
-      ],
+      ...(usesEd25519 ? {} : {
+        editLabel: 'Replace legacy HMAC credentials',
+        fields: [
+          { id: `rotate-controller:${item.gatewayId}`, label: 'Controller ID', value: String(item.controllerId || 'controller') },
+          { id: `rotate-secret:${item.gatewayId}`, label: 'New legacy HMAC secret', control: 'password', description: 'Update the legacy HMAC gateway to match and restart Burrow after saving.' },
+        ],
+      }),
       actions: [
-        { id: `rotate-gateway:${item.gatewayId}`, label: 'Save new secret', tone: 'primary', confirm: `Replace credentials for ${item.gatewayId}? Update the gateway to match and restart Burrow.` },
+        ...(usesEd25519 ? [] : [
+          { id: `rotate-gateway:${item.gatewayId}`, label: 'Save legacy HMAC secret', tone: 'primary', confirm: `Replace legacy HMAC credentials for ${item.gatewayId}? Update the gateway to match and restart Burrow.` },
+        ]),
         ...(revoked ? [] : [
-        { id: `revoke-gateway:${item.gatewayId}`, label: 'Revoke', tone: 'danger', confirm: `Revoke ${item.gatewayId}? It will no longer be allowed to execute after Burrow restarts.` },
+          { id: `revoke-gateway:${item.gatewayId}`, label: 'Revoke', tone: 'danger', confirm: `Revoke ${item.gatewayId}? It will no longer be allowed to execute after Burrow restarts.` },
         ]),
       ],
     };
@@ -171,11 +180,24 @@ export async function createSettingsContribution(context) {
   return {
     ...settingsContribution,
     sections: settingsContribution.sections.map((section) => section.id === 'controller' ? controllerSection : section.id === 'pairings' ? { ...section, items } : section.id === 'gateways' ? { ...section, fields: [
-      { id: 'enroll-gateway-id', label: 'Gateway ID', control: 'text', description: 'For a new gateway. Select a saved gateway on the right to rotate credentials.' },
+      { id: 'enroll-gateway-id', label: 'Gateway ID', control: 'text', description: 'For a legacy HMAC gateway. Ed25519 gateways use key pairing instead.' },
       { id: 'enroll-controller-id', label: 'Controller ID', control: 'text', value: 'controller' },
-      { id: 'enroll-secret', label: 'Enrollment secret', control: 'password', description: 'One-time input; never displayed after submission.' },
-    ], actions: [{ id: 'enroll-gateway', label: 'Enroll gateway', tone: 'primary', confirm: 'Enroll this gateway? Update the gateway to match and restart Burrow.' }], items: gatewayItems } : section.id === 'assignments' ? { ...section, items: assignmentItems } : section.id === 'operations' ? { ...section, items: operations } : section),
+      { id: 'enroll-secret', label: 'Legacy HMAC enrollment secret', control: 'password', description: 'Legacy HMAC only; one-time input that is never displayed after submission.' },
+    ], actions: [{ id: 'enroll-gateway', label: 'Enroll legacy HMAC gateway', tone: 'primary', confirm: 'Enroll this legacy HMAC gateway? Update the gateway to match and restart Burrow.' }], items: gatewayItems } : section.id === 'assignments' ? { ...section, items: assignmentItems } : section.id === 'operations' ? { ...section, items: operations } : section),
   };
+}
+
+async function settingsActionError(response, fallback) {
+  const body = await response.text();
+  let code = '';
+  try {
+    const parsed = JSON.parse(body);
+    code = String(parsed?.error?.code || parsed?.code || parsed?.error || '');
+  } catch {}
+  if (response.status === 409 && (code === 'gateway_credential_method_ed25519' || body.includes('gateway_credential_method_ed25519'))) {
+    return new Error('This gateway uses Ed25519 key pairing. Legacy HMAC shared-secret replacement is not available.');
+  }
+  return new Error(body || `${fallback} (${response.status}).`);
 }
 
 export async function handleSettingsAction(actionId, values) {
@@ -208,7 +230,7 @@ export async function handleSettingsAction(actionId, values) {
     const controllerId = String(values[rotating ? `rotate-controller:${id}` : 'enroll-controller-id'] || 'controller').trim() || 'controller';
     const secret = String(values[rotating ? `rotate-secret:${id}` : 'enroll-secret'] || '');
     if (!id || !secret) throw new Error('Gateway ID and enrollment secret are required.');
-    await fetch(`/api/mods/node-goblin/gateway-trust/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ controllerId, secret }) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()) || `Gateway enrollment failed (${response.status}).`); });
+    await fetch(`/api/mods/node-goblin/gateway-trust/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ controllerId, secret }) }).then(async (response) => { if (!response.ok) throw await settingsActionError(response, 'Gateway enrollment failed'); });
     return;
   }
   if (actionId === 'clear-tls') {
