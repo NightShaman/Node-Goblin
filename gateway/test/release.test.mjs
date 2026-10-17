@@ -27,7 +27,10 @@ test('calendar release is deterministic and directly installable', () => {
     const packageRoot = path.join(out, `node-goblin-${version}`);
     result = spawnSync(path.join(packageRoot, 'deploy/install.sh'), ['--source', packageRoot, '--root', stage, '--skip-account', '--no-systemd'], { encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(fs.readFileSync(path.join(stage, 'opt/burrow-host-gateway/VERSION'), 'utf8').trim(), version);
+    const installed = path.join(stage, 'opt/burrow-host-gateway');
+    assert.equal(fs.readFileSync(path.join(installed, 'VERSION'), 'utf8').trim(), version);
+    result = spawnSync(process.execPath, ['--input-type=module', '-e', 'import { pathToFileURL } from "node:url"; await import(pathToFileURL(process.argv[1]))', path.join(installed, 'index.mjs')], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
   } finally {
     fs.rmSync(out, { recursive: true, force: true });
     fs.rmSync(stage, { recursive: true, force: true });

@@ -87,3 +87,6 @@ nav:
   - Develop:
       - Development and docs: development.md
       - Source map: source-map.md
+      - Audit repair passes:
+          - Lifecycle pass 4: repairs/lifecycle-pass-4.md
+          - Audit pass 5: audit-repair-pass-5.md

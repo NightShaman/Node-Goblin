@@ -50,6 +50,31 @@ test('installer rejects partial producer/consumer copies and rolls back post-swi
   } finally { f.clean(); }
 });
 
+test('package validation rejects incomplete dependency graphs and preserves the installed package', () => {
+  const f = fixture();
+  try {
+    const args = ['--root', f.root, '--skip-account', '--no-systemd'];
+    assert.equal(f.run('install.sh', args).status, 0);
+    const installed = path.join(f.root, 'opt/burrow-host-gateway');
+    fs.writeFileSync(path.join(installed, 'old-marker'), 'prior runtime');
+    for (const mutate of [
+      (source) => fs.rmSync(path.join(source, 'lib/output-frame.mjs')),
+      (source) => fs.writeFileSync(path.join(source, 'package.json'), '{broken'),
+      (source) => fs.writeFileSync(path.join(source, 'VERSION'), 'invalid\n'),
+      (source) => {
+        fs.rmSync(path.join(source, 'lib/output-frame.mjs'));
+        fs.symlinkSync('/etc/passwd', path.join(source, 'lib/output-frame.mjs'));
+      },
+    ]) {
+      const source = fs.mkdtempSync(path.join(f.dir, 'source-'));
+      fs.cpSync(gateway, source, { recursive: true });
+      mutate(source);
+      assert.notEqual(f.run('install.sh', [...args, '--source', source]).status, 0);
+      assert.equal(fs.readFileSync(path.join(installed, 'old-marker'), 'utf8'), 'prior runtime');
+    }
+  } finally { f.clean(); }
+});
+
 test('builder failure never publishes an archive or checksum', () => {
   const f = fixture();
   try {

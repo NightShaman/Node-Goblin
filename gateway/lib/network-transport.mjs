@@ -5,6 +5,7 @@ import net from 'node:net';
 import tls from 'node:tls';
 import { EventEmitter } from 'node:events';
 import { GatewayDaemon } from './daemon.mjs';
+import { boundOutputFrame, MAX_FRAME_BYTES } from './output-frame.mjs';
 import { loadNodeIdentity, signPairing, pairingCode } from './pairing.mjs';
 
 const AUTH_CONTEXT = 'burrow-host-gateway-auth-v1';
@@ -83,16 +84,10 @@ export function authenticationProof(secret, gatewayId, nonce) {
     .digest('hex');
 }
 
-class SocketOutput {
-  constructor() { this.socket = null; }
-  write(data) {
-    if (!this.socket || this.socket.destroyed || !this.socket.writable) return false;
-    return this.socket.write(data);
-  }
-}
+const CLOSED_OUTPUT = Object.freeze({ write: () => false });
 
 export class OutboundGatewayTransport extends EventEmitter {
-  constructor({ host, port, gatewayId = process.env.HOSTNAME || 'gateway', stateDir, enrollmentToken, ca, cert, key, servername, reconnectMinMs = 100, reconnectMaxMs = 5000, daemon, tlsConnect = tls.connect } = {}) {
+  constructor({ host, port, gatewayId = process.env.HOSTNAME || 'gateway', stateDir, enrollmentToken, ca, cert, key, servername, reconnectMinMs = 100, reconnectMaxMs = 5000, handshakeTimeoutMs = 60_000, daemon, tlsConnect = tls.connect } = {}) {
     super();
     this.host = requireText(host, 'host');
     this.port = Number(port);
@@ -111,8 +106,9 @@ export class OutboundGatewayTransport extends EventEmitter {
     this.tlsOptions = { host: this.host, port: this.port, ...(tlsServername ? { servername: tlsServername } : {}), rejectUnauthorized: pairingBootstrap || Boolean(this.pinnedTlsFingerprint) ? false : true, ca, cert, key };
     this.reconnectMinMs = reconnectMinMs;
     this.reconnectMaxMs = reconnectMaxMs;
+    this.handshakeTimeoutMs = Math.max(1, Number(handshakeTimeoutMs) || 60_000);
     this.tlsConnect = tlsConnect;
-    this.output = new SocketOutput();
+    this.output = CLOSED_OUTPUT;
     this.daemon = daemon || new GatewayDaemon({ output: this.output, identity: { transport: 'tls-jsonl-outbound' } });
     this.daemon.output = this.output;
     this.daemon.identity.transport = 'tls-jsonl-outbound';
@@ -120,6 +116,7 @@ export class OutboundGatewayTransport extends EventEmitter {
     this.daemon.stop = () => { stopDaemon(); this.stop(); };
     this.socket = null;
     this.timer = null;
+    this.authTimer = null;
     this.stopped = true;
     this.attempt = 0;
     this.authenticated = false;
@@ -144,7 +141,19 @@ export class OutboundGatewayTransport extends EventEmitter {
     this.pendingControllerTlsFingerprint = null;
     const socket = this.tlsConnect(this.tlsOptions);
     this.socket = socket;
-    this.output.socket = socket;
+    this.daemon.output = CLOSED_OUTPUT;
+    const applicationOutput = Object.freeze({
+      write: (data) => this.authenticated && this.socket === socket && !socket.destroyed && socket.writable
+        ? socket.write(data) : false,
+    });
+    this.applicationOutput = applicationOutput;
+    clearTimeout(this.authTimer);
+    this.authTimer = setTimeout(() => {
+      if (this.socket !== socket || this.authenticated || socket.destroyed) return;
+      this.reject('authentication_timeout');
+      socket.destroy();
+    }, this.handshakeTimeoutMs);
+    this.authTimer.unref?.();
     socket.setEncoding('utf8');
     socket.on('secureConnect', () => {
       if (this.socket !== socket || socket.destroyed) return;
@@ -161,7 +170,9 @@ export class OutboundGatewayTransport extends EventEmitter {
     socket.on('error', (error) => this.emit('connectionError', error));
     socket.on('close', () => {
       if (this.socket !== socket) return;
-      if (this.output.socket === socket) this.output.socket = null;
+      clearTimeout(this.authTimer);
+      this.authTimer = null;
+      this.daemon.output = CLOSED_OUTPUT;
       this.authenticated = false;
       this.connectionId = null;
       this.daemon.secureTransportContext = null;
@@ -179,7 +190,9 @@ export class OutboundGatewayTransport extends EventEmitter {
   }
 
   send(message) {
-    this.output.write(`${JSON.stringify(message)}\n`);
+    const socket = this.socket;
+    if (!socket || socket.destroyed || !socket.writable) return false;
+    return socket.write(`${JSON.stringify(boundOutputFrame(message))}\n`);
   }
 
   reject(code) {
@@ -188,16 +201,21 @@ export class OutboundGatewayTransport extends EventEmitter {
 
   onData(chunk) {
     this.buffer += chunk;
-    if (this.buffer.length > 2 * 1024 * 1024) {
-      this.reject('frame_too_large');
-      this.socket.destroy();
-      return;
-    }
     let newline;
     while ((newline = this.buffer.indexOf('\n')) !== -1) {
+      if (Buffer.byteLength(this.buffer.slice(0, newline + 1), 'utf8') > MAX_FRAME_BYTES) {
+        this.reject('frame_too_large');
+        this.socket.destroy();
+        return;
+      }
       const line = this.buffer.slice(0, newline).replace(/\r$/, '');
       this.buffer = this.buffer.slice(newline + 1);
       if (line.trim()) this.onLine(line);
+      if (this.socket?.destroyed) return;
+    }
+    if (Buffer.byteLength(this.buffer, 'utf8') >= MAX_FRAME_BYTES) {
+      this.reject('frame_too_large');
+      this.socket.destroy();
     }
   }
 
@@ -248,10 +266,13 @@ export class OutboundGatewayTransport extends EventEmitter {
           this.pinnedTlsFingerprint = this.pendingControllerTlsFingerprint;
           persistNodeIdentity(this.stateDir, this.nodeIdentity);
         }
+        clearTimeout(this.authTimer);
+        this.authTimer = null;
         this.authenticated = true;
         this.connectionId = typeof message.connectionId === 'string' ? message.connectionId : null;
         this.daemon.secureTransportContext = this.connectionId
           ? { gatewayId: this.gatewayId, connectionId: this.connectionId } : null;
+        this.daemon.output = this.applicationOutput;
         this.attempt = 0;
         this.emit('authenticated');
         return;
@@ -263,7 +284,8 @@ export class OutboundGatewayTransport extends EventEmitter {
       this.reject('unexpected_auth_message');
       return;
     }
-    this.daemon.handleLine(line);
+    const output = this.applicationOutput;
+    this.daemon.handleLine(line, (message) => output.write(`${JSON.stringify(boundOutputFrame(message))}\n`));
   }
 
   confirmControllerPairing(code) {
@@ -277,7 +299,10 @@ export class OutboundGatewayTransport extends EventEmitter {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    clearTimeout(this.authTimer);
+    this.authTimer = null;
+    this.authenticated = false;
+    this.daemon.output = CLOSED_OUTPUT;
     this.socket?.destroy();
-    this.output.socket = null;
   }
 }

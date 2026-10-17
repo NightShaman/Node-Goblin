@@ -32,41 +32,41 @@ export class GatewayDaemon {
     this.output.write(`${JSON.stringify(boundOutputFrame(message))}\n`);
   }
 
-  sendProtocolError(requestId, code, extra = {}) {
-    this.send({ type: 'error', requestId, ok: false, error: { code, ...extra } });
+  sendProtocolError(requestId, code, extra = {}, send = (value) => this.send(value)) {
+    send({ type: 'error', requestId, ok: false, error: { code, ...extra } });
   }
 
-  async handle(message) {
+  async handle(message, send = (value) => this.send(value)) {
     if (!message || typeof message !== 'object') throw new Error('invalid_message');
     const method = String(message.method ?? '');
     const params = message.params && typeof message.params === 'object' ? message.params : {};
     if (method === 'hello') {
-      this.send({ type: 'response', requestId: message.id ?? null, ok: true, result: { ...this.identity } });
+      send({ type: 'response', requestId: message.id ?? null, ok: true, result: { ...this.identity } });
       return;
     }
     if (method === 'health') {
-      this.send({ type: 'response', requestId: message.id ?? null, ok: true, result: { status: this.stopping ? 'stopping' : 'ok', activeOperations: [...this.controllers.keys()] } });
+      send({ type: 'response', requestId: message.id ?? null, ok: true, result: { status: this.stopping ? 'stopping' : 'ok', activeOperations: [...this.controllers.keys()] } });
       return;
     }
     if (method === 'cancel') {
       const operationId = String(params.operationId ?? '');
       const active = this.controllers.get(operationId);
       if (active) active.controller.abort();
-      this.send({ type: 'response', requestId: message.id ?? null, ok: true, result: { operationId, cancelling: Boolean(active) } });
+      send({ type: 'response', requestId: message.id ?? null, ok: true, result: { operationId, cancelling: Boolean(active) } });
       return;
     }
     if (method === 'shutdown') {
       if (this.controllers.size) {
-        this.sendProtocolError(message.id ?? null, 'shutdown_requires_idle');
+        this.sendProtocolError(message.id ?? null, 'shutdown_requires_idle', {}, send);
         return;
       }
       this.stopping = true;
-      this.send({ type: 'response', requestId: message.id ?? null, ok: true, result: { status: 'stopping' } });
+      send({ type: 'response', requestId: message.id ?? null, ok: true, result: { status: 'stopping' } });
       queueMicrotask(() => this.stop());
       return;
     }
     if (this.stopping) {
-      this.sendProtocolError(message.id ?? null, 'gateway_stopping');
+      this.sendProtocolError(message.id ?? null, 'gateway_stopping', {}, send);
       return;
     }
     if (method !== 'process.exec' && method !== 'filesystem.execute') throw new Error('unknown_method');
@@ -93,65 +93,65 @@ export class GatewayDaemon {
     const replay = this.journal.inspect(operationId, this.now());
     if (replay) {
       if (hasProtectedValues) {
-        this.send({ type: 'response', requestId: message.id ?? null, ok: false, error: { code: 'protected_redelivery_forbidden', operationId } });
+        send({ type: 'response', requestId: message.id ?? null, ok: false, error: { code: 'protected_redelivery_forbidden', operationId } });
         return;
       }
       if (replay.requestDigest && replay.requestDigest !== requestDigest) {
-        this.send({ type: 'response', requestId: message.id ?? null, ok: false, error: { code: 'operation_id_conflict', operationId } });
+        send({ type: 'response', requestId: message.id ?? null, ok: false, error: { code: 'operation_id_conflict', operationId } });
         return;
       }
-      this.send({ type: 'response', requestId: message.id ?? null, ok: true, result: { operationId, replay: true, outcome: replay.result } });
+      send({ type: 'response', requestId: message.id ?? null, ok: true, result: { operationId, replay: true, outcome: replay.result } });
       return;
     }
 
     const active = this.controllers.get(operationId);
     if (active) {
       if (active.requestDigest !== requestDigest) {
-        this.send({ type: 'response', requestId: message.id ?? null, ok: false, error: { code: 'operation_id_conflict', operationId } });
+        send({ type: 'response', requestId: message.id ?? null, ok: false, error: { code: 'operation_id_conflict', operationId } });
         return;
       }
-      this.send({ type: 'response', requestId: message.id ?? null, ok: false, error: { code: 'operation_in_progress', operationId } });
+      send({ type: 'response', requestId: message.id ?? null, ok: false, error: { code: 'operation_in_progress', operationId } });
       return;
     }
 
     const controller = new AbortController();
     this.controllers.set(operationId, { controller, requestDigest });
-    this.send({ type: 'accepted', requestId: message.id ?? null, ok: true, operationId, protocolVersion: PROTOCOL_VERSION });
+    send({ type: 'accepted', requestId: message.id ?? null, ok: true, operationId, protocolVersion: PROTOCOL_VERSION });
 
     try {
       let terminalEvent;
       const rawOutcome = method === 'process.exec'
         ? await runProcess(safeParams, { protectedEnv: protectedValues, signal: controller.signal, now: this.now, emitEvent: (event) => {
           if (event.type === 'process.terminal') terminalEvent = event;
-          else this.send({ ...event, operationId });
+          else send({ ...event, operationId });
         } })
         : await runFilesystem(safeParams, { signal: controller.signal, now: this.now });
       const outcome = boundCompletedOutcome(rawOutcome, { operationId, requestId: message.id ?? null });
       this.journal.put(operationId, requestDigest, outcome, this.now());
-      if (terminalEvent) this.send({ ...terminalEvent, evidence: outcome, operationId });
-      this.send({ type: 'response', requestId: message.id ?? null, ok: true, result: { operationId, replay: false, outcome } });
+      if (terminalEvent) send({ ...terminalEvent, evidence: outcome, operationId });
+      send({ type: 'response', requestId: message.id ?? null, ok: true, result: { operationId, replay: false, outcome } });
     } catch (error) {
-      this.send({ type: 'response', requestId: message.id ?? null, ok: false, error: { code: error.message || 'process_failed', operationId } });
+      send({ type: 'response', requestId: message.id ?? null, ok: false, error: { code: error.message || 'process_failed', operationId } });
     } finally {
       this.controllers.delete(operationId);
     }
   }
 
-  handleLine(line) {
+  handleLine(line, send = (value) => this.send(value)) {
     if (!line.trim()) return;
     let requestId = null;
     try {
       const parsed = JSON.parse(line);
       requestId = parsed && typeof parsed === 'object' ? parsed.id ?? null : null;
-      Promise.resolve().then(() => this.handle(parsed)).catch((error) => {
-        this.sendProtocolError(requestId, error.message || 'invalid_request');
+      Promise.resolve().then(() => this.handle(parsed, send)).catch((error) => {
+        this.sendProtocolError(requestId, error.message || 'invalid_request', {}, send);
       });
     } catch {
       const match = line.match(/"id"\s*:\s*("(?:[^"\\]|\\.)*"|null|[0-9]+|true|false)/);
       if (match) {
         try { requestId = JSON.parse(match[1]); } catch {}
       }
-      this.sendProtocolError(requestId, 'invalid_json');
+      this.sendProtocolError(requestId, 'invalid_json', {}, send);
     }
   }
 

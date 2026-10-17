@@ -7,6 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { authenticationProof, enrollController, enrollmentConsumedPath, markEnrollmentConsumed, OutboundGatewayTransport, pairingCodePath, readControllerTrust, writePairingCode } from './lib/network-transport.mjs';
 import { controllerIdentity } from './lib/pairing.mjs';
+import { MAX_FRAME_BYTES } from './lib/output-frame.mjs';
 
 class FakeSocket extends EventEmitter {
   constructor() { super(); this.writes = []; this.destroyed = false; this.writable = true; }
@@ -141,6 +142,59 @@ test('TLS ServerName defaults to hostnames and is omitted for IP controllers', (
     assert.equal(hostname.transport.tlsOptions.servername, 'controller.test');
     assert.equal(Object.hasOwn(ip.transport.tlsOptions, 'servername'), false);
   } finally { hostname.transport.stop(); ip.transport.stop(); }
+});
+
+test('in-flight output remains owned by the disconnected authenticated connection', async () => {
+  const { transport, sockets } = fixture();
+  try {
+    authenticate(sockets[0]);
+    sockets[0].feed({ id: 'old-request', method: 'process.exec', params: {
+      operationId: 'continuing-op', executable: process.execPath,
+      args: ['-e', "setTimeout(() => process.stdout.write('late-output'), 80)"],
+    } });
+    await waitFor(() => sockets[0].messages().some((message) => message.type === 'accepted'));
+    sockets[0].destroy();
+    await waitFor(() => sockets.length === 2);
+    await delay(150);
+    assert.equal(transport.authenticated, false);
+    assert.deepEqual(sockets[1].messages(), []);
+    authenticate(sockets[1], 'fedcba9876543210');
+    await delay(30);
+    assert.equal(sockets[1].messages().some((message) => message.requestId === 'old-request' || message.operationId === 'continuing-op'), false);
+    sockets[1].feed({ id: 'replay', method: 'process.exec', params: {
+      operationId: 'continuing-op', executable: process.execPath,
+      args: ['-e', "setTimeout(() => process.stdout.write('late-output'), 80)"],
+    } });
+    await waitFor(() => sockets[1].messages().some((message) => message.requestId === 'replay'));
+    const replay = sockets[1].messages().find((message) => message.requestId === 'replay');
+    assert.equal(replay.result.replay, true);
+    assert.equal(replay.result.outcome.stdout, 'late-output');
+  } finally { transport.stop(); }
+});
+
+test('outbound framing budgets each UTF-8 frame rather than a coalesced character buffer', () => {
+  const daemon = { identity: {}, secureTransportContext: null, stop() {}, handleLine(line) { this.lines ??= []; this.lines.push(line); } };
+  const accepted = fixture({ daemon });
+  const rejected = fixture({ daemon: { identity: {}, secureTransportContext: null, stop() {}, handleLine() {} } });
+  try {
+    authenticate(accepted.sockets[0]);
+    const small = `${JSON.stringify({ id: 'small', method: 'health', value: 'x'.repeat(600_000) })}\n`;
+    accepted.sockets[0].feed(small + small);
+    assert.equal(accepted.sockets[0].destroyed, false);
+    assert.equal(daemon.lines.length, 2);
+    rejected.sockets[0].feed('😀'.repeat(Math.ceil(MAX_FRAME_BYTES / 4)));
+    assert.equal(rejected.sockets[0].messages().at(-1).error.code, 'frame_too_large');
+    assert.equal(rejected.sockets[0].destroyed, true);
+  } finally { accepted.transport.stop(); rejected.transport.stop(); }
+});
+
+test('outbound authentication deadline closes stalled connections', async () => {
+  const { transport, sockets } = fixture({ handshakeTimeoutMs: 20, reconnectMinMs: 10000, reconnectMaxMs: 10000 });
+  try {
+    await waitFor(() => sockets[0].destroyed);
+    assert.equal(sockets[0].messages().at(-1).error.code, 'authentication_timeout');
+    assert.equal(transport.authenticated, false);
+  } finally { transport.stop(); }
 });
 
 test('disconnect reconnects, reauthenticates, and replays completed operation', async () => {
