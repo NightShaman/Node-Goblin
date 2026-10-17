@@ -369,19 +369,28 @@ export async function createControllerService({ settings, secrets, listenerFacto
   if (!tlsMetadata && key && cert) { tlsMetadata = { source: 'configured' }; await settings?.set?.(TLS_METADATA_NAME, tlsMetadata); }
   const tlsConfigured = { key: Boolean(key), cert: Boolean(cert), ca: Boolean(ca) };
   let listener = null;
+  let listening = false;
   if (config.enabled && !startError) {
     if (!key || !cert) startError = 'controller_tls_credentials_missing';
     else {
       try {
         listener = listenerFactory({ gateways: records, pairings: await pendingPairings(settings), pairingIdentity, serverOptions: { key, cert, ...(ca ? { ca } : {}) } });
+        listener.on?.('listening', () => { listening = true; startError = null; });
+        listener.on?.('listenerError', () => {
+          listening = false;
+          startError = 'controller_listener_start_failed';
+          logger.error?.('Node Goblin controller listener failed: controller_listener_start_failed');
+        });
+        listener.on?.('close', () => { listening = false; });
         listener.listen(config.port, config.host);
       } catch (error) {
+        listening = false;
         startError = 'controller_listener_start_failed';
         logger.error?.('Node Goblin controller listener failed: controller_listener_start_failed');
       }
     }
   }
-  const state = () => ({ enabled: config.enabled, host: config.host, port: config.port, running: Boolean(listener), tls: { configured: tlsConfigured.key && tlsConfigured.cert, ready: Boolean(listener) && tlsConfigured.key && tlsConfigured.cert, keyConfigured: tlsConfigured.key, certConfigured: tlsConfigured.cert, caConfigured: tlsConfigured.ca, ...(tlsMetadata ? { source: tlsMetadata.source || 'configured', createdAt: tlsMetadata.createdAt || null, expiresAt: tlsMetadata.expiresAt || null, rotateAfter: tlsMetadata.rotateAfter || null, host: tlsMetadata.host || null } : {}) }, ...(startError ? { error: startError } : {}) });
+  const state = () => ({ enabled: config.enabled, host: config.host, port: config.port, running: listening, tls: { configured: tlsConfigured.key && tlsConfigured.cert, ready: listening && tlsConfigured.key && tlsConfigured.cert, keyConfigured: tlsConfigured.key, certConfigured: tlsConfigured.cert, caConfigured: tlsConfigured.ca, ...(tlsMetadata ? { source: tlsMetadata.source || 'configured', createdAt: tlsMetadata.createdAt || null, expiresAt: tlsMetadata.expiresAt || null, rotateAfter: tlsMetadata.rotateAfter || null, host: tlsMetadata.host || null } : {}) }, ...(startError ? { error: startError } : {}) });
   // One owner for every trust read/modify/write, including pending event writes.
   // A durable intent blocks interrupted identities on restart until an explicit
   // new mutation succeeds. Never recover uncertain trust by admitting it.
@@ -399,6 +408,7 @@ export async function createControllerService({ settings, secrets, listenerFacto
     if (active) ids.add(id); else ids.delete(id);
     await settings.set('controllerTrustMutations', [...ids]);
   };
+
   if (listener?.on) listener.on('gatewayPairingPending', (pairing) => {
     const token = generation(pairing.gatewayId);
     void transact(async () => {
@@ -482,15 +492,15 @@ export async function createControllerService({ settings, secrets, listenerFacto
       : records.map(({ gatewayId }) => ({ gatewayId, status: 'disconnected', connected: false, connectedAt: null, lastSeenAt: null, activeOperations: [], name: null, version: null, protocolVersion: null })),
     listOperationActivity: (options) => listener?.listOperationActivity?.(options) ?? [],
     async dispatchProcessExec(gatewayId, params) {
-      if (!listener) throw Object.assign(new Error(startError || 'controller_not_running'), { code: startError || 'controller_not_running' });
+      if (!listening) throw Object.assign(new Error(startError || 'controller_not_running'), { code: startError || 'controller_not_running' });
       return redact(await listener.dispatchProcessExec(gatewayId, params), secretValues);
     },
     async dispatchFilesystem(gatewayId, params) {
-      if (!listener) throw Object.assign(new Error(startError || 'controller_not_running'), { code: startError || 'controller_not_running' });
+      if (!listening) throw Object.assign(new Error(startError || 'controller_not_running'), { code: startError || 'controller_not_running' });
       return redact(await listener.dispatchFilesystem(gatewayId, params), secretValues);
     },
     async dispatchCancel(gatewayId, operationId) {
-      if (!listener) throw Object.assign(new Error(startError || 'controller_not_running'), { code: startError || 'controller_not_running' });
+      if (!listening) throw Object.assign(new Error(startError || 'controller_not_running'), { code: startError || 'controller_not_running' });
       return redact(await listener.dispatchCancel(gatewayId, operationId), secretValues);
     },
     revokeGateway(gatewayId) {
@@ -506,7 +516,7 @@ export async function createControllerService({ settings, secrets, listenerFacto
         return removed;
       });
     },
-    close: () => listener?.close(),
+    close: () => { listening = false; return listener?.close(); },
   });
 }
 

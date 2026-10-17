@@ -2,12 +2,14 @@
 # Operator interface for the systemd Node Goblin package.
 set -eu
 ROOT=${BURROW_GATEWAY_ROOT:-/}
+SYSTEMCTL_OVERRIDE=${SYSTEMCTL:-}
 SYSTEMCTL=${SYSTEMCTL:-systemctl}
 SERVICE=burrow-host-gateway.service
 usage() {
   cat >&2 <<'EOF'
 usage: node-goblin configure [CONTROLLER_ADDRESS NODE_ID]
        node-goblin connect
+       node-goblin apply --restart
        node-goblin unpair
        node-goblin status
        node-goblin confirm-pairing CODE
@@ -23,6 +25,11 @@ EOF
 path() { printf '%s%s\n' "${ROOT%/}" "$1"; }
 need_root() { [ "$ROOT" != / ] || [ "$(id -u)" -eq 0 ] || { echo "node-goblin $1 must run as root" >&2; exit 1; }; }
 config=$(path /etc/burrow-host-gateway/gateway.env)
+helper=$(path /opt/burrow-host-gateway/deploy/service-common.sh)
+[ -r "$helper" ] || helper="$(dirname "$0")/service-common.sh"
+. "$helper"
+service_available() { [ "$ROOT" = / ] || [ -n "${SYSTEMCTL_OVERRIDE:-}" ]; }
+
 
 command=${1:-}; [ "$#" -eq 0 ] || shift
 case "$command" in
@@ -44,17 +51,27 @@ case "$command" in
     if [ "$ROOT" = / ] && getent group burrow >/dev/null 2>&1; then chown root:burrow "$tmp"; fi
     mv "$tmp" "$config"; trap - EXIT HUP INT TERM
     echo "Configured Node Goblin $node_id for $controller in $config."
-    echo "Run 'sudo node-goblin connect' to start and verify it."
+    echo "Settings saved, not applied to an already-running daemon."
+    echo "For initial start use 'sudo node-goblin connect'. After draining active work, use 'sudo node-goblin apply --restart'."
     ;;
-  connect)
-    [ "$#" -eq 0 ] || { usage; exit 2; }; need_root connect
-    [ "$ROOT" = / ] || { echo "connect is unavailable under a staging root" >&2; exit 1; }
+  connect|apply)
+    if [ "$command" = apply ]; then
+      [ "$#" -eq 1 ] && [ "$1" = --restart ] || { echo "Drain active work, then use: node-goblin apply --restart" >&2; exit 2; }
+    else [ "$#" -eq 0 ] || { usage; exit 2; }; fi
+    need_root "$command"
+    service_available || { echo "connect is unavailable under a staging root" >&2; exit 1; }
     [ -r "$config" ] || { echo "missing configuration; run 'sudo node-goblin configure' first" >&2; exit 1; }
     grep -q '^BURROW_GATEWAY_CONTROLLER_URL=tls://.' "$config" || { echo "controller is not configured" >&2; exit 1; }
     grep -q '^BURROW_GATEWAY_ID=.' "$config" || { echo "node ID is not configured" >&2; exit 1; }
     command -v "$SYSTEMCTL" >/dev/null 2>&1 || { echo "systemctl is required" >&2; exit 1; }
     "$SYSTEMCTL" daemon-reload
-    "$SYSTEMCTL" enable --now "$SERVICE"
+    if [ "$command" = apply ]; then
+      "$SYSTEMCTL" enable "$SERVICE"
+      "$SYSTEMCTL" restart "$SERVICE"
+    else
+      "$SYSTEMCTL" enable --now "$SERVICE"
+      echo "Connect does not restart an active daemon; saved changes require apply --restart after draining work."
+    fi
     "$SYSTEMCTL" is-active --quiet "$SERVICE" || { "$SYSTEMCTL" status --no-pager "$SERVICE" >&2 || true; echo "Node Goblin did not become active" >&2; exit 1; }
     echo "Node Goblin is active. On first connection, compare its pairing code with the controller."
     pairing_code="$(path /var/lib/burrow-host-gateway)/pairing-code.json"
@@ -72,7 +89,7 @@ NODE
   unpair)
     [ "$#" -eq 0 ] || { usage; exit 2; }; need_root unpair
     state=$(path /var/lib/burrow-host-gateway)
-    [ "$ROOT" != / ] || "$SYSTEMCTL" stop "$SERVICE" || true
+    if service_available; then stop_and_verify; fi
     identity="$state/node-identity.json"
     if [ -f "$identity" ]; then
       node - "$identity" <<'NODE'

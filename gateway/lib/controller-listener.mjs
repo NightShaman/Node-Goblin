@@ -260,6 +260,8 @@ export class GatewayControllerListener extends EventEmitter {
     this.nonceFactory = nonceFactory;
     this.server = tlsServer(serverOptions, (socket) => this.onSocket(socket));
     this.server.on('tlsClientError', (error, socket) => this.emit('tlsClientError', { error, socket }));
+    this.server.on('listening', () => this.emit('listening'));
+    this.server.on('close', () => this.emit('close'));
     this.server.on('error', (error) => this.emit('listenerError', error));
   }
 

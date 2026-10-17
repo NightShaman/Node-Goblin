@@ -294,3 +294,17 @@ test('cancel receipts and duplicate replies cannot steal execution event or acti
   assert.equal(listener.listOperationActivity()[0].terminalOutcome, 'cancelled');
   listener.close();
 });
+
+test('listener forwards actual server listening, error and close lifecycle events', () => {
+  const { listener, server } = listenerFixture();
+  const events = [];
+  listener.on('listening', () => events.push('listening'));
+  listener.on('listenerError', (error) => events.push(error.code));
+  listener.on('close', () => events.push('close'));
+  listener.listen(7443, 'localhost');
+  assert.deepEqual(events, []);
+  server.emit('listening');
+  server.emit('error', Object.assign(new Error('bind failed'), { code: 'EADDRINUSE' }));
+  server.emit('close');
+  assert.deepEqual(events, ['listening', 'EADDRINUSE', 'close']);
+});

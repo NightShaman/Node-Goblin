@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { activate, createControllerService, createOperationCorrelationStore, createProcessController } from './index.mjs';
@@ -156,7 +157,7 @@ test('controller service starts only from encrypted secrets, never exposes them,
     settings: value.settings, secrets: value.secrets,
     listenerFactory: (entry) => {
       options = entry;
-      return { listen() {}, close() { closed = true; }, listLiveGateways: () => [], dispatchProcessExec: async () => ({ response: { result: { diagnostic: 'shared-secret' } } }) };
+      return Object.assign(new EventEmitter(), { listen() { this.emit('listening'); }, close() { closed = true; }, listLiveGateways: () => [], dispatchProcessExec: async () => ({ response: { result: { diagnostic: 'shared-secret' } } }) });
     },
   });
   assert.deepEqual(service.state(), { enabled: true, host: '127.0.0.1', port: 7443, running: true, tls: { configured: true, ready: true, keyConfigured: true, certConfigured: true, caConfigured: false, source: 'configured', createdAt: null, expiresAt: null, rotateAfter: null, host: null } }); assert.equal(options.gateways[0].secret, 'shared-secret'); assert.equal(JSON.stringify(service.state()).includes('secret'), false);
@@ -181,7 +182,7 @@ test('operation correlation survives controller recreation and permits identical
 test('enabled controller generates long-lived host-bound TLS into secrets and exposes metadata only', async () => {
   const value = harness(); value.settings.set('controller', { enabled: true, host: 'controller.example.test', port: 7443 });
   let options;
-  const service = await createControllerService({ settings: value.settings, secrets: value.secrets, listenerFactory: (entry) => (options = entry, { listen() {}, close() {}, listLiveGateways: () => [] }) });
+  const service = await createControllerService({ settings: value.settings, secrets: value.secrets, listenerFactory: (entry) => (options = entry, Object.assign(new EventEmitter(), { listen() { this.emit('listening'); }, close() {}, listLiveGateways: () => [] })) });
   const state = service.state();
   assert.equal(state.running, true); assert.equal(state.tls.source, 'generated');
   assert.equal(state.tls.host, 'controller.example.test'); assert.equal(typeof state.tls.expiresAt, 'string');
@@ -394,4 +395,21 @@ test('filesystem cancellation after dispatch targets the owning operation', asyn
   assert.deepEqual(calls, ['fs-cancel', ['host-1', 'fs-cancel']]);
   complete({ response: { ok: true, result: { operationId: 'fs-cancel', outcome: { ok: false } } } });
   await pending;
+});
+
+test('controller readiness follows listening, async error, close and subsequent listen', async () => {
+  const value = harness();
+  value.settings.set('controller', { enabled: true });
+  value.secrets.set('controller.tls.key', 'key'); value.secrets.set('controller.tls.cert', 'cert');
+  const listener = Object.assign(new EventEmitter(), { listen() {}, close() { this.emit('close'); } });
+  const service = await createControllerService({ settings: value.settings, secrets: value.secrets, listenerFactory: () => listener, logger: { error() {} } });
+  assert.equal(service.state().running, false); assert.equal(service.state().tls.ready, false);
+  listener.emit('listenerError', Object.assign(new Error('sensitive detail'), { code: 'EADDRINUSE' }));
+  assert.equal(service.state().running, false); assert.equal(service.state().error, 'controller_listener_start_failed');
+  assert.equal(JSON.stringify(service.state()).includes('sensitive'), false);
+  await assert.rejects(service.dispatchProcessExec('gw', {}), /controller_listener_start_failed/);
+  listener.emit('listening'); assert.equal(service.state().running, true); assert.equal(service.state().tls.ready, true); assert.equal(service.state().error, undefined);
+  listener.emit('close'); assert.equal(service.state().running, false); assert.equal(service.state().tls.ready, false);
+  listener.emit('listening'); assert.equal(service.state().running, true);
+  service.close(); assert.equal(service.state().running, false);
 });
