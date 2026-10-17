@@ -10,6 +10,7 @@ usage: node-goblin configure [CONTROLLER_ADDRESS NODE_ID]
        node-goblin connect
        node-goblin unpair
        node-goblin status
+       node-goblin confirm-pairing CODE
        node-goblin pairing-code
        node-goblin uninstall
 
@@ -90,13 +91,30 @@ NODE
     # Consume any bootstrap token permanently after an explicit unpair. A later
     # start must use the normal pairing flow rather than silently re-enrolling.
     printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$state/controller-enrollment-consumed"
-    rm -f "$state/pairing-code.json"
+    rm -f "$state/pairing-code.json" "$state/pairing-confirmation.json"
     # unpair runs as root but the daemon runs as burrow; retain its exclusive
     # read/write access to the preserved node identity after rewriting it.
     if [ "$ROOT" = / ] && getent passwd burrow >/dev/null 2>&1; then
       chown burrow:burrow "$identity" 2>/dev/null || true
     fi
     echo "Removed controller trust. Run 'sudo node-goblin connect' to pair with the configured controller."
+    ;;
+  confirm-pairing)
+    [ "$#" -eq 1 ] || { usage; exit 2; }; need_root confirm-pairing
+    state="$(path /var/lib/burrow-host-gateway)"
+    python3 - "$state" "$1" <<'PYCONFIRM'
+import json, os, sys
+state, code = sys.argv[1:]
+with open(os.path.join(state, 'pairing-code.json')) as f:
+    pending = json.load(f)
+if pending['pairingCode'] != code:
+    raise SystemExit('pairing code mismatch')
+file = os.path.join(state, 'pairing-confirmation.json')
+with open(file, 'w') as f:
+    os.chmod(file, 0o600)
+    json.dump({'pairingCode': code}, f)
+    os.chown(file, os.stat(os.path.join(state, 'pairing-code.json')).st_uid, -1)
+PYCONFIRM
     ;;
   pairing-code)
     [ "$#" -eq 0 ] || { usage; exit 2; }

@@ -10,6 +10,7 @@ function fileFromEnv(name) {
 }
 
 let service;
+let confirmationTimer;
 if (process.env.BURROW_GATEWAY_CONTROLLER_URL) {
   const controller = new URL(process.env.BURROW_GATEWAY_CONTROLLER_URL);
   if (controller.protocol !== 'tls:') throw new Error('controller URL must use tls:');
@@ -34,6 +35,14 @@ if (process.env.BURROW_GATEWAY_CONTROLLER_URL) {
   service.on('pairingPending', ({ gatewayId, pairingCode }) => {
     const message = `Node Goblin pairing pending for ${gatewayId}; pairing code: ${pairingCode}`;
     console.error(message);
+    if (!confirmationTimer) confirmationTimer = setInterval(() => {
+      const file = `${stateDir}/pairing-confirmation.json`;
+      try {
+        const confirmation = JSON.parse(fs.readFileSync(file, 'utf8'));
+        fs.rmSync(file, { force: true });
+        service.confirmControllerPairing(confirmation.pairingCode);
+      } catch {}
+    }, 250);
     try { writePairingCode(stateDir, { gatewayId, pairingCode }); } catch {}
   });
 } else {
@@ -42,6 +51,7 @@ if (process.env.BURROW_GATEWAY_CONTROLLER_URL) {
 }
 
 const shutdown = () => {
+  clearInterval(confirmationTimer);
   service.stopping = true;
   const daemon = service.daemon || service;
   for (const entry of daemon.controllers.values()) entry.controller.abort();

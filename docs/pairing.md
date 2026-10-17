@@ -31,14 +31,19 @@ sequenceDiagram
 2. Configure and start the host as described in [installation](installation.md).
 3. Read the current code using `sudo node-goblin pairing-code` on the host.
 4. In **Pending pairings**, locate the same gateway ID and compare the displayed code through an independently trusted channel.
-5. Approve only the intended host. Approval enables host execution. Reject unexpected requests.
-6. Confirm the gateway appears approved and connected, then perform a harmless test in a disposable workspace.
+5. On the host, run `sudo node-goblin confirm-pairing CODE` with the exact independently compared code. First no-CA trust requires this local confirmation; controller approval alone cannot enable host execution. Confirmation applies only to the current connection transcript.
+6. Approve only the intended host in BURROW. Reject unexpected requests.
+7. Confirm the gateway appears approved and connected, then perform a harmless test in a disposable workspace.
 
 The node creates an Ed25519 keypair in `node-identity.json`. The transcript binds the nonce, gateway ID, node public key, and controller public key. The displayed code is 12 hexadecimal characters grouped as `XXXX-XXXX-XXXX`. An unpaired node without an explicit CA temporarily permits an unauthenticated TLS channel for bootstrap. For controlled networks, provision `BURROW_GATEWAY_CA_FILE` before the first connection so standard TLS verification also applies from the outset.
+
+An explicitly configured CA provides controller authentication through standard TLS verification instead of local confirmation. Do not install an untrusted CA to bypass confirmation.
 
 After initial key pairing, the node persists the controller public key and certificate fingerprint. A changed controller key/certificate is not automatically accepted. Plan certificate replacement and re-pairing rather than treating a mismatch as a transient connectivity problem.
 
 ## Pending and restored requests
+
+Controller trust mutations have one serialized owner. Durable mutation intents block uncertain identities on restart after interrupted writes, including rollback failure. Revoke and re-pair an uncertain identity instead of manually clearing its intent.
 
 Pending request records can survive a controller restart for visibility, but approval requires the matching live connection and nonce. Wait for the node to reconnect and verify its current code. This release does not assign a pairing-expiry timestamp; the UI may show a dash for expiry. Do not interpret that display as an expiry guarantee.
 

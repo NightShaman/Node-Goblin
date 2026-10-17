@@ -269,7 +269,7 @@ export class GatewayControllerListener extends EventEmitter {
     const active = this.connections.get(registration.gatewayId); if (active && active !== connection && active.state !== 'closed') { connection.fail('gateway_already_connected'); return existing || registration; }
     this.connections.set(registration.gatewayId, connection);
     if (existing && existing.publicKey !== registration.publicKey) { connection.fail('gateway_identity_conflict'); return existing; }
-    const value = { ...registration, status: 'pending', requestedAt: existing?.requestedAt || new Date().toISOString() }; this.pending.set(registration.gatewayId, value); this.emit('gatewayPairingPending', value); return value;
+    const value = { ...registration, generation: crypto.randomUUID(), status: 'pending', requestedAt: existing?.requestedAt || new Date().toISOString() }; this.pending.set(registration.gatewayId, value); this.emit('gatewayPairingPending', value); return value;
   }
   listPending() { return [...this.pending.values()].filter((entry) => entry.status === 'pending').map((entry) => ({ ...entry })); }
   preparePendingApproval(gatewayId) {
@@ -285,7 +285,7 @@ export class GatewayControllerListener extends EventEmitter {
   commitPendingApproval(gatewayId, expected = {}) {
     const entry = this.preparePendingApproval(gatewayId);
     const connection = this.connections.get(gatewayId);
-    if (!entry || entry.nonce !== expected.nonce || entry.publicKey !== expected.publicKey) return null;
+    if (!entry || entry.nonce !== expected.nonce || entry.publicKey !== expected.publicKey || entry.generation !== expected.generation) return null;
     this.gatewayRecords.set(gatewayId, { controllerId: entry.controllerId, publicKey: entry.publicKey, secret: null });
     this.pending.delete(gatewayId);
     connection.state = 'ready';

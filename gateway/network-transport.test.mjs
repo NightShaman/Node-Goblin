@@ -189,7 +189,8 @@ test('no-CA first pairing permits only bootstrap TLS, pins the approved controll
     sockets[0].feed({ type: 'auth.challenge', nonce, controllerPublicKey: controller.publicKey });
     const response = sockets[0].messages()[0];
     assert.equal(response.nodePublicKey != null, true);
-    sockets[0].feed({ type: 'pairing.pending', pairingCode: 'ABCD-1234-5678' });
+    sockets[0].feed({ type: 'pairing.pending', pairingCode: response.pairingCode });
+    assert.equal(transport.confirmControllerPairing(response.pairingCode), true);
     sockets[0].feed({ type: 'auth.ok', connectionId: 'approved-1' });
     const saved = JSON.parse(fs.readFileSync(path.join(stateDir, 'node-identity.json'), 'utf8'));
     assert.equal(typeof saved.controllerTlsFingerprint, 'string'); assert.equal(saved.controllerPublicKey, controller.publicKey);
@@ -202,5 +203,41 @@ test('no-CA first pairing permits only bootstrap TLS, pins the approved controll
     sockets[1].destroy(); transport.timer && clearTimeout(transport.timer); transport.timer = null; transport.connect();
     sockets[2].raw = certificate('attacker-certificate'); sockets[2].emit('secureConnect');
     assert.equal(sockets[2].destroyed, true);
+  } finally { transport.stop(); fs.rmSync(stateDir, { recursive: true, force: true }); }
+});
+
+test('unconfirmed bootstrap never persists trust or admits requests; mismatched transcript closes', () => {
+  const { transport, sockets, stateDir } = fixture({ enrollmentToken: undefined });
+  try {
+    const socket = sockets[0];
+    socket.getPeerCertificate = () => ({ raw: Buffer.from('certificate') });
+    socket.emit('secureConnect');
+    socket.feed({ type: 'auth.challenge', nonce: '0123456789abcdef', controllerPublicKey: controllerIdentity().publicKey });
+    const code = socket.messages()[0].pairingCode;
+    socket.feed({ type: 'auth.ok' });
+    assert.equal(transport.authenticated, false);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(stateDir, 'node-identity.json'))).controllerPublicKey, undefined);
+    socket.feed({ id: 'blocked', method: 'health' });
+    assert.equal(socket.messages().at(-1).error.code, 'unauthenticated');
+    assert.equal(transport.confirmControllerPairing('WRONG'), false);
+    socket.feed({ type: 'pairing.pending', pairingCode: 'FFFF-FFFF-FFFF' === code ? '0000-0000-0000' : 'FFFF-FFFF-FFFF' });
+    assert.equal(socket.destroyed, true);
+    assert.equal(transport.confirmControllerPairing(code), false);
+  } finally { transport.stop(); fs.rmSync(stateDir, { recursive: true, force: true }); }
+});
+
+test('local confirmation is transcript-scoped and is discarded on reconnect', () => {
+  const { transport, sockets, stateDir } = fixture({ enrollmentToken: undefined });
+  try {
+    const controller = controllerIdentity();
+    sockets[0].feed({ type: 'auth.challenge', nonce: '0123456789abcdef', controllerPublicKey: controller.publicKey });
+    const oldCode = sockets[0].messages()[0].pairingCode;
+    assert.equal(transport.confirmControllerPairing(oldCode), true);
+    sockets[0].destroy(); clearTimeout(transport.timer); transport.timer = null; transport.connect();
+    sockets[1].feed({ type: 'auth.challenge', nonce: 'fedcba9876543210', controllerPublicKey: controller.publicKey });
+    assert.equal(transport.confirmControllerPairing(oldCode), false);
+    sockets[1].feed({ type: 'auth.ok' });
+    assert.equal(transport.authenticated, false);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(stateDir, 'node-identity.json'))).controllerPublicKey, undefined);
   } finally { transport.stop(); fs.rmSync(stateDir, { recursive: true, force: true }); }
 });

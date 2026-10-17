@@ -256,7 +256,7 @@ test('pairing approval persists trust before auth.ok commit and survives control
   const service = await createControllerService({ settings: value.settings, secrets: value.secrets, listenerFactory: () => listener });
   const approved = await service.approvePairing('fresh-node');
   assert.equal(approved.status, 'approved');
-  assert.deepEqual(order.at(-1), ['commit', 'PUBLIC', [{ gatewayId: 'fresh-node', controllerId: 'controller' }]]);
+  assert.deepEqual(order.find((entry) => entry[0] === 'commit'), ['commit', 'PUBLIC', [{ gatewayId: 'fresh-node', controllerId: 'controller' }]]);
   const recreated = await createControllerService({ settings: value.settings, secrets: value.secrets, listenerFactory: (options) => ({ ...listener, options }) });
   assert.deepEqual((await value.settings.get('controllerGateways'))[0], { gatewayId: 'fresh-node', controllerId: 'controller' });
   assert.equal(await value.secrets.get('controller.gateway.publicKey.fresh-node'), 'PUBLIC');
@@ -282,10 +282,7 @@ test('pairing persistence failure leaves live pairing pending and sends no appro
 });
 
 test('revoke clears durable trust, both credential forms, pending pairing, and live state idempotently', async () => {
-  const removed = [];
-  const service = { state: () => ({}), listLiveGateways: () => [], listGateways: () => [], close() {},
-    revokeGateway: async (id) => { removed.push(id); } };
-  const value = await readyHarness({ controllerService: service });
+  const value = await readyHarness();
   value.values.set('controllerGateways', [{ gatewayId: 'node', controllerId: 'controller' }]);
   value.values.set('pendingNodeGoblinPairings', [{ gatewayId: 'node', publicKey: 'NODE-PUBLIC', status: 'pending' }, { gatewayId: 'other', publicKey: 'OTHER-PUBLIC', status: 'pending' }]);
   value.secretValues.set('controller.gateway.node', 'SECRET'); value.secretValues.set('controller.gateway.publicKey.node', 'PUBLIC');
@@ -296,5 +293,73 @@ test('revoke clears durable trust, both credential forms, pending pairing, and l
   assert.deepEqual(value.values.get('pendingNodeGoblinPairings'), [{ gatewayId: 'other', publicKey: 'OTHER-PUBLIC', status: 'pending' }]);
   assert.equal(value.secretValues.has('controller.gateway.node'), false);
   assert.equal(value.secretValues.has('controller.gateway.publicKey.node'), false);
-  assert.deepEqual(removed, ['node', 'node']);
+  assert.deepEqual(await value.settings.get('controllerTrustMutations'), []);
+});
+
+// Real listener state machine, inert sockets and host stores: no network required.
+import { EventEmitter } from 'node:events';
+import { GatewayControllerListener } from '../gateway/lib/controller-listener.mjs';
+import { controllerIdentity, signPairing } from '../gateway/lib/pairing.mjs';
+
+async function trustFixture(value = harness()) {
+  value.values.set('controller', { enabled: true });
+  value.secretValues.set('controller.tls.key', 'key'); value.secretValues.set('controller.tls.cert', 'cert');
+  let listener;
+  const service = await createControllerService({ ...value, listenerFactory(options) {
+    listener = new GatewayControllerListener({ ...options, tlsServer: () => Object.assign(new EventEmitter(), { listen() {}, close() {} }) });
+    return listener;
+  } });
+  function pair(id) {
+    const socket = Object.assign(new EventEmitter(), { writable: true, destroyed: false, writes: [], setEncoding() {}, write(data) { this.writes.push(JSON.parse(data)); return true; }, destroy() { this.destroyed = true; this.emit('close'); } });
+    const connection = listener.onSocket(socket);
+    const node = controllerIdentity();
+    connection.onAuthMessage({ type: 'auth.response', gatewayId: id, controllerId: 'controller', nodePublicKey: node.publicKey, pairingSignature: signPairing(node, connection.nonce, id, listener.pairingIdentity.publicKey) });
+    return { socket, connection };
+  }
+  return { ...value, service, listener, pair };
+}
+
+test('concurrent different-gateway approvals retain membership and restart credentials', async () => {
+  const f = await trustFixture();
+  f.pair('one'); f.pair('two');
+  await Promise.all([f.service.approvePairing('one'), f.service.approvePairing('two')]);
+  assert.deepEqual((await f.settings.get('controllerGateways')).map((v) => v.gatewayId).sort(), ['one', 'two']);
+  assert.deepEqual(await f.settings.get('pendingNodeGoblinPairings'), []);
+  const restarted = await trustFixture(f);
+  assert.deepEqual([...restarted.listener.gatewayRecords.keys()].sort(), ['one', 'two']);
+});
+
+for (const interruption of ['disconnect', 'reject', 'revoke']) test(`approval interrupted by ${interruption} cannot leave trusted restart state`, async () => {
+  const f = await trustFixture(); const { socket } = f.pair('node');
+  const originalSet = f.secrets.set; let release; let entered;
+  const blocked = new Promise((resolve) => { entered = resolve; });
+  f.secrets.set = async (key, value) => {
+    if (key === 'controller.gateway.publicKey.node') { entered(); await new Promise((resolve) => { release = resolve; }); }
+    return originalSet(key, value);
+  };
+  const approval = f.service.approvePairing('node');
+  await blocked;
+  let mutation;
+  if (interruption === 'disconnect') socket.destroy();
+  if (interruption === 'reject') mutation = f.service.rejectPairing('node');
+  if (interruption === 'revoke') mutation = f.service.revokeGateway('node');
+  release();
+  await assert.rejects(approval, /pairing_persistence_failed/);
+  await mutation;
+  assert.equal(socket.writes.some((m) => m.type === 'auth.ok'), false);
+  const restarted = await trustFixture(f);
+  assert.equal(restarted.listener.gatewayRecords.has('node'), false);
+});
+
+test('restart excludes uncertain durable approval even if rollback writes fail', async () => {
+  const f = await trustFixture(); f.pair('node');
+  const normal = f.settings.set;
+  f.settings.set = async (key, value) => {
+    if (key === 'pendingNodeGoblinPairings') throw new Error('disk failure');
+    if (key === 'controllerGateways' && value.length === 0) throw new Error('rollback failure');
+    return normal(key, value);
+  };
+  await assert.rejects(f.service.approvePairing('node'), /pairing_persistence_failed/);
+  const restarted = await trustFixture(f);
+  assert.equal(restarted.listener.gatewayRecords.has('node'), false);
 });

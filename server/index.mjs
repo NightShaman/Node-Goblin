@@ -94,6 +94,7 @@ function cleanGatewayIdentity(value = {}, gatewayId = value.gatewayId) {
 async function configuredGatewayIdentities(settings, secrets) {
   const configured = await settings.get(CONTROLLER_GATEWAYS_NAME, []);
   if (!Array.isArray(configured)) return [];
+  const interrupted = await settings.get('controllerTrustMutations', []);
   return (await Promise.all(configured.map(async (value) => {
     try {
       const identity = cleanGatewayIdentity(value);
@@ -101,7 +102,7 @@ async function configuredGatewayIdentities(settings, secrets) {
       const hasPublicKey = Boolean(await (secrets?.has?.(`controller.gateway.publicKey.${identity.gatewayId}`) ?? secrets?.get?.(`controller.gateway.publicKey.${identity.gatewayId}`)));
       const revoked = value?.status === 'revoked' || value?.revoked === true;
       const method = hasPublicKey ? 'ed25519' : (hasSharedSecret ? 'hmac' : (value?.method || null));
-      const approved = !revoked && (hasSharedSecret || hasPublicKey || value?.status === 'approved' || value?.approved === true);
+      const approved = !revoked && !interrupted.includes(identity.gatewayId) && (hasSharedSecret || hasPublicKey || value?.status === 'approved' || value?.approved === true);
       return { ...identity, status: revoked ? 'revoked' : (approved ? 'approved' : 'untrusted'), approved, revoked, trusted: approved, method };
     } catch { return null; }
   }))).filter(Boolean);
@@ -135,7 +136,9 @@ function generateControllerTls(host) {
 async function gatewayRecords(settings, secrets) {
   const configured = await settings.get(CONTROLLER_GATEWAYS_NAME, []);
   if (!Array.isArray(configured)) return [];
+  const interrupted = await settings.get('controllerTrustMutations', []);
   return (await Promise.all(configured.map(async (value) => {
+    if (interrupted.includes(value?.gatewayId)) return null;
     const gatewayId = String(value?.gatewayId ?? '').trim();
     const controllerId = String(value?.controllerId ?? 'controller').trim();
     if (!TARGET_ID.test(gatewayId) || !controllerId) return null;
@@ -375,53 +378,99 @@ export async function createControllerService({ settings, secrets, listenerFacto
     }
   }
   const state = () => ({ enabled: config.enabled, host: config.host, port: config.port, running: Boolean(listener), tls: { configured: tlsConfigured.key && tlsConfigured.cert, ready: Boolean(listener) && tlsConfigured.key && tlsConfigured.cert, keyConfigured: tlsConfigured.key, certConfigured: tlsConfigured.cert, caConfigured: tlsConfigured.ca, ...(tlsMetadata ? { source: tlsMetadata.source || 'configured', createdAt: tlsMetadata.createdAt || null, expiresAt: tlsMetadata.expiresAt || null, rotateAfter: tlsMetadata.rotateAfter || null, host: tlsMetadata.host || null } : {}) }, ...(startError ? { error: startError } : {}) });
+  // One owner for every trust read/modify/write, including pending event writes.
+  // A durable intent blocks interrupted identities on restart until an explicit
+  // new mutation succeeds. Never recover uncertain trust by admitting it.
+  let trustQueue = Promise.resolve();
+  const generations = new Map();
+  const generation = (id) => generations.get(id) || 0;
+  const invalidate = (id) => generations.set(id, generation(id) + 1);
+  const transact = (operation) => {
+    const result = trustQueue.then(operation);
+    trustQueue = result.catch(() => {});
+    return result;
+  };
+  const intent = async (id, active) => {
+    const ids = new Set(await settings.get('controllerTrustMutations', []));
+    if (active) ids.add(id); else ids.delete(id);
+    await settings.set('controllerTrustMutations', [...ids]);
+  };
   if (listener?.on) listener.on('gatewayPairingPending', (pairing) => {
-    void (async () => {
+    const token = generation(pairing.gatewayId);
+    void transact(async () => {
+      if (generation(pairing.gatewayId) !== token) return;
       const values = await pendingPairings(settings);
       const index = values.findIndex((entry) => entry.gatewayId === pairing.gatewayId);
       if (index < 0) values.push(pairing); else values[index] = pairing;
       await settings.set(PENDING_PAIRINGS_NAME, values);
-    })().catch(() => logger.error?.('Node Goblin pairing persistence failed: pairing_persistence_failed'));
+    }).catch(() => logger.error?.('Node Goblin pairing persistence failed: pairing_persistence_failed'));
   });
   return Object.freeze({
     state,
     listPendingPairings: async () => listener?.listPending?.() ?? await pendingPairings(settings),
-    async approvePairing(gatewayId) {
-      const pairing = listener?.preparePendingApproval?.(gatewayId);
-      if (!pairing) throw Object.assign(new Error('pairing_not_found'), { code: 'pairing_not_found' });
-      const publicKeyName = `controller.gateway.publicKey.${gatewayId}`;
-      const previousGateways = await settings.get(CONTROLLER_GATEWAYS_NAME, []);
-      const previousPairings = await settings.get(PENDING_PAIRINGS_NAME, []);
-      const previousPublicKey = await secrets?.get?.(publicKeyName);
-      const gateways = Array.isArray(previousGateways) ? previousGateways.map((entry) => ({ ...entry })) : [];
-      const index = gateways.findIndex((entry) => entry?.gatewayId === gatewayId);
-      const trusted = { gatewayId, controllerId: pairing.controllerId };
-      if (index < 0) gateways.push(trusted); else gateways[index] = trusted;
-      try {
-        await secrets?.set?.(publicKeyName, pairing.publicKey);
-        await settings.set(CONTROLLER_GATEWAYS_NAME, gateways);
-        const pairings = Array.isArray(previousPairings) ? previousPairings.filter((entry) => entry?.gatewayId !== gatewayId) : [];
-        await settings.set(PENDING_PAIRINGS_NAME, pairings);
-      } catch {
-        // Keep both durable and live state pending if any persistence step fails.
-        // Rollback is best-effort and deliberately emits no credential material.
+    approvePairing(gatewayId) {
+      const token = generation(gatewayId);
+      return transact(async () => {
+        if (generation(gatewayId) !== token) throw Object.assign(new Error('pairing_commit_failed'), { code: 'pairing_commit_failed' });
+        const pairing = listener?.preparePendingApproval?.(gatewayId);
+        if (!pairing) throw Object.assign(new Error('pairing_not_found'), { code: 'pairing_not_found' });
+        const publicKeyName = `controller.gateway.publicKey.${gatewayId}`;
+        const previousGateways = await settings.get(CONTROLLER_GATEWAYS_NAME, []);
+        const previousPairings = await settings.get(PENDING_PAIRINGS_NAME, []);
+        const previousPublicKey = await secrets?.get?.(publicKeyName);
+        const gateways = Array.isArray(previousGateways) ? previousGateways.map((entry) => ({ ...entry })) : [];
+        const index = gateways.findIndex((entry) => entry?.gatewayId === gatewayId);
+        const trusted = { gatewayId, controllerId: pairing.controllerId };
+        if (index < 0) gateways.push(trusted); else gateways[index] = trusted;
+        await intent(gatewayId, true);
         try {
-          if (previousPublicKey == null) await secrets?.clear?.(publicKeyName);
-          else await secrets?.set?.(publicKeyName, previousPublicKey);
-          await settings.set(CONTROLLER_GATEWAYS_NAME, previousGateways);
-          await settings.set(PENDING_PAIRINGS_NAME, previousPairings);
-        } catch {}
-        throw Object.assign(new Error('pairing_persistence_failed'), { code: 'pairing_persistence_failed' });
-      }
-      const approved = listener?.commitPendingApproval?.(gatewayId, pairing);
-      if (!approved) throw Object.assign(new Error('pairing_commit_failed'), { code: 'pairing_commit_failed' });
-      return { gatewayId: approved.gatewayId, controllerId: approved.controllerId, pairingCode: approved.pairingCode, status: 'approved', trusted: true };
+          await secrets?.set?.(publicKeyName, pairing.publicKey);
+          await settings.set(CONTROLLER_GATEWAYS_NAME, gateways);
+          const pairings = Array.isArray(previousPairings) ? previousPairings.filter((entry) => entry?.gatewayId !== gatewayId) : [];
+          await settings.set(PENDING_PAIRINGS_NAME, pairings);
+          const current = listener?.preparePendingApproval?.(gatewayId);
+          if (generation(gatewayId) !== token || !current || current.nonce !== pairing.nonce || current.generation !== pairing.generation) throw new Error('pairing_commit_failed');
+          await intent(gatewayId, false);
+          if (generation(gatewayId) !== token || !listener?.commitPendingApproval?.(gatewayId, pairing)) throw new Error('pairing_commit_failed');
+        } catch {
+          try { await intent(gatewayId, true); } catch {}
+          // Restore only this serialized transaction's snapshot on failure.
+          // Failed rollback remains blocked by the durable intent on restart.
+          try {
+            if (previousPublicKey == null) await secrets?.clear?.(publicKeyName);
+            else await secrets?.set?.(publicKeyName, previousPublicKey);
+            await settings.set(CONTROLLER_GATEWAYS_NAME, previousGateways);
+            await settings.set(PENDING_PAIRINGS_NAME, previousPairings);
+          } catch {}
+          listener?.revokeGateway?.(gatewayId);
+          throw Object.assign(new Error('pairing_persistence_failed'), { code: 'pairing_persistence_failed' });
+        }
+        return { gatewayId: pairing.gatewayId, controllerId: pairing.controllerId, pairingCode: pairing.pairingCode, status: 'approved', trusted: true };
+      });
     },
-    async rejectPairing(gatewayId) {
-      const pairing = listener?.rejectPending?.(gatewayId);
-      if (!pairing) throw Object.assign(new Error('pairing_not_found'), { code: 'pairing_not_found' });
-      await settings.set(PENDING_PAIRINGS_NAME, (await pendingPairings(settings)).filter((entry) => entry.gatewayId !== gatewayId));
-      return pairing;
+    rejectPairing(gatewayId) {
+      const requested = listener?.pending?.get(gatewayId) || listener?.preparePendingApproval?.(gatewayId);
+      invalidate(gatewayId);
+      return transact(async () => {
+        const pairing = requested || (await pendingPairings(settings)).find((entry) => entry.gatewayId === gatewayId);
+        if (!pairing) throw Object.assign(new Error('pairing_not_found'), { code: 'pairing_not_found' });
+        await settings.set(PENDING_PAIRINGS_NAME, (await pendingPairings(settings)).filter((entry) => entry.gatewayId !== gatewayId));
+        return listener?.rejectPending?.(gatewayId) || { ...pairing, status: 'rejected' };
+      });
+    },
+    setGatewayTrust(identity, secret) {
+      invalidate(identity.gatewayId);
+      return transact(async () => {
+        const id = identity.gatewayId;
+        await intent(id, true);
+        listener?.revokeGateway?.(id);
+        const gateways = await settings.get(CONTROLLER_GATEWAYS_NAME, []);
+        const remaining = gateways.filter((entry) => entry.gatewayId !== id);
+        remaining.push(identity);
+        await secrets.set(`controller.gateway.${id}`, secret);
+        await settings.set(CONTROLLER_GATEWAYS_NAME, remaining);
+        await intent(id, false);
+      });
     },
     listLiveGateways: () => listener ? listener.listLiveGateways() : [],
     listGateways: () => listener
@@ -440,9 +489,18 @@ export async function createControllerService({ settings, secrets, listenerFacto
       if (!listener) throw Object.assign(new Error(startError || 'controller_not_running'), { code: startError || 'controller_not_running' });
       return redact(await listener.dispatchCancel(gatewayId, operationId), secretValues);
     },
-    async revokeGateway(gatewayId) {
-      await settings.set(PENDING_PAIRINGS_NAME, (await pendingPairings(settings)).filter((entry) => entry.gatewayId !== gatewayId));
-      return listener?.revokeGateway?.(gatewayId) ?? false;
+    revokeGateway(gatewayId) {
+      invalidate(gatewayId);
+      return transact(async () => {
+        await intent(gatewayId, true);
+        const removed = listener?.revokeGateway?.(gatewayId) ?? false;
+        await settings.set(CONTROLLER_GATEWAYS_NAME, (await settings.get(CONTROLLER_GATEWAYS_NAME, [])).filter((entry) => entry.gatewayId !== gatewayId));
+        await settings.set(PENDING_PAIRINGS_NAME, (await pendingPairings(settings)).filter((entry) => entry.gatewayId !== gatewayId));
+        await secrets.clear?.(`controller.gateway.${gatewayId}`);
+        await secrets.clear?.(`controller.gateway.publicKey.${gatewayId}`);
+        await intent(gatewayId, false);
+        return removed;
+      });
     },
     close: () => listener?.close(),
   });
@@ -492,23 +550,14 @@ export async function activate({ api, settings, secrets, logger, processExecutio
     const identity = cleanGatewayIdentity(body, params.gatewayId);
     const secret = String(body.secret ?? '');
     if (!secret.trim()) throw problem('gateway_secret_required');
-    const gateways = (await configuredGatewayIdentities(settings, secrets)).map(({ gatewayId, controllerId, status, approved, revoked, method }) => ({ gatewayId, controllerId, status, approved, revoked, method }));
-    const index = gateways.findIndex((entry) => entry.gatewayId === identity.gatewayId);
-    if (index < 0) gateways.push(identity); else gateways[index] = identity;
-    await secrets.set(`controller.gateway.${identity.gatewayId}`, secret);
-    await settings.set(CONTROLLER_GATEWAYS_NAME, gateways);
+    await service.setGatewayTrust(identity, secret);
     return { ok: true, gateway: { ...identity, status: 'approved', approved: true, revoked: false, trusted: true, method: 'hmac' }, restartRequired: true };
   });
   api.delete('/gateway-trust/:gatewayId', async ({ params }) => {
     const gatewayId = cleanId(params.gatewayId);
     const current = await configuredGatewayIdentities(settings, secrets);
     const existing = current.find((entry) => entry.gatewayId === gatewayId);
-    const gateways = current.filter((entry) => entry.gatewayId !== gatewayId).map(({ gatewayId: id, controllerId, status, approved, revoked, method }) => ({ gatewayId: id, controllerId, status, approved, revoked, method }));
-    await settings.set(CONTROLLER_GATEWAYS_NAME, gateways);
-    await settings.set(PENDING_PAIRINGS_NAME, (await pendingPairings(settings)).filter((entry) => entry.gatewayId !== gatewayId));
-    await secrets.clear?.(`controller.gateway.${gatewayId}`);
-    await secrets.clear?.(`controller.gateway.publicKey.${gatewayId}`);
-    await service.revokeGateway?.(gatewayId);
+    await service.revokeGateway(gatewayId);
     return { ok: true, gateway: { gatewayId, controllerId: existing?.controllerId || 'controller', status: 'revoked', approved: false, revoked: true, trusted: false, method: existing?.method || null }, restartRequired: true };
   });
   api.get('/gateways', () => ({ ok: true, gateways: service.listGateways?.() ?? service.listLiveGateways() }));

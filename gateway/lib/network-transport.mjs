@@ -140,11 +140,14 @@ export class OutboundGatewayTransport extends EventEmitter {
     this.authenticated = false;
     this.proofSent = false;
     this.buffer = '';
+    this.localPairingCode = null; this.localConfirmation = false; this.deferredAuth = null;
+    this.pendingControllerTlsFingerprint = null;
     const socket = this.tlsConnect(this.tlsOptions);
     this.socket = socket;
     this.output.socket = socket;
     socket.setEncoding('utf8');
     socket.on('secureConnect', () => {
+      if (this.socket !== socket || socket.destroyed) return;
       const raw = socket.getPeerCertificate?.(true)?.raw;
       const fingerprint = raw ? crypto.createHash('sha256').update(raw).digest('hex') : null;
       const pinned = typeof this.pinnedTlsFingerprint === 'string' && /^[0-9a-f]{64}$/i.test(this.pinnedTlsFingerprint) ? this.pinnedTlsFingerprint : null;
@@ -154,9 +157,10 @@ export class OutboundGatewayTransport extends EventEmitter {
       this.pendingControllerTlsFingerprint = fingerprint;
       this.emit('connected');
     });
-    socket.on('data', (chunk) => this.onData(chunk));
+    socket.on('data', (chunk) => { if (this.socket === socket && !socket.destroyed) this.onData(chunk); });
     socket.on('error', (error) => this.emit('connectionError', error));
     socket.on('close', () => {
+      if (this.socket !== socket) return;
       if (this.output.socket === socket) this.output.socket = null;
       this.authenticated = false;
       this.connectionId = null;
@@ -205,7 +209,9 @@ export class OutboundGatewayTransport extends EventEmitter {
     }
     if (!this.authenticated) {
       if (message?.type === 'auth.challenge' && typeof message.nonce === 'string' && message.nonce.length >= 16) {
+        if (this.proofSent) { this.reject('unexpected_auth_message'); this.socket.destroy(); return; }
         this.pendingControllerPublicKey = message.controllerPublicKey;
+        this.localPairingCode = pairingCode({ nonce: message.nonce, gatewayId: this.gatewayId, gatewayPublicKey: this.nodeIdentity.publicKey, controllerPublicKey: message.controllerPublicKey });
         if (!this.trust && (!message.controllerPublicKey || (this.nodeIdentity.controllerPublicKey && this.nodeIdentity.controllerPublicKey !== message.controllerPublicKey))) { this.reject('controller_identity_mismatch'); this.socket.destroy(); return; }
         this.send({
           type: 'auth.response',
@@ -222,12 +228,17 @@ export class OutboundGatewayTransport extends EventEmitter {
         return;
       }
       if (message?.type === 'pairing.pending' && this.proofSent && typeof message.pairingCode === 'string') {
+        if (message.pairingCode !== this.localPairingCode) { this.reject('pairing_transcript_mismatch'); this.socket.destroy(); return; }
         // Pending sockets deliberately never receive daemon requests. Expose the transcript code for operator comparison.
-        this.emit('pairingPending', { gatewayId: this.gatewayId, pairingCode: message.pairingCode });
+        this.emit('pairingPending', { gatewayId: this.gatewayId, pairingCode: this.localPairingCode });
         return;
       }
       if (message?.type === 'auth.ok' && this.proofSent) {
-        this.authenticated = true;
+        if (!this.trust && !this.nodeIdentity.controllerPublicKey && !this.hasExplicitCa && !this.localConfirmation) {
+          this.deferredAuth = line;
+          this.emit('pairingPending', { gatewayId: this.gatewayId, pairingCode: this.localPairingCode });
+          return;
+        }
         if (this.enrollmentTokenUsed) markEnrollmentConsumed(this.stateDir);
         clearPairingCode(this.stateDir);
         if (!this.trust && !this.nodeIdentity.controllerPublicKey) {
@@ -237,6 +248,7 @@ export class OutboundGatewayTransport extends EventEmitter {
           this.pinnedTlsFingerprint = this.pendingControllerTlsFingerprint;
           persistNodeIdentity(this.stateDir, this.nodeIdentity);
         }
+        this.authenticated = true;
         this.connectionId = typeof message.connectionId === 'string' ? message.connectionId : null;
         this.daemon.secureTransportContext = this.connectionId
           ? { gatewayId: this.gatewayId, connectionId: this.connectionId } : null;
@@ -252,6 +264,13 @@ export class OutboundGatewayTransport extends EventEmitter {
       return;
     }
     this.daemon.handleLine(line);
+  }
+
+  confirmControllerPairing(code) {
+    if (!this.localPairingCode || code !== this.localPairingCode || !this.socket || this.socket.destroyed) return false;
+    this.localConfirmation = true;
+    if (this.deferredAuth) { const line = this.deferredAuth; this.deferredAuth = null; this.onLine(line); }
+    return true;
   }
 
   stop() {
