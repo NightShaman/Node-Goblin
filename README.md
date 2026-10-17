@@ -1,8 +1,8 @@
-# Node Goblin
-
 <p align="center">
   <img src="docs/assets/hero.png" alt="Node Goblin connecting remote execution nodes to Burrow" width="720">
 </p>
+
+# Node Goblin
 
 Node Goblin lets Burrow agents run commands and work with files on other machines.
 
