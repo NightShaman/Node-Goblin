@@ -307,6 +307,7 @@ test('listener forwards actual server listening, error and close lifecycle event
   server.emit('error', Object.assign(new Error('bind failed'), { code: 'EADDRINUSE' }));
   server.emit('close');
   assert.deepEqual(events, ['listening', 'EADDRINUSE', 'close']);
+});
 
 test('listener drains authenticating and ready sockets and rejects pending dispatch', async () => {
   const { listener, server } = listenerFixture();

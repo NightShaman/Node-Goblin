@@ -298,7 +298,6 @@ test('revoke clears durable trust, both credential forms, pending pairing, and l
 });
 
 // Real listener state machine, inert sockets and host stores: no network required.
-import { EventEmitter } from 'node:events';
 import { GatewayControllerListener } from '../gateway/lib/controller-listener.mjs';
 import { controllerIdentity, signPairing } from '../gateway/lib/pairing.mjs';
 
