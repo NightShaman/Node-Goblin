@@ -1,8 +1,8 @@
 site_name: Node Goblin
 site_description: Operator and developer documentation for the independent BURROW remote execution mod
-site_url: https://nightshaman.github.io/Node-Goblin/
-repo_url: https://github.com/NightShaman/Node-Goblin
-repo_name: NightShaman/Node-Goblin
+site_url: https://GoblinKing-Burrow.github.io/Node-Goblin/
+repo_url: https://github.com/GoblinKing-Burrow/Node-Goblin
+repo_name: GoblinKing-Burrow/Node-Goblin
 edit_uri: edit/main/docs/
 strict: true
 

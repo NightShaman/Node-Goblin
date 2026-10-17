@@ -19,7 +19,7 @@ The upstream README uses the BURROW runtime's `mods` directory:
 ```bash
 BURROW_RUNTIME_ROOT="${BURROW_RUNTIME_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/burrow}"
 mkdir -p "$BURROW_RUNTIME_ROOT/mods"
-git clone https://github.com/NightShaman/Node-Goblin.git   "$BURROW_RUNTIME_ROOT/mods/node-goblin"
+git clone https://github.com/GoblinKing-Burrow/Node-Goblin.git   "$BURROW_RUNTIME_ROOT/mods/node-goblin"
 ```
 
 Restart BURROW to load the manifest, server entry point, and settings contribution. The manifest declares `execution-provider-v1`; it does not require a separate environment grant for that capability. Whether a particular BURROW deployment admits the installed mod remains a Core responsibility.
@@ -28,7 +28,7 @@ For a reproducible deployment, review and select a tag or commit before restarti
 
 ## Install Mini Node Goblin
 
-The repository README points to BURROW's wrapper installer. That wrapper is maintained in the BURROW repository and can change independently. For a reviewable installation, download a selected Node Goblin release archive and its matching `.sha256` from [Releases](https://github.com/NightShaman/Node-Goblin/releases), verify them, extract, and run the package installer:
+The repository README points to BURROW's wrapper installer. That wrapper is maintained in the BURROW repository and can change independently. For a reviewable installation, download a selected Node Goblin release archive and its matching `.sha256` from [Releases](https://github.com/GoblinKing-Burrow/Node-Goblin/releases), verify them, extract, and run the package installer:
 
 ```bash
 # Example release filename; select the version you intend to install.

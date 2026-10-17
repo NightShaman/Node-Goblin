@@ -9,7 +9,7 @@ Work in this repository for Node Goblin-specific behavior. Keep Core interfaces 
 The code uses native ECMAScript modules and Node built-ins. There is no runtime dependency installation step in `gateway/package.json`; CI tests with Node 24. The settings module is ESM through `ui/package.json`.
 
 ```bash
-git clone https://github.com/NightShaman/Node-Goblin.git
+git clone https://github.com/GoblinKing-Burrow/Node-Goblin.git
 cd Node-Goblin
 node --version
 (cd gateway && npm test)

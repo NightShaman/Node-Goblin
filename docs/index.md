@@ -47,10 +47,10 @@ The `/targets` collection stores named HTTP(S) API targets. A paired gateway ide
 
 ## Project links
 
-- [Repository](https://github.com/NightShaman/Node-Goblin)
-- [Release assets](https://github.com/NightShaman/Node-Goblin/releases)
-- [Issue tracker](https://github.com/NightShaman/Node-Goblin/issues)
-- [BURROW](https://github.com/NightShaman/Burrow)
+- [Repository](https://github.com/GoblinKing-Burrow/Node-Goblin)
+- [Release assets](https://github.com/GoblinKing-Burrow/Node-Goblin/releases)
+- [Issue tracker](https://github.com/GoblinKing-Burrow/Node-Goblin/issues)
+- [BURROW](https://github.com/GoblinKing-Burrow/Burrow)
 
 This documentation is source documentation. A proposed Pages workflow is included, but a successful local build or pull request does not mean a public Pages deployment exists.
 
