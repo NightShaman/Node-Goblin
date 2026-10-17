@@ -1,7 +1,7 @@
 {
   "id": "node-goblin",
   "name": "Node Goblin",
-  "version": "2026.10.17.6",
+  "version": "2026.10.17.7",
   "system": true,
   "server": "server/index.mjs",
   "ui": {
