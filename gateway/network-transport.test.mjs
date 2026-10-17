@@ -23,6 +23,13 @@ class FakeSocket extends EventEmitter {
 }
 
 const delay = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms));
+async function waitFor(predicate, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('test_condition_timeout');
+    await delay(10);
+  }
+}
 
 function fixture(options = {}) {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-network-'));
@@ -107,7 +114,7 @@ test('authenticated execution correlates accepted, terminal evidence, and respon
   try {
     authenticate(sockets[0]);
     sockets[0].feed({ id: 'run', method: 'process.exec', params: { operationId: 'evidence-op', executable: process.execPath, args: ['-e', "process.stdout.write('evidence')"] } });
-    await delay(150);
+    await waitFor(() => sockets[0].messages().some((m) => m.requestId === 'run' && m.type === 'response'));
     const messages = sockets[0].messages();
     const accepted = messages.find((m) => m.type === 'accepted');
     const terminal = messages.find((m) => m.type === 'process.terminal');

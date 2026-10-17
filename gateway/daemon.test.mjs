@@ -9,6 +9,14 @@ import { OperationJournal } from './lib/journal.mjs';
 import { GatewayClient } from './lib/client.mjs';
 import { operationIdFromRequest } from './lib/protocol.mjs';
 
+async function waitFor(predicate, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('test_condition_timeout');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 async function collect(run, options = {}) {
   const input = new PassThrough();
   const output = new PassThrough();
@@ -35,9 +43,9 @@ test('hello and health respond with identity and status', async () => {
 test('process execution emits accepted stream terminal and replay', async () => {
   const request = { method: 'process.exec', params: { executable: process.execPath, args: ['-e', "process.stdout.write('out');process.stderr.write('err')"] } };
   const operationId = operationIdFromRequest(request);
-  const messages = await collect(async ({ input }) => {
+  const messages = await collect(async ({ input, daemon }) => {
     input.write(JSON.stringify({ id: 'a', ...request }) + '\n');
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    await waitFor(() => daemon.journal.inspect(operationId));
     input.write(JSON.stringify({ id: 'b', ...request }) + '\n');
   });
   assert.equal(messages[0].type, 'accepted');
