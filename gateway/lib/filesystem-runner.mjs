@@ -5,69 +5,6 @@ import crypto from 'node:crypto';
 const SUPPORTED = new Set(['files_read', 'files_list', 'files_find', 'files_inspect', 'files_search', 'files_write', 'files_edit']);
 const fingerprint = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16);
 
-// One daemon-local owner per canonical path, shared by write and edit.
-const mutations = new Map();
-async function mutationPath(filePath) {
-  try { return await fs.realpath(filePath); }
-  catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-    const parent = path.dirname(filePath);
-    return parent === filePath ? filePath : path.join(await mutationPath(parent), path.basename(filePath));
-  }
-}
-async function snapshot(filePath) {
-  try {
-    const stat = await fs.stat(filePath);
-    if (!stat.isFile() || stat.nlink !== 1) throw new Error('atomic_mutation_requires_single_link_file');
-    return { stat, content: await fs.readFile(filePath) };
-  } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
-}
-const contentVersion = (content) => crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
-async function mutate(filePath, a, edit, signal) {
-  const target = await mutationPath(filePath);
-  const previous = mutations.get(target) || Promise.resolve();
-  let release;
-  const held = new Promise(resolve => { release = resolve; });
-  mutations.set(target, held);
-  await previous;
-  let temporary;
-  try {
-    signal?.throwIfAborted();
-    const before = await snapshot(target);
-    if (a.expectedContentHash !== undefined && a.expectedContentHash !== (before ? contentVersion(before.content) : null)) throw new Error('content_version_conflict');
-    let content = String(a.content ?? '');
-    if (edit) {
-      if (!before) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-      const text = before.content.toString('utf8');
-      const oldText = String(a.oldText ?? '');
-      const count = oldText ? text.split(oldText).length - 1 : 0;
-      if (count !== 1) throw new Error(count ? 'old_text_not_unique' : 'old_text_not_found');
-      content = text.replace(oldText, String(a.newText ?? ''));
-    }
-    await fs.mkdir(path.dirname(target), { recursive: true });
-    temporary = path.join(path.dirname(target), `.node-goblin-${crypto.randomUUID()}.tmp`);
-    await fs.writeFile(temporary, content, { encoding: 'utf8', flag: 'wx', mode: before ? before.stat.mode & 0o777 : 0o666 });
-    if (before) {
-      const staged = await fs.stat(temporary);
-      if (staged.uid !== before.stat.uid || staged.gid !== before.stat.gid) await fs.chown(temporary, before.stat.uid, before.stat.gid);
-      await fs.chmod(temporary, before.stat.mode & 0o7777);
-    }
-    const current = await snapshot(target);
-    // Detect outside writers since our read. POSIX rename has no compare-and-swap:
-    // independent editors must cooperate to exclude the final check/rename race.
-    if (Boolean(before) !== Boolean(current) || (before && (before.stat.ino !== current.stat.ino || before.stat.dev !== current.stat.dev
-      || before.stat.mtimeMs !== current.stat.mtimeMs || before.stat.ctimeMs !== current.stat.ctimeMs || !before.content.equals(current.content)))) throw new Error('content_version_conflict');
-    signal?.throwIfAborted();
-    await fs.rename(temporary, target);
-    temporary = null;
-    return { existed: Boolean(before), bytesWritten: Buffer.byteLength(content), contentHash: contentVersion(Buffer.from(content)) };
-  } finally {
-    if (temporary) await fs.unlink(temporary).catch(() => {});
-    release();
-    if (mutations.get(target) === held) mutations.delete(target);
-  }
-}
-
 // Defaults bound recursive work and response volume; explicit positive caller
 // limits override them. Null/omitted values select defaults, never one entry.
 const bound = (value, fallback) => value == null || value === '' || !Number.isSafeInteger(Number(value)) || Number(value) < 1 ? fallback : Number(value);
@@ -168,13 +105,9 @@ export async function runFilesystem(params = {}, { signal, now = () => Date.now(
         result = { tool, ok: true, dirPath: root, query, matches, ...traversalMeta(listing, { resultLimitReached }), error: null, artifacts: null };
       }
     } else if (tool === 'files_write') {
-      const filePath = path.resolve(String(a.filePath));
-      const changed = await mutate(filePath, a, false, signal);
-      result = { tool, ok: true, filePath, workspaceRoot: a.workspaceRoot || null, encoding: 'utf8', created: !changed.existed, overwrote: changed.existed, bytesWritten: changed.bytesWritten, contentHash: changed.contentHash, error: null, artifacts: null };
+      const filePath = path.resolve(String(a.filePath)); let existed = true; try { await fs.stat(filePath); } catch (e) { if (e.code === 'ENOENT') existed = false; else throw e; } await fs.mkdir(path.dirname(filePath), { recursive: true }); await fs.writeFile(filePath, String(a.content ?? ''), 'utf8'); result = { tool, ok: true, filePath, workspaceRoot: a.workspaceRoot || null, encoding: 'utf8', created: !existed, overwrote: existed, bytesWritten: Buffer.byteLength(String(a.content ?? '')), error: null, artifacts: null };
     } else {
-      const filePath = path.resolve(String(a.filePath));
-      const changed = await mutate(filePath, a, true, signal);
-      result = { tool, ok: true, filePath, replaced: 1, changedFiles: [filePath], contentHash: changed.contentHash, error: null, artifacts: null };
+      const filePath = path.resolve(String(a.filePath)); const before = await fs.readFile(filePath, 'utf8'); const oldText = String(a.oldText ?? ''); const count = oldText ? before.split(oldText).length - 1 : 0; if (count !== 1) throw new Error(count ? 'old_text_not_unique' : 'old_text_not_found'); await fs.writeFile(filePath, before.replace(oldText, String(a.newText ?? '')), 'utf8'); result = { tool, ok: true, filePath, replaced: 1, changedFiles: [filePath], error: null, artifacts: null };
     }
   } catch (error) {
     const code = String(error?.code || error?.message || 'native_filesystem_failed').split(':')[0];

@@ -1,3 +1,4 @@
+import { boundOutputFrame, boundCompletedOutcome } from './output-frame.mjs';
 import readline from 'node:readline';
 import process from 'node:process';
 import { OperationJournal } from './journal.mjs';
@@ -25,7 +26,7 @@ export class GatewayDaemon {
   }
 
   send(message) {
-    this.output.write(`${JSON.stringify(message)}\n`);
+    this.output.write(`${JSON.stringify(boundOutputFrame(message))}\n`);
   }
 
   sendProtocolError(requestId, code, extra = {}) {
@@ -108,10 +109,16 @@ export class GatewayDaemon {
     this.send({ type: 'accepted', requestId: message.id ?? null, ok: true, operationId, protocolVersion: PROTOCOL_VERSION });
 
     try {
-      const outcome = method === 'process.exec'
-        ? await runProcess(safeParams, { protectedEnv: protectedValues, signal: controller.signal, now: this.now, emitEvent: (event) => this.send({ ...event, operationId }) })
+      let terminalEvent;
+      const rawOutcome = method === 'process.exec'
+        ? await runProcess(safeParams, { protectedEnv: protectedValues, signal: controller.signal, now: this.now, emitEvent: (event) => {
+          if (event.type === 'process.terminal') terminalEvent = event;
+          else this.send({ ...event, operationId });
+        } })
         : await runFilesystem(safeParams, { signal: controller.signal, now: this.now });
+      const outcome = boundCompletedOutcome(rawOutcome, { operationId, requestId: message.id ?? null });
       this.journal.put(operationId, requestDigest, outcome, this.now());
+      if (terminalEvent) this.send({ ...terminalEvent, evidence: outcome, operationId });
       this.send({ type: 'response', requestId: message.id ?? null, ok: true, result: { operationId, replay: false, outcome } });
     } catch (error) {
       this.send({ type: 'response', requestId: message.id ?? null, ok: false, error: { code: error.message || 'process_failed', operationId } });

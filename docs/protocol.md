@@ -109,3 +109,23 @@ Do not use this example with a controller URL already set in the environment: th
 - [`gateway/lib/journal.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/lib/journal.mjs)
 - [`gateway/lib/client.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/lib/client.mjs)
 - [`server/index.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/server/index.mjs)
+
+### Encoded output and reconnect limits
+
+JSONL output frames are capped at 2 MiB including the envelope, JSON escaping,
+UTF-8 encoding and newline. Capture/read limits remain upper bounds, not delivery
+size promises. Process text and successful file-read content may be shortened
+further with `truncated: true` and `transportTruncated: true`. Output digests and
+file content hashes describe the delivered text. Transport-shortened file reads
+also set `incomplete: true`, omit the original result fingerprint, and set
+`nextOffsetBytes: null`; request a smaller byte range rather than assuming the
+original next offset is resumable. Non-text results or metadata that cannot fit
+return an explicit `output_frame_too_large` outcome/error instead of silently
+omitting entries. Custom capture/read bounds do not raise the wire limit.
+
+During disconnect or authentication, application events and responses are
+intentionally dropped rather than buffered. Host work continues. Once reconnect
+authentication is ready, new application output can flow; retry the same stable
+operation ID to recover a completed outcome from the finite journal. Terminal
+process evidence and the initial response share the bounded journal outcome;
+replay envelopes are also checked against the encoded frame limit.

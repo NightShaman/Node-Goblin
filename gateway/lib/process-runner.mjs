@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import os from 'node:os';
+import { StringDecoder } from 'node:string_decoder';
 import process from 'node:process';
 import { DEFAULT_MAX_OUTPUT_BYTES, digestHex, truncateUtf8 } from './protocol.mjs';
 
@@ -49,6 +50,7 @@ export function runProcess(request, { protectedEnv = null, emitEvent, signal, no
   const totalBytes = () => Buffer.byteLength(stdout, 'utf8') + Buffer.byteLength(stderr, 'utf8');
   const secretValues = [...new Set(Object.values(secretEnv || {}).filter(Boolean))].sort((a, b) => b.length - a.length);
   const pending = { stdout: '', stderr: '' };
+  const decoders = { stdout: new StringDecoder('utf8'), stderr: new StringDecoder('utf8') };
 
   // Redact as a stream, retaining only a possible secret prefix. Redacting each
   // child chunk independently leaks values when a process writes a secret in
@@ -83,7 +85,7 @@ export function runProcess(request, { protectedEnv = null, emitEvent, signal, no
   const noteChunk = (stream, chunk) => {
     // Terminal evidence and stream events are redacted before accumulation,
     // hashing, journaling, or transport back to the controller.
-    pending[stream] += chunk.toString('utf8');
+    pending[stream] += decoders[stream].write(chunk);
     drainRedacted(stream);
   };
 
@@ -138,6 +140,8 @@ export function runProcess(request, { protectedEnv = null, emitEvent, signal, no
       settled = true;
       for (const timer of timers) clearTimeout(timer);
       signal?.removeEventListener?.('abort', onAbort);
+      pending.stdout += decoders.stdout.end();
+      pending.stderr += decoders.stderr.end();
       drainRedacted('stdout', true);
       drainRedacted('stderr', true);
       const endedAt = new Date().toISOString();

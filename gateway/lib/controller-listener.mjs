@@ -4,7 +4,7 @@ import tls from 'node:tls';
 import { controllerIdentity, pairingCode, verifyPairing } from './pairing.mjs';
 
 const AUTH_CONTEXT = 'burrow-host-gateway-auth-v1';
-const MAX_FRAME_BYTES = 2 * 1024 * 1024;
+import { MAX_FRAME_BYTES } from './output-frame.mjs';
 const DEFAULT_ACTIVITY_LIMIT = 256;
 
 function optionalText(value, max = 255) {
@@ -106,13 +106,15 @@ class GatewayConnection extends EventEmitter {
 
   onData(chunk) {
     this.buffer += chunk;
-    if (Buffer.byteLength(this.buffer, 'utf8') > MAX_FRAME_BYTES) return this.fail('frame_too_large');
     let newline;
     while ((newline = this.buffer.indexOf('\n')) !== -1) {
+      if (Buffer.byteLength(this.buffer.slice(0, newline + 1), 'utf8') > MAX_FRAME_BYTES) return this.fail('frame_too_large');
       const line = this.buffer.slice(0, newline).replace(/\r$/, '');
       this.buffer = this.buffer.slice(newline + 1);
       if (line.trim()) this.onLine(line);
+      if (this.socket.destroyed) return;
     }
+    if (Buffer.byteLength(this.buffer, 'utf8') >= MAX_FRAME_BYTES) return this.fail('frame_too_large');
   }
 
   onLine(line) {
