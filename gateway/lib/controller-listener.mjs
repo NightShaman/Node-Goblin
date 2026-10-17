@@ -161,12 +161,14 @@ class GatewayConnection extends EventEmitter {
     if (!message || typeof message !== 'object') return;
     if (message.type === 'accepted' && message.requestId != null && typeof message.operationId === 'string') {
       const pending = this.pendingRequests.get(message.requestId);
-      if (pending) {
+      if (pending && ['process.exec', 'filesystem.execute'].includes(pending.method)
+        && pending.operationId === message.operationId
+        && !this.activeOperationRequests.has(message.operationId)) {
         pending.accepted = message;
         this.activeOperationRequests.set(message.operationId, pending.requestId);
       }
       this.health.activeOperations = [...this.activeOperationRequests.keys()];
-      this.listener.recordAccepted(this.gatewayId, pending, message);
+      if (pending?.accepted === message) this.listener.recordAccepted(this.gatewayId, pending, message);
       this.listener.emit('gatewayAccepted', { gatewayId: this.gatewayId, message });
       return;
     }
@@ -174,8 +176,8 @@ class GatewayConnection extends EventEmitter {
       const pending = this.pendingRequests.get(message.requestId);
       if (pending) {
         this.pendingRequests.delete(message.requestId);
-        const operationId = message?.result?.operationId || message?.error?.operationId;
-        if (operationId) this.activeOperationRequests.delete(operationId);
+        const operationId = pending.operationId;
+        if (operationId && this.activeOperationRequests.get(operationId) === pending.requestId) this.activeOperationRequests.delete(operationId);
         this.health.activeOperations = [...this.activeOperationRequests.keys()];
         this.listener.recordResponse(this.gatewayId, pending, message);
         pending.resolve({ accepted: pending.accepted ?? null, response: message, events: [...pending.events] });
@@ -371,7 +373,7 @@ export class GatewayControllerListener extends EventEmitter {
   }
 
   recordDispatch(gatewayId, pending) {
-    if (!pending.operationId || pending.method === 'cancel') return;
+    if (!pending.operationId || pending.method === 'cancel' || this.liveGateway(gatewayId)?.activeOperationRequests.has(pending.operationId)) return;
     this.putActivity({ gatewayId, operationId: pending.operationId, kind: pending.method === 'filesystem.execute' ? 'filesystem' : 'process', state: 'dispatching', replay: false, reconnectRequired: false, terminalOutcome: null, startedAt: pending.startedAt, endedAt: null, durationMs: null });
   }
 
@@ -381,14 +383,16 @@ export class GatewayControllerListener extends EventEmitter {
   }
 
   recordResponse(gatewayId, pending, message) {
-    if (!pending?.operationId || pending.method === 'cancel') return;
+    if (!pending?.operationId || pending.method === 'cancel'
+      || (this.liveGateway(gatewayId)?.activeOperationRequests.has(pending.operationId) && this.liveGateway(gatewayId)?.activeOperationRequests.get(pending.operationId) !== pending.requestId)) return;
     const endedAt = new Date().toISOString();
     const outcome = operationOutcome(message);
     this.putActivity({ ...(this.activity.find((entry) => entry.gatewayId === gatewayId && entry.operationId === pending.operationId) || {}), gatewayId, operationId: pending.operationId, kind: pending.method === 'filesystem.execute' ? 'filesystem' : 'process', state: 'terminal', replay: message?.result?.replay === true, reconnectRequired: false, terminalOutcome: outcome.terminalOutcome, startedAt: pending.startedAt, endedAt, durationMs: outcome.durationMs ?? Math.max(0, Date.parse(endedAt) - Date.parse(pending.startedAt)) });
   }
 
   recordDisconnected(gatewayId, pending) {
-    if (!pending?.operationId || pending.method === 'cancel') return;
+    if (!pending?.operationId || pending.method === 'cancel'
+      || (this.liveGateway(gatewayId)?.activeOperationRequests.has(pending.operationId) && this.liveGateway(gatewayId)?.activeOperationRequests.get(pending.operationId) !== pending.requestId)) return;
     this.putActivity({ ...(this.activity.find((entry) => entry.gatewayId === gatewayId && entry.operationId === pending.operationId) || {}), gatewayId, operationId: pending.operationId, kind: pending.method === 'filesystem.execute' ? 'filesystem' : 'process', state: 'interrupted', replay: false, reconnectRequired: true, terminalOutcome: null, startedAt: pending.startedAt, endedAt: null, durationMs: null });
   }
 

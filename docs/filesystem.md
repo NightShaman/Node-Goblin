@@ -24,6 +24,11 @@ Paths are resolved on the host using Node path handling and the service's workin
 
 `files_write` overwrites an existing file. `files_edit` returns `old_text_not_found` or `old_text_not_unique` instead of guessing which occurrence to replace. Neither operation is a multi-file transaction.
 
+Writes and edits serialize per canonical path within one daemon, including symlink aliases. Each edit reads the latest committed content. Both accept optional `expectedContentHash`: the first 16 hex characters of SHA-256 over the **entire** file bytes, or `null` to require a missing file. A full, untruncated `files_read` at offset zero supplies this hash; a partial read's hash is not a whole-file version. Successful mutations return `contentHash`. A mismatch returns `content_version_conflict`; an unconditional write deliberately replaces the latest content.
+
+Mutations stage a sibling file and atomically rename it after rechecking the original content/version. Staging, cancellation, precondition, and rename failures leave prior content intact. Existing permission bits and owner/group are preserved, or the mutation fails. Symlinks resolve to their targets; multiply-linked files and nonregular files are refused with `atomic_mutation_requires_single_link_file`. Replacement creates a new inode and does not preserve extended attributes/ACLs. External editors are not locked: checks detect changes observed before rename, but POSIX rename offers no compare-and-swap, so a final check/rename race remains. This is not a cross-process transaction or crash-durability guarantee.
+
+
 `files_edit` matches `oldText` literally, but `newText` uses JavaScript string-replacement semantics: `$$` inserts a literal dollar sign, `$&` inserts the matched text, `` $` `` inserts the pre-match prefix, and `$'` inserts the post-match suffix. Do not assume dollar-containing replacement text is inserted verbatim; verify the resulting content.
 
 `files_find` matches the full relative path, case-sensitively. `*` and `?` do not cross `/`; `**` does, and `**/` also matches zero directory components. For example, `**/*.mjs` matches both top-level and nested `.mjs` paths. The default `*` matches only top-level paths even though traversal may visit deeper entries. Matches can include directories and symlinks as well as files. Brace expansion and character classes are not supported.

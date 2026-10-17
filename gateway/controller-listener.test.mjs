@@ -265,3 +265,32 @@ test('revoke removes pending and operation activity and is idempotent', () => {
   assert.equal(listener.revokeGateway('gateway-1'), false);
   listener.close();
 });
+
+test('cancel receipts and duplicate replies cannot steal execution event or activity ownership', async () => {
+  const { listener, server } = listenerFixture();
+  const socket = server.connect();
+  authenticate(socket);
+  const connection = listener.liveGateway('gateway-1');
+  const original = listener.dispatchProcessExec('gateway-1', { operationId: 'owned' });
+  const ownerId = socket.messages().at(-1).id;
+  socket.feed({ type: 'accepted', requestId: ownerId, operationId: 'owned' });
+  const cancel = listener.dispatchCancel('gateway-1', 'owned');
+  const cancelId = socket.messages().at(-1).id;
+  socket.feed({ type: 'response', requestId: cancelId, ok: true, result: { operationId: 'owned', cancelling: true } });
+  await cancel;
+  const duplicate = listener.dispatchProcessExec('gateway-1', { operationId: 'owned' });
+  const duplicateId = socket.messages().at(-1).id;
+  socket.feed({ type: 'response', requestId: duplicateId, ok: false, error: { operationId: 'owned', code: 'operation_active' } });
+  await duplicate;
+  assert.equal(connection.activeOperationRequests.get('owned'), ownerId);
+  assert.deepEqual(listener.listLiveGateways()[0].activeOperations, ['owned']);
+  assert.equal(listener.listOperationActivity()[0].state, 'running');
+  socket.feed({ type: 'process.stream', operationId: 'owned', text: 'late' });
+  socket.feed({ type: 'process.terminal', operationId: 'owned', evidence: { cancelled: true } });
+  socket.feed({ type: 'response', requestId: ownerId, ok: true, result: { operationId: 'owned', outcome: { cancelled: true } } });
+  const result = await original;
+  assert.deepEqual(result.events.map(event => event.type), ['process.stream', 'process.terminal']);
+  assert.deepEqual(listener.listLiveGateways()[0].activeOperations, []);
+  assert.equal(listener.listOperationActivity()[0].terminalOutcome, 'cancelled');
+  listener.close();
+});

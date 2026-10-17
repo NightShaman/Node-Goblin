@@ -139,8 +139,8 @@ test('process controller propagates AbortSignal cancellation with the same opera
   };
   const abort = new AbortController();
   const pending = createProcessController(service).executeProcess({ operationId: 'shell-cancel', targetId: 'host-1', process: { command: 'sleep 10' } }, { abortSignal: abort.signal });
-  abort.abort();
   await new Promise((resolve) => setImmediate(resolve));
+  abort.abort();
   assert.deepEqual(calls.slice(0, 2), [['exec', 'host-1', 'shell-cancel'], ['cancel', 'host-1', 'shell-cancel']]);
   const evidence = { type: 'process.result', exitCode: null, signal: 'SIGTERM', stdout: '', stderr: '', cancelled: true, timedOut: false };
   resolveDispatch({ response: { ok: true, result: { operationId: 'shell-cancel', outcome: evidence } } });
@@ -362,4 +362,36 @@ test('restart excludes uncertain durable approval even if rollback writes fail',
   await assert.rejects(f.service.approvePairing('node'), /pairing_persistence_failed/);
   const restarted = await trustFixture(f);
   assert.equal(restarted.listener.gatewayRecords.has('node'), false);
+});
+
+for (const kind of ['process', 'filesystem']) {
+  for (const duringPersistence of [false, true]) {
+    test(`${kind} refuses cancellation ${duringPersistence ? 'during persistence' : 'before correlation'}`, async () => {
+      const abort = new AbortController();
+      const calls = [];
+      if (!duringPersistence) abort.abort();
+      const service = { dispatchProcessExec() { calls.push('process'); }, dispatchFilesystem() { calls.push('filesystem'); }, dispatchCancel() { calls.push('cancel'); } };
+      const operationStore = { async begin() { calls.push('begin'); abort.abort(); } };
+      const controller = createProcessController(service, { operationStore });
+      const request = { operationId: 'abort-admission', targetId: 'host-1', process: { command: 'true' }, operation: { tool: 'files_write', arguments: {} } };
+      await assert.rejects(controller[kind === 'process' ? 'executeProcess' : 'executeNativeFilesystem'](request, { abortSignal: abort.signal }), { name: 'AbortError' });
+      assert.deepEqual(calls, duringPersistence ? ['begin'] : []);
+    });
+  }
+}
+
+test('filesystem cancellation after dispatch targets the owning operation', async () => {
+  const abort = new AbortController();
+  const calls = []; let complete;
+  const controller = createProcessController({
+    dispatchProcessExec() {},
+    dispatchFilesystem(_gateway, params) { calls.push(params.operationId); return new Promise(resolve => { complete = resolve; }); },
+    dispatchCancel(gateway, operationId) { calls.push([gateway, operationId]); return Promise.resolve(); },
+  });
+  const pending = controller.executeNativeFilesystem({ operationId: 'fs-cancel', targetId: 'host-1', operation: { tool: 'files_write', arguments: {} } }, { abortSignal: abort.signal });
+  await new Promise(resolve => setImmediate(resolve));
+  abort.abort();
+  assert.deepEqual(calls, ['fs-cancel', ['host-1', 'fs-cancel']]);
+  complete({ response: { ok: true, result: { operationId: 'fs-cancel', outcome: { ok: false } } } });
+  await pending;
 });

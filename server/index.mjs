@@ -298,7 +298,9 @@ export function createProcessController(service, { logger = console, operationSt
           logger.warn?.('Node Goblin cancellation dispatch failed: cancellation_dispatch_failed');
         });
       };
+      abortSignal?.throwIfAborted();
       await operationStore?.begin(request, 'process', params);
+      abortSignal?.throwIfAborted();
       // Values exist only in this transient dispatch object. The listener binds
       // them to its authenticated connection and generated request id.
       const dispatchParams = protectedValues ? { ...params, protectedValues } : params;
@@ -323,7 +325,9 @@ export function createProcessController(service, { logger = console, operationSt
       const params = { operationId, parentRunId: request.parentRunId, toolCallId: request.toolCallId, tool: request.operation?.tool, arguments: { ...(request.operation?.arguments || {}) } };
       let cancelPromise = null;
       const cancel = () => { if (!cancelPromise) cancelPromise = Promise.resolve(service.dispatchCancel(gatewayId, operationId)).catch((error) => logger.warn?.('Node Goblin cancellation dispatch failed: cancellation_dispatch_failed')); };
+      abortSignal?.throwIfAborted();
       await operationStore?.begin(request, 'filesystem', params);
+      abortSignal?.throwIfAborted();
       const dispatchPromise = service.dispatchFilesystem(gatewayId, params);
       if (abortSignal?.aborted) cancel(); else abortSignal?.addEventListener('abort', cancel, { once: true });
       try {

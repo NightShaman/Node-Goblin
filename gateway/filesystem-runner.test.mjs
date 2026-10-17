@@ -59,3 +59,77 @@ test('null bounds select defaults and depth truncation does not hide siblings or
   const complete=await runFilesystem({tool:'files_list',arguments:{dirPath:root,maxDepth:1,maxEntries:200}});
   assert.equal(complete.truncated,false);
 });
+
+async function mutationFixture(t) {
+  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'fs-ownership-'));
+  t.after(() => fs.promises.rm(root, { recursive: true, force: true }));
+  const filePath = path.join(root, 'file');
+  await fs.promises.writeFile(filePath, 'alpha beta');
+  return { root, filePath, run: (tool, args) => runFilesystem({ tool, arguments: { filePath, ...args } }) };
+}
+
+test('same-path edits serialize and preserve both acknowledged non-overlapping changes', async t => {
+  const { filePath, run } = await mutationFixture(t);
+  const results = await Promise.all([
+    run('files_edit', { oldText: 'alpha', newText: 'ALPHA' }),
+    run('files_edit', { oldText: 'beta', newText: 'BETA' }),
+  ]);
+  assert.deepEqual(results.map(r => r.ok), [true, true]);
+  assert.equal(await fs.promises.readFile(filePath, 'utf8'), 'ALPHA BETA');
+});
+
+test('conflicting edits and stale write preconditions fail rather than lose an acknowledged edit', async t => {
+  const { filePath, run } = await mutationFixture(t);
+  const initial = await run('files_read', {});
+  const results = await Promise.all([
+    run('files_edit', { oldText: 'alpha', newText: 'ALPHA' }),
+    run('files_edit', { oldText: 'alpha', newText: 'other' }),
+    run('files_write', { content: 'stale', expectedContentHash: initial.contentHash }),
+  ]);
+  assert.deepEqual(results.map(r => r.ok), [true, false, false]);
+  assert.equal(results[1].error, 'old_text_not_found');
+  assert.equal(results[2].error, 'content_version_conflict');
+  assert.equal(await fs.promises.readFile(filePath, 'utf8'), 'ALPHA beta');
+});
+
+test('write and edit share the same queue, including symlink aliases', async t => {
+  const { root, filePath, run } = await mutationFixture(t);
+  const alias = path.join(root, 'alias');
+  await fs.promises.symlink(filePath, alias);
+  const results = await Promise.all([
+    run('files_write', { content: 'new beta' }),
+    runFilesystem({ tool: 'files_edit', arguments: { filePath: alias, oldText: 'beta', newText: 'BETA' } }),
+  ]);
+  assert.deepEqual(results.map(r => r.ok), [true, true]);
+  assert.equal(await fs.promises.readFile(filePath, 'utf8'), 'new BETA');
+  assert.equal((await fs.promises.lstat(alias)).isSymbolicLink(), true);
+});
+
+for (const failure of ['external', 'stage', 'rename', 'abort']) {
+  test(`atomic mutation preserves prior content on ${failure}`, async t => {
+    const { root, filePath, run } = await mutationFixture(t);
+    const abort = new AbortController();
+    const originalWrite = fs.promises.writeFile;
+    const originalRename = fs.promises.rename;
+    t.after(() => { fs.promises.writeFile = originalWrite; fs.promises.rename = originalRename; });
+    fs.promises.writeFile = async (target, ...args) => {
+      if (String(target).includes('.node-goblin-')) {
+        if (failure === 'stage') throw Object.assign(new Error('fixture'), { code: 'ENOSPC' });
+        await originalWrite(target, ...args);
+        if (failure === 'external') await originalWrite(filePath, 'outside writer');
+        if (failure === 'abort') abort.abort();
+        return;
+      }
+      return originalWrite(target, ...args);
+    };
+    if (failure === 'rename') fs.promises.rename = async () => { throw Object.assign(new Error('fixture'), { code: 'EACCES' }); };
+    const result = await runFilesystem({ tool: 'files_edit', arguments: { filePath, oldText: 'alpha', newText: 'ALPHA' } }, { signal: abort.signal });
+    assert.equal(result.ok, false);
+    if (failure === 'external') assert.equal(result.error, 'content_version_conflict');
+    assert.equal(await fs.promises.readFile(filePath, 'utf8'), failure === 'external' ? 'outside writer' : 'alpha beta');
+    assert.deepEqual(await fs.promises.readdir(root), ['file']);
+    fs.promises.writeFile = originalWrite;
+    fs.promises.rename = originalRename;
+    assert.equal((await run('files_write', { content: 'recovered' })).ok, true);
+  });
+}
