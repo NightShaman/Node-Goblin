@@ -26,7 +26,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  syntax:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -39,45 +39,7 @@ jobs:
             requirements-docs-test.txt
       - name: Install documentation dependencies
         run: python -m pip install -r requirements-docs.txt -r requirements-docs-test.txt
-      - name: Install diagram test browser
-        run: python -m playwright install --with-deps chromium
-      - name: Build with strict warnings
-        run: python -m mkdocs build --strict
-      - name: Check internal links, anchors, and assets
-        run: python scripts/docs/check_site.py site
-      - name: Render and validate Mermaid diagrams
-        run: python scripts/docs/check_mermaid.py site --artifacts docs-browser-artifacts
-      - name: Upload browser verification artifacts
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: documentation-browser-checks
-          path: docs-browser-artifacts
-          if-no-files-found: ignore
-      - name: Upload site for review
-        uses: actions/upload-artifact@v6
-        with:
-          name: documentation-site
-          path: site
-      - name: Package Pages artifact
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
-
-  deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-      - name: Deploy documentation
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Fast documentation gate
+        run: |
+          python -m mkdocs build --strict
+          python scripts/docs/check_site.py site

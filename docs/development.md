@@ -39,9 +39,9 @@ Read tests before changing behavior. Test doubles cover socket/controller flows,
 
 ## Release behavior
 
-`.github/workflows/release-node-goblin.yml` runs on main pushes and manual dispatch. It chooses a UTC calendar version, adding a numeric suffix while a matching tag exists; synchronizes manifest/package/VERSION; runs gateway tests; builds a deterministic GNU tar archive; commits version metadata to main; creates/pushes a tag; and publishes archive/checksum assets. An optional cross-repository token enables a BURROW source-updated dispatch.
+`.github/workflows/release-node-goblin.yml` is a fast NightShaman development gate. Main pushes run focused protocol, process, filesystem, network, protected-value, and version-identity contracts; they do not version, tag, or publish Node Goblin.
 
-The workflow checks out main rather than a feature branch. Do not manually dispatch it merely to validate a documentation PR. It publishes a release and changes repository state. Every main push currently qualifies, including docs-only changes.
+The scheduled NightShaman Burrow public-promotion workflow freezes this repository's exact main SHA, runs the complete Node Goblin suite, builds the deterministic archive/checksum, and publishes the coordinated UTC `YYYY.MM.DD` snapshot and release to `GoblinKing-Burrow/Node-Goblin`. Changes after that day's public release wait for the next UTC day.
 
 For a local non-publishing build:
 
@@ -87,7 +87,7 @@ When updating docs, link to the reviewed source revision, distinguish Core-owned
 
 Node Goblin supports Node 24.x. The read-only pull-request runtime workflow runs
 all gateway, controller/server, deployment/package and UI settings contract tests;
-publishing remains in the separate main-branch release workflow. Runtime identity
+publishing occurs only after the coordinated daily public validation. Runtime identity
 reads `gateway/VERSION`; the release stamper checks that file, the package and mod
 manifest together. Protocol version `1.0` is independent of the calendar release.
 

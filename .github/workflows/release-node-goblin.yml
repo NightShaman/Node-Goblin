@@ -1,4 +1,4 @@
-name: Release Node Goblin
+name: Verify Node Goblin
 
 on:
   push:
@@ -6,60 +6,22 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: node-goblin-release
-  cancel-in-progress: false
+  group: node-goblin-verify-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  release:
+  quick-contracts:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Assign calendar version
-        id: version
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Fast development contract gate
+        working-directory: gateway
         run: |
-          set -eu
-          base=$(date -u +%Y.%m.%d)
-          version=$base
-          suffix=0
-          while git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; do
-            suffix=$((suffix + 1))
-            version="$base.$suffix"
-          done
-          node gateway/deploy/set-release-version.mjs "$version"
-          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
-      - name: Verify and build release assets
-        run: |
-          set -eu
-          (cd gateway && npm test)
-          SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD) gateway/deploy/build-release.sh gateway/dist
-      - name: Publish release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -eu
-          tag="v$VERSION"
-          node gateway/deploy/set-release-version.mjs "$VERSION" --check
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add burrow.mod.json gateway/VERSION gateway/package.json
-          git diff --cached --quiet || git commit -m "Release Node Goblin $VERSION"
-          git push origin HEAD:main
-          git tag "$tag"
-          git push origin "$tag"
-          gh release create "$tag" \
-            --title "Node Goblin $VERSION" \
-            --notes "Calendar-versioned Node Goblin release $VERSION from source $(git rev-parse HEAD)." \
-            "gateway/dist/node-goblin-$VERSION.tar.gz" \
-            "gateway/dist/node-goblin-$VERSION.tar.gz.sha256"
+          node --test client.test.mjs process-runner.test.mjs filesystem-runner.test.mjs network-transport.test.mjs protected-e2e.test.mjs
+          node deploy/set-release-version.mjs "$(cat VERSION)" --check
