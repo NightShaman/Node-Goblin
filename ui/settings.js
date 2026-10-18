@@ -5,6 +5,7 @@ export function formatGatewayTimestamp(value) {
 }
 
 export const settingsSections = Object.freeze([
+  { id: 'core-access', label: 'Core execution approval' },
   { id: 'controller', label: 'Controller & TLS' },
   { id: 'pairings', label: 'Pending pairings' },
   { id: 'gateways', label: 'Gateways' },
@@ -15,6 +16,14 @@ export const settingsSections = Object.freeze([
 // Node Goblin owns settings data and actions; the host owns their presentation.
 export const settingsContribution = Object.freeze({
   sections: Object.freeze([
+    {
+      id: 'core-access',
+      label: 'Core execution approval',
+      description: 'Gateway pairing and connection do not approve Core execution. Review execution-provider-v1 separately.',
+      layout: 'form',
+      fields: Object.freeze([]),
+      actions: Object.freeze([]),
+    },
     {
       id: 'controller',
       label: 'Controller & TLS',
@@ -60,13 +69,58 @@ export const settingsContribution = Object.freeze({
   ]),
 });
 
+// The host binds this helper to this mod and preserves operator authentication.
+let coreAccessApi = null;
+const EXECUTION_CAPABILITY = 'execution-provider-v1';
+const RELOAD_GUIDANCE = 'After a new approval, drain active work, disable then enable Node Goblin in mod management, or restart Burrow. Enable alone does not reload an already loaded mod. Then verify a new agent turn; gateway connection alone does not prove Core execution is active.';
+
+async function readCoreAccess(accessApi = coreAccessApi) {
+  if (typeof accessApi !== 'function') throw new Error('This Burrow UI does not expose operator approval. Update the UI before reviewing Core execution access.');
+  let access;
+  try { access = await accessApi(); } catch (error) { throw await coreAccessError(error); }
+  if (access?.ok !== true || access.modId !== 'node-goblin' ||
+      ['grants', 'adminAgentIds', 'diagnosticAgentIds', 'declaredCapabilities'].some(key =>
+        !Array.isArray(access[key]) || access[key].some(value => typeof value !== 'string'))) {
+    throw new Error('Core execution approval status is unavailable. No authority changes were made.');
+  }
+  return access;
+}
+
+async function coreAccessError(response) {
+  if (response.status === 401 || response.status === 403) {
+    return new Error('Sign in with operator authentication to review Core execution approval. API tokens and auth-disabled access cannot approve this capability.');
+  }
+  return new Error(`Core execution approval request failed (${response.status}).`);
+}
+
+async function coreAccessSection() {
+  const base = settingsContribution.sections.find(section => section.id === 'core-access');
+  try {
+    const access = await readCoreAccess();
+    const approved = access.grants.includes(EXECUTION_CAPABILITY);
+    const declared = access.declaredCapabilities.includes(EXECUTION_CAPABILITY);
+    return {
+      ...base,
+      description: `${approved ? 'Core execution approval is saved.' : 'Core execution approval is missing. Connected gateways cannot be used by Core agent shell and filesystem tools until approval and reactivation.'} ${RELOAD_GUIDANCE}`,
+      actions: !approved && declared ? [{
+        id: 'approve-core-execution', label: 'Approve Core execution', tone: 'primary',
+        confirm: 'Grant Node Goblin execution-provider-v1 so it can register a Core process and filesystem execution provider? Existing agent assignments and permissions still apply. Reactivation is required after approval.',
+      }] : [],
+    };
+  } catch (error) {
+    return { ...base, description: error.message, actions: [] };
+  }
+}
+
 export async function createSettingsContribution(context) {
-  const [controllerResult, pairingResult, trustResult, gatewayResult, operationResult] = await Promise.all([
+  coreAccessApi = context.accessApi;
+  const [controllerResult, pairingResult, trustResult, gatewayResult, operationResult, accessSection] = await Promise.all([
     context.api('/controller'),
     context.api('/pairings?limit=50'),
     context.api('/gateway-trust'),
     context.api('/gateways'),
     context.api('/operations?limit=50'),
+    coreAccessSection(),
   ]);
   const pairings = Array.isArray(pairingResult?.pairings) ? pairingResult.pairings : [];
   const items = pairings.map((pairing) => {
@@ -179,7 +233,7 @@ export async function createSettingsContribution(context) {
   });
   return {
     ...settingsContribution,
-    sections: settingsContribution.sections.map((section) => section.id === 'controller' ? controllerSection : section.id === 'pairings' ? { ...section, items } : section.id === 'gateways' ? { ...section, fields: [
+    sections: settingsContribution.sections.map((section) => section.id === 'core-access' ? accessSection : section.id === 'controller' ? controllerSection : section.id === 'pairings' ? { ...section, items } : section.id === 'gateways' ? { ...section, fields: [
       { id: 'enroll-gateway-id', label: 'Gateway ID', control: 'text', description: 'For a legacy HMAC gateway. Ed25519 gateways use key pairing instead.' },
       { id: 'enroll-controller-id', label: 'Controller ID', control: 'text', value: 'controller' },
       { id: 'enroll-secret', label: 'Legacy HMAC enrollment secret', control: 'password', description: 'Legacy HMAC only; one-time input that is never displayed after submission.' },
@@ -201,6 +255,23 @@ async function settingsActionError(response, fallback) {
 }
 
 export async function handleSettingsAction(actionId, values) {
+  if (actionId === 'approve-core-execution') {
+    // Re-read immediately before the complete replacement; never overwrite policy
+    // from an earlier UI snapshot or infer approval from pairing/enablement.
+    const accessApi = coreAccessApi;
+    const access = await readCoreAccess(accessApi);
+    if (!access.declaredCapabilities.includes(EXECUTION_CAPABILITY)) throw new Error('Node Goblin does not declare execution-provider-v1. No authority changes were made.');
+    if (access.grants.includes(EXECUTION_CAPABILITY)) return { restartRequired: true };
+    try { await accessApi({
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        grants: [...access.grants, EXECUTION_CAPABILITY],
+        adminAgentIds: access.adminAgentIds,
+        diagnosticAgentIds: access.diagnosticAgentIds,
+      }),
+    }); } catch (error) { throw await coreAccessError(error); }
+    return { restartRequired: true };
+  }
   if (actionId.startsWith('revoke-gateway:')) {
     const gatewayId = actionId.slice('revoke-gateway:'.length);
     await fetch(`/api/mods/node-goblin/gateway-trust/${encodeURIComponent(gatewayId)}`, { method: 'DELETE' }).then(async (response) => {
@@ -256,3 +327,4 @@ export async function handleSettingsAction(actionId, values) {
     if (!response.ok) throw new Error((await response.text()) || `Controller save failed (${response.status}).`);
   });
 }
+
