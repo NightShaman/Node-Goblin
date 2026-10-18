@@ -40,6 +40,25 @@ git clone https://github.com/GoblinKing-Burrow/Node-Goblin.git \
 
 Restart Burrow to load the mod. Node Goblin is installed and managed through the normal mod lifecycle. Its manifest marks it as a system mod and requests only the Core-owned `execution-provider-v1` privileged capability; system status does not grant unrelated Core access, and no separate environment grant is required.
 
+### Approve Core execution before using agent tools
+
+Core versions with operator-owned mod authority require an explicit approval even
+for an existing installation. Sign in with operator authentication and open
+**Node Goblin → Core execution approval**. Review and approve
+`execution-provider-v1`. Pairing a gateway or enabling the mod is not approval.
+API tokens and auth-disabled anonymous access cannot manage these grants.
+
+After approval, drain active work and disable then enable Node Goblin in mod
+management, or restart Burrow. Enabling an already loaded mod alone is a no-op.
+Verify a new agent turn after reactivation. The approval panel reports saved
+policy, not proof that the active provider has reloaded.
+
+The existing operator API is `GET` / `PUT
+/api/operator/mods/node-goblin/access`. PUT replaces all three policy arrays:
+`grants`, `adminAgentIds`, and `diagnosticAgentIds`. Preserve existing values when
+adding the execution capability. Missing authority is deliberately fail-closed;
+there is no automatic migration from an installed manifest or mod-owned settings.
+
 ### 2. Enable the controller listener
 
 In Burrow, open **Node Goblin → Controller & TLS**:
@@ -168,3 +187,4 @@ For detailed help:
 - [Burrow](https://github.com/GoblinKing-Burrow/Burrow)
 - [Releases](https://github.com/GoblinKing-Burrow/Node-Goblin/releases)
 - [Issues](https://github.com/GoblinKing-Burrow/Node-Goblin/issues)
+
