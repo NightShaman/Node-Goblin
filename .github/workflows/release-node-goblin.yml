@@ -1,4 +1,4 @@
-name: Verify Node Goblin
+name: Build Node Goblin development package
 
 on:
   push:
@@ -6,22 +6,62 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: node-goblin-verify-${{ github.ref }}
-  cancel-in-progress: true
+  group: node-goblin-development-release
+  cancel-in-progress: false
 
 jobs:
-  quick-contracts:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
       - name: Fast development contract gate
         working-directory: gateway
         run: |
-          node --test client.test.mjs process-runner.test.mjs filesystem-runner.test.mjs network-transport.test.mjs protected-e2e.test.mjs
+          node --test client.test.mjs process-runner.test.mjs filesystem-runner.test.mjs network-transport.test.mjs protected-e2e.test.mjs test/development-release-workflow.test.mjs
           node deploy/set-release-version.mjs "$(cat VERSION)" --check
+      - name: Assign calendar version
+        id: version
+        run: |
+          set -eu
+          base=$(date -u +%Y.%m.%d)
+          version=$base
+          suffix=0
+          while git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; do
+            suffix=$((suffix + 1))
+            version="$base.$suffix"
+          done
+          node gateway/deploy/set-release-version.mjs "$version"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+      - name: Build deterministic development package
+        run: |
+          set -eu
+          SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD) gateway/deploy/build-release.sh gateway/dist
+          node gateway/deploy/set-release-version.mjs "${{ steps.version.outputs.version }}" --check
+      - name: Publish development package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -eu
+          tag="v$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add burrow.mod.json gateway/VERSION gateway/package.json
+          git diff --cached --quiet || git commit -m "Release Node Goblin $VERSION"
+          git push origin HEAD:main
+          git tag "$tag"
+          git push origin "$tag"
+          gh release create "$tag" \
+            --title "Node Goblin $VERSION (development)" \
+            --notes "NightShaman development package $VERSION from source $(git rev-parse HEAD). Complete release validation and public promotion run separately." \
+            "gateway/dist/node-goblin-$VERSION.tar.gz" \
+            "gateway/dist/node-goblin-$VERSION.tar.gz.sha256"

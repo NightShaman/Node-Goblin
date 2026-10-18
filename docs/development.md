@@ -39,9 +39,9 @@ Read tests before changing behavior. Test doubles cover socket/controller flows,
 
 ## Release behavior
 
-`.github/workflows/release-node-goblin.yml` is a fast NightShaman development gate. Main pushes run focused protocol, process, filesystem, network, protected-value, and version-identity contracts; they do not version, tag, or publish Node Goblin.
+`.github/workflows/release-node-goblin.yml` is the fast NightShaman development-package path. Main pushes run focused protocol, process, filesystem, network, protected-value, and version-identity contracts, assign the next UTC calendar revision, build the deterministic archive/checksum, and publish them as a NightShaman development release. This keeps the installable package immediately testable without putting the complete suite back on every push.
 
-The scheduled NightShaman Burrow public-promotion workflow freezes this repository's exact main SHA, runs the complete Node Goblin suite, builds the deterministic archive/checksum, and publishes the coordinated UTC `YYYY.MM.DD` snapshot and release to `GoblinKing-Burrow/Node-Goblin`. Changes after that day's public release wait for the next UTC day.
+The scheduled NightShaman Burrow public-promotion workflow separately freezes this repository's exact main SHA, runs the complete Node Goblin suite, rebuilds the deterministic archive/checksum from that frozen source, and publishes the coordinated UTC `YYYY.MM.DD` snapshot and release to `GoblinKing-Burrow/Node-Goblin`. Changes after that day's public release wait for the next UTC day.
 
 For a local non-publishing build:
 
