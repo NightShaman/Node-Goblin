@@ -113,7 +113,7 @@ export class OutboundGatewayTransport extends EventEmitter {
     this.daemon.output = this.output;
     this.daemon.identity.transport = 'tls-jsonl-outbound';
     const stopDaemon = this.daemon.stop.bind(this.daemon);
-    this.daemon.stop = () => { stopDaemon(); this.stop(); };
+    this.daemon.stop = async () => { this.stop({ flushTelemetry: false }); await stopDaemon(); };
     this.socket = null;
     this.timer = null;
     this.authTimer = null;
@@ -295,7 +295,7 @@ export class OutboundGatewayTransport extends EventEmitter {
     return true;
   }
 
-  stop() {
+  async stop({ flushTelemetry = true } = {}) {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
@@ -304,5 +304,6 @@ export class OutboundGatewayTransport extends EventEmitter {
     this.authenticated = false;
     this.daemon.output = CLOSED_OUTPUT;
     this.socket?.destroy();
+    if (flushTelemetry) await this.daemon.telemetry?.shutdown?.();
   }
 }

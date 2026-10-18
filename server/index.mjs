@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { controllerIdentity } from '../gateway/index.mjs';
-import { GatewayControllerListener, canonicalize } from '../gateway/index.mjs';
+import { GatewayControllerListener, canonicalize, canonicalProcessRequest, normalizeTraceContext } from '../gateway/index.mjs';
 
 const SETTINGS_NAME = 'targets';
 const CONTROLLER_SETTINGS_NAME = 'controller';
@@ -14,16 +14,8 @@ const PENDING_PAIRINGS_NAME = 'pendingNodeGoblinPairings';
 const TLS_METADATA_NAME = 'controllerTlsMetadata';
 const TARGET_ID = /^[a-z0-9][a-z0-9._-]*$/i;
 const OPERATION_ID = /^[a-z0-9][a-z0-9._:-]{0,255}$/i;
-const TRACEPARENT = /^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/;
-
 function cleanTraceContext(value) {
-  if (value == null) return null;
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw problem('trace_context_invalid');
-  const traceparent = String(value.traceparent || '').trim().toLowerCase();
-  if (!TRACEPARENT.test(traceparent) || traceparent.slice(3, 35) === '0'.repeat(32) || traceparent.slice(36, 52) === '0'.repeat(16)) throw problem('trace_context_invalid');
-  const tracestate = value.tracestate == null ? null : String(value.tracestate).trim();
-  if (tracestate && (tracestate.length > 512 || /[\r\n]/.test(tracestate))) throw problem('trace_context_invalid');
-  return { traceparent, ...(tracestate ? { tracestate } : {}) };
+  try { return normalizeTraceContext(value); } catch { throw problem('trace_context_invalid'); }
 }
 
 function problem(message, statusCode = 400) {
@@ -217,7 +209,9 @@ export function createOperationCorrelationStore(settings, { terminalLimit = 256 
   return Object.freeze({
     begin(request, kind, payload) {
       return transact(async () => {
-        const digest = requestDigest(payload);
+        const semanticPayload = payload && typeof payload === 'object' && !Array.isArray(payload)
+          ? canonicalProcessRequest(payload, kind === 'filesystem' ? 'filesystem.execute' : 'process.exec').params : payload;
+        const digest = requestDigest(semanticPayload);
         const records = await read();
         const existing = records.find((entry) => entry.operationId === request.operationId);
         if (existing && (existing.requestDigest !== digest || existing.targetId !== request.targetId || existing.kind !== kind)) {
@@ -607,7 +601,9 @@ export async function activate({ api, settings, secrets, logger, processExecutio
     const operationId = String(body.operationId ?? '').trim();
     if (!OPERATION_ID.test(operationId)) throw problem('operation_id_invalid');
     const process = cleanProcessRequest(body);
-    try { return { ok: true, operationId, dispatch: await service.dispatchProcessExec(params.gatewayId, { ...body, ...process, operationId }) }; }
+    const traceContext = cleanTraceContext(body.traceContext);
+    const dispatchBody = { ...body, ...process, operationId, ...(traceContext ? { traceContext } : {}) };
+    try { return { ok: true, operationId, dispatch: await service.dispatchProcessExec(params.gatewayId, dispatchBody) }; }
     catch (error) { throw serviceError(error); }
   });
   api.post('/gateways/:gatewayId/operations/:operationId/cancel', async ({ params }) => {

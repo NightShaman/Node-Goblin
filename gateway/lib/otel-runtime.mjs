@@ -1,18 +1,15 @@
 import crypto from 'node:crypto';
+import { parseTraceContext, safeTelemetryOperationId, safeTelemetryTargetId, safeTelemetryTool } from './protocol.mjs';
 
-const TRACEPARENT = /^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/;
 const DEFAULT_QUEUE_SIZE = 512;
-
-function parseParent(value) {
-  const traceparent = String(value?.traceparent || '').trim().toLowerCase();
-  if (!TRACEPARENT.test(traceparent)) return null;
-  const [, traceId, spanId, flags] = traceparent.split('-');
-  if (traceId === '0'.repeat(32) || spanId === '0'.repeat(16)) return null;
-  return { traceId, spanId, flags };
-}
+const DEFAULT_TIMEOUT_MS = 3_000;
 
 function hex(bytes) { return crypto.randomBytes(bytes).toString('hex'); }
 function nanos() { return String(BigInt(Date.now()) * 1_000_000n); }
+function positiveInteger(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : fallback;
+}
 function endpoint(env) {
   const exact = String(env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT || '').trim();
   if (exact) return exact;
@@ -27,18 +24,35 @@ function headers(env) {
 function attributes(values = {}) {
   return Object.entries(values).filter(([, value]) => value != null && value !== '').map(([key, value]) => ({ key, value: { stringValue: String(value).slice(0, 256) } }));
 }
+function processSucceeded(result = {}) {
+  return result?.exitCode === 0 && result?.timedOut !== true && result?.cancelled !== true && result?.signal == null;
+}
+function outcomeStatus(kind, result) {
+  const succeeded = kind === 'process' ? processSucceeded(result) : result?.ok !== false;
+  return succeeded ? { code: 1 } : { code: 2, message: kind === 'process' ? 'remote_process_failed' : 'remote_filesystem_failed' };
+}
+function boundedWait(promise, timeoutMs) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((resolve) => { timer = setTimeout(resolve, timeoutMs); timer.unref?.(); }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 export function createGatewayTelemetry({ env = process.env, version = null, fetchImpl = globalThis.fetch, randomTraceId = () => hex(16), randomSpanId = () => hex(8) } = {}) {
   const url = endpoint(env);
-  const queueLimit = Math.max(1, Number(env.OTEL_BSP_MAX_QUEUE_SIZE || DEFAULT_QUEUE_SIZE));
-  const timeoutMs = Math.max(1, Number(env.OTEL_EXPORTER_OTLP_TRACES_TIMEOUT || env.OTEL_EXPORTER_OTLP_TIMEOUT || 3_000));
+  const queueLimit = positiveInteger(env.OTEL_BSP_MAX_QUEUE_SIZE, DEFAULT_QUEUE_SIZE);
+  const timeoutMs = positiveInteger(env.OTEL_EXPORTER_OTLP_TRACES_TIMEOUT || env.OTEL_EXPORTER_OTLP_TIMEOUT || env.OTEL_BSP_EXPORT_TIMEOUT, DEFAULT_TIMEOUT_MS);
+  const scheduleDelayMs = positiveInteger(env.OTEL_BSP_SCHEDULE_DELAY, 1_000);
+  const shutdownTimeoutMs = positiveInteger(env.OTEL_BSP_SHUTDOWN_TIMEOUT || env.OTEL_EXPORTER_OTLP_TRACES_TIMEOUT || env.OTEL_EXPORTER_OTLP_TIMEOUT, timeoutMs);
   const queue = [];
-  const failures = { export: 0, dropped: 0 };
+  const failures = { export: 0, dropped: 0, shutdown: 0 };
   let flushing = null;
   let timer = null;
+  let closed = false;
 
   async function flush() {
-    if (!url || flushing || !queue.length) return flushing;
+    if (!url || flushing || !queue.length || closed) return flushing;
     const batch = queue.splice(0, Math.min(queue.length, 64));
     flushing = (async () => {
       try {
@@ -49,41 +63,57 @@ export function createGatewayTelemetry({ env = process.env, version = null, fetc
         });
         if (!response.ok) throw new Error('otlp_export_failed');
       } catch { failures.export += 1; failures.dropped += batch.length; }
-      finally { flushing = null; if (queue.length) void flush(); }
+      finally { flushing = null; if (queue.length && !closed) void flush(); }
     })();
     return flushing;
   }
 
   function enqueue(span) {
-    if (!url) return;
+    if (!url || closed) return;
     if (queue.length >= queueLimit) { queue.shift(); failures.dropped += 1; }
     queue.push(span);
-    if (!timer) timer = setTimeout(() => { timer = null; void flush(); }, Math.max(1, Number(env.OTEL_BSP_SCHEDULE_DELAY || 1_000))).unref();
+    if (!timer) timer = setTimeout(() => { timer = null; void flush(); }, scheduleDelayMs).unref();
   }
 
   async function execute({ kind, tool = null, targetId = null, operationId = null, traceContext = null, operation }) {
     if (!url) return operation();
-    const parent = parseParent(traceContext);
+    const parent = parseTraceContext(traceContext);
+    if (parent && !parent.sampled) return operation();
     const traceId = parent?.traceId || randomTraceId();
     const spanId = randomSpanId();
     const startTimeUnixNano = nanos();
-    let status = { code: 1 };
+    let status = { code: 0 };
     try {
       const result = await operation();
-      status = { code: result?.ok === false ? 2 : 1 };
+      status = outcomeStatus(kind, result);
       return result;
     } catch (error) {
-      status = { code: 2, message: String(error?.code || error?.message || 'gateway_operation_failed').slice(0, 160) };
+      status = { code: 2, message: kind === 'process' ? 'remote_process_failed' : 'remote_filesystem_failed' };
       throw error;
     } finally {
-      enqueue({ traceId, spanId, ...(parent ? { parentSpanId: parent.spanId } : {}), flags: 1, name: `node-goblin.${kind}`, kind: 2, startTimeUnixNano, endTimeUnixNano: nanos(), attributes: attributes({ 'node_goblin.operation.kind': kind, 'node_goblin.tool.name': tool, 'node_goblin.target.id': targetId, 'burrow.operation.id': operationId }), status });
+      enqueue({
+        traceId, spanId, ...(parent ? { parentSpanId: parent.spanId } : {}),
+        ...(parent?.tracestate ? { traceState: parent.tracestate } : {}),
+        flags: parent ? parent.traceFlags : 1,
+        name: `node-goblin.${kind}`, kind: 2, startTimeUnixNano, endTimeUnixNano: nanos(),
+        attributes: attributes({
+          'node_goblin.operation.kind': kind,
+          'node_goblin.tool.name': safeTelemetryTool(tool),
+          'node_goblin.target.id': safeTelemetryTargetId(targetId),
+          'burrow.operation.id': safeTelemetryOperationId(operationId),
+        }),
+        status,
+      });
     }
   }
 
-  async function shutdown() {
+  async function shutdown({ timeout = shutdownTimeoutMs } = {}) {
+    if (closed) return;
     if (timer) { clearTimeout(timer); timer = null; }
-    await flush();
-    if (flushing) await flushing;
+    const pending = flush();
+    await boundedWait(Promise.resolve(pending).then(() => flushing), positiveInteger(timeout, shutdownTimeoutMs));
+    if (flushing || queue.length) { failures.shutdown += 1; failures.dropped += queue.length; queue.length = 0; }
+    closed = true;
   }
 
   return Object.freeze({ execute, flush, shutdown, status: () => ({ configured: Boolean(url), queued: queue.length, failures: { ...failures } }) });

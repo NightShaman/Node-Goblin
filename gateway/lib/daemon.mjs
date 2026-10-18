@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 const RELEASE_VERSION = readFileSync(new URL('../VERSION', import.meta.url), 'utf8').trim();
 import process from 'node:process';
 import { OperationJournal } from './journal.mjs';
-import { PROTOCOL_VERSION, operationIdFromRequest, requestDigestFromParams } from './protocol.mjs';
+import { PROTOCOL_VERSION, normalizeTraceContext, operationIdFromRequest, requestDigestFromParams } from './protocol.mjs';
 import { runProcess } from './process-runner.mjs';
 import { runFilesystem } from './filesystem-runner.mjs';
 import { createGatewayTelemetry } from './otel-runtime.mjs';
@@ -89,6 +89,8 @@ export class GatewayDaemon {
     const safeParams = { ...params };
     delete safeParams.protectedValues;
     delete safeParams.protectedDelivery;
+    const traceContext = normalizeTraceContext(safeParams.traceContext);
+    delete safeParams.traceContext;
     const operationRequest = { method, params: safeParams };
     const requestDigest = requestDigestFromParams(safeParams, method);
     const operationId = String(safeParams.operationId || operationIdFromRequest(operationRequest));
@@ -125,8 +127,9 @@ export class GatewayDaemon {
       const rawOutcome = await this.telemetry.execute({
         kind: method === 'process.exec' ? 'process' : 'filesystem',
         tool: method === 'filesystem.execute' ? safeParams.tool : 'shell_exec',
+        targetId: this.secureTransportContext?.gatewayId || null,
         operationId,
-        traceContext: safeParams.traceContext || null,
+        traceContext,
         operation: () => method === 'process.exec'
           ? runProcess(safeParams, { protectedEnv: protectedValues, signal: controller.signal, now: this.now, emitEvent: (event) => {
             if (event.type === 'process.terminal') terminalEvent = event;
@@ -169,9 +172,9 @@ export class GatewayDaemon {
     return this;
   }
 
-  stop() {
+  async stop() {
     if (this.rl) this.rl.close();
     if (this.output !== process.stdout && typeof this.output.end === 'function') this.output.end();
-    void this.telemetry.shutdown();
+    await this.telemetry.shutdown();
   }
 }

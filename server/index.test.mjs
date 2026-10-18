@@ -48,8 +48,10 @@ test('exposes live inventory and preserves gateway operation correlation for dis
   assert.deepEqual(await value.routes.get('GET /controller')({}), { ok: true, controller: service.state() });
   assert.deepEqual(await value.routes.get('GET /gateways')({}), { ok: true, gateways: service.listGateways() });
   assert.deepEqual(await value.routes.get('GET /operations')({ query: { limit: '999' } }), { ok: true, operations: service.listOperationActivity({ gatewayId: null, limit: 256 }), limit: 256 });
-  const dispatched = await value.routes.get('POST /gateways/:gatewayId/processes')({ params: { gatewayId: 'host-1' }, body: { operationId: 'op-1', executable: '/bin/echo', args: ['hi'] } });
-  assert.equal(dispatched.operationId, 'op-1'); assert.deepEqual(calls[0], ['exec', 'host-1', { operationId: 'op-1', executable: '/bin/echo', args: ['hi'] }]);
+  const traceContext = { traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-03' };
+  const dispatched = await value.routes.get('POST /gateways/:gatewayId/processes')({ params: { gatewayId: 'host-1' }, body: { operationId: 'op-1', executable: '/bin/echo', args: ['hi'], traceContext } });
+  assert.equal(dispatched.operationId, 'op-1'); assert.deepEqual(calls[0], ['exec', 'host-1', { operationId: 'op-1', executable: '/bin/echo', args: ['hi'], traceContext }]);
+  await assert.rejects(value.routes.get('POST /gateways/:gatewayId/processes')({ params: { gatewayId: 'host-1' }, body: { operationId: 'bad-trace', executable: '/bin/echo', traceContext: { traceparent: 'invalid' } } }), /trace_context_invalid/);
   await assert.rejects(value.routes.get('POST /gateways/:gatewayId/processes')({ params: { gatewayId: 'host-1' }, body: { operationId: 'both', command: 'echo hi', executable: '/bin/echo' } }), /command_and_executable_mutually_exclusive/);
   await assert.rejects(value.routes.get('POST /gateways/:gatewayId/processes')({ params: { gatewayId: 'host-1' }, body: { operationId: 'bad-args', executable: '/bin/echo', args: ['hi', 1] } }), /args_invalid/);
   await value.routes.get('POST /gateways/:gatewayId/operations/:operationId/cancel')({ params: { gatewayId: 'host-1', operationId: 'op-1' } });
@@ -188,6 +190,10 @@ test('operation correlation survives controller recreation and permits identical
   const recovered = createOperationCorrelationStore(settings);
   assert.equal((await recovered.get('op-durable')).state, 'dispatching');
   assert.equal((await recovered.begin(request, 'process', params)).requestDigest, (await recovered.get('op-durable')).requestDigest);
+  const traceA = { traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01' };
+  const traceB = { traceparent: '00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01' };
+  await recovered.begin(request, 'process', { ...params, traceContext: traceA });
+  await recovered.begin(request, 'process', { ...params, traceContext: traceB });
   await assert.rejects(recovered.begin(request, 'process', { ...params, command: 'echo different' }), /operation_correlation_conflict/);
   await recovered.terminal('op-durable', { response: { result: { operationId: 'op-durable', replay: true, outcome: { exitCode: 0 } } } });
   assert.deepEqual((await recovered.get('op-durable')).terminalReference.replay, true);

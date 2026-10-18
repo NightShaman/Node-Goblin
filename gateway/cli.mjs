@@ -50,12 +50,15 @@ if (process.env.BURROW_GATEWAY_CONTROLLER_URL) {
   service.start();
 }
 
-const shutdown = () => {
+let shuttingDown = false;
+const shutdown = async () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   clearInterval(confirmationTimer);
   service.stopping = true;
   const daemon = service.daemon || service;
   for (const entry of daemon.controllers.values()) entry.controller.abort();
-  service.stop();
+  await service.stop();
 };
 
 process.on('SIGINT', shutdown);

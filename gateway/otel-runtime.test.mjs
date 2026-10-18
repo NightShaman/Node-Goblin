@@ -2,25 +2,54 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createGatewayTelemetry } from './lib/otel-runtime.mjs';
 
-test('gateway remote span joins the Core trace and exports no command or filesystem arguments', async () => {
+const spanFrom = (request) => request.body.resourceSpans[0].scopeSpans[0].spans[0];
+
+test('gateway remote span joins the Core trace, preserves state and exports no content fields', async () => {
   const requests = [];
   const fetchImpl = async (url, options) => { requests.push({ url, options, body: JSON.parse(options.body) }); return { ok: true }; };
   const telemetry = createGatewayTelemetry({
     env: { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector:4318', OTEL_BSP_SCHEDULE_DELAY: '1' }, fetchImpl, version: 'test',
     randomTraceId: () => 'a'.repeat(32), randomSpanId: () => 'b'.repeat(16),
   });
-  const parent = { traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01' };
-  const result = await telemetry.execute({ kind: 'process', tool: 'shell_exec', targetId: 'host-a', operationId: 'shell-1', traceContext: parent, operation: async () => ({ ok: true, command: 'secret command' }) });
-  assert.equal(result.ok, true);
+  const parent = { traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-03', tracestate: 'vendor=value' };
+  const result = await telemetry.execute({ kind: 'process', tool: 'shell_exec', targetId: 'host-a', operationId: 'shell-1', traceContext: parent, operation: async () => ({ type: 'process.result', exitCode: 0, command: 'secret command', stdout: 'secret output' }) });
+  assert.equal(result.exitCode, 0);
   await telemetry.shutdown();
   assert.equal(requests.length, 1);
   assert.equal(requests[0].url, 'http://collector:4318/v1/traces');
-  const span = requests[0].body.resourceSpans[0].scopeSpans[0].spans[0];
+  const span = spanFrom(requests[0]);
   assert.equal(span.traceId, '0123456789abcdef0123456789abcdef');
   assert.equal(span.parentSpanId, '0123456789abcdef');
+  assert.equal(span.flags, 3);
+  assert.equal(span.traceState, 'vendor=value');
+  assert.equal(span.status.code, 1);
   const serialized = JSON.stringify(requests[0].body);
-  assert.equal(serialized.includes('secret command'), false);
+  for (const forbidden of ['secret command', 'secret output']) assert.equal(serialized.includes(forbidden), false);
   assert.match(serialized, /node-goblin\.process/);
+});
+
+test('unsampled remote parent executes without exporting a span', async () => {
+  let exports = 0;
+  const telemetry = createGatewayTelemetry({ env: { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector:4318' }, fetchImpl: async () => { exports++; return { ok: true }; } });
+  const result = await telemetry.execute({ kind: 'process', traceContext: { traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-00' }, operation: async () => ({ exitCode: 0 }) });
+  await telemetry.shutdown();
+  assert.equal(result.exitCode, 0);
+  assert.equal(exports, 0);
+});
+
+test('gateway telemetry reports process and filesystem failures with fixed safe status', async () => {
+  const requests = [];
+  const telemetry = createGatewayTelemetry({ env: { OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'http://collector/v1/traces' }, fetchImpl: async (_url, options) => { requests.push(JSON.parse(options.body)); return { ok: true }; } });
+  await telemetry.execute({ kind: 'process', operation: async () => ({ type: 'process.result', exitCode: 7, stderr: 'private failure' }) });
+  await telemetry.execute({ kind: 'filesystem', tool: 'files_read', operation: async () => ({ ok: false, error: 'private path failure' }) });
+  await telemetry.shutdown();
+  const spans = requests.flatMap((body) => body.resourceSpans[0].scopeSpans[0].spans);
+  assert.deepEqual(spans.map((span) => span.status), [
+    { code: 2, message: 'remote_process_failed' },
+    { code: 2, message: 'remote_filesystem_failed' },
+  ]);
+  const serialized = JSON.stringify(spans);
+  for (const forbidden of ['private failure', 'private path failure']) assert.equal(serialized.includes(forbidden), false);
 });
 
 test('gateway telemetry is a no-op when no OTLP endpoint is configured', async () => {
@@ -30,10 +59,11 @@ test('gateway telemetry is a no-op when no OTLP endpoint is configured', async (
   await telemetry.shutdown();
 });
 
-test('collector failure is bounded and recorded without failing remote work', async () => {
-  const telemetry = createGatewayTelemetry({ env: { OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'http://collector/v1/traces', OTEL_BSP_MAX_QUEUE_SIZE: '1' }, fetchImpl: async () => { throw new Error('down'); } });
-  assert.deepEqual(await telemetry.execute({ kind: 'process', operation: async () => ({ ok: true }) }), { ok: true });
-  await telemetry.shutdown();
-  assert.equal(telemetry.status().failures.export, 1);
-  assert.equal(telemetry.status().failures.dropped, 1);
+test('collector failure and hung shutdown are bounded without failing remote work', async () => {
+  const telemetry = createGatewayTelemetry({ env: { OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'http://collector/v1/traces', OTEL_BSP_MAX_QUEUE_SIZE: 'not-a-number', OTEL_EXPORTER_OTLP_TRACES_TIMEOUT: '20' }, fetchImpl: async () => new Promise(() => {}) });
+  assert.deepEqual(await telemetry.execute({ kind: 'process', operation: async () => ({ exitCode: 0 }) }), { exitCode: 0 });
+  const started = Date.now();
+  await telemetry.shutdown({ timeout: 25 });
+  assert.ok(Date.now() - started < 250);
+  assert.equal(telemetry.status().failures.shutdown, 1);
 });
