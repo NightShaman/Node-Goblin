@@ -9,7 +9,7 @@ const script = path.resolve('..', 'install.sh');
 
 test('Mini Node Goblin bootstrap uses this repository release authority', () => {
   const text = fs.readFileSync(script, 'utf8');
-  assert.match(text, /REPOSITORY=.*GoblinKing-Burrow\/Node-Goblin/);
+  assert.match(text, /REPOSITORY=.*NightShaman\/Node-Goblin/);
   assert.match(text, /releases\/download\/v\$VERSION/);
   assert.match(text, /sha256sum -c/);
   assert.match(text, /releases\/latest/);
@@ -43,8 +43,8 @@ test('selected revisioned release is verified and passed to its package installe
 set -eu
 printf '%s\\n' "$*" >> "$URL_LOG"
 case "$2" in
- https://github.com/GoblinKing-Burrow/Node-Goblin/releases/download/v2026.10.18.2/${name}.tar.gz) cp "$FIXTURE" "$4" ;;
- https://github.com/GoblinKing-Burrow/Node-Goblin/releases/download/v2026.10.18.2/${name}.tar.gz.sha256) cp "$FIXTURE.sha256" "$4" ;;
+ https://github.com/NightShaman/Node-Goblin/releases/download/v2026.10.18.2/${name}.tar.gz) cp "$FIXTURE" "$4" ;;
+ https://github.com/NightShaman/Node-Goblin/releases/download/v2026.10.18.2/${name}.tar.gz.sha256) cp "$FIXTURE.sha256" "$4" ;;
  *) echo 'unexpected release authority' >&2; exit 42 ;;
 esac
 `, { mode: 0o755 });

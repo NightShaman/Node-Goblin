@@ -2,7 +2,7 @@
 # Bootstrap the calendar-versioned Mini Node Goblin release owned by this repository.
 set -eu
 
-REPOSITORY=${NODE_GOBLIN_REPOSITORY:-GoblinKing-Burrow/Node-Goblin}
+REPOSITORY=${NODE_GOBLIN_REPOSITORY:-NightShaman/Node-Goblin}
 VERSION=${NODE_GOBLIN_VERSION:-latest}
 CONTROLLER=
 NODE_ID=
