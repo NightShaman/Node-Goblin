@@ -20,6 +20,9 @@ export function canonicalProcessRequest(params = {}, method = 'process.exec') {
     // in the digest so reference/name conflicts are still detected.
     protectedValues: undefined,
     protectedDelivery: undefined,
+    // Trace propagation is transport context, not operation semantics. A retry
+    // with the same operationId may arrive under a replacement parent span.
+    traceContext: undefined,
   };
   return { method, params: normalized };
 }

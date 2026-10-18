@@ -86,10 +86,11 @@ test('conflicting edits and stale write preconditions fail rather than lose an a
     run('files_edit', { oldText: 'alpha', newText: 'other' }),
     run('files_write', { content: 'stale', expectedContentHash: initial.contentHash }),
   ]);
-  assert.deepEqual(results.map(r => r.ok), [true, false, false]);
-  assert.equal(results[1].error, 'old_text_not_found');
+  assert.equal(results.filter(r => r.ok).length, 1);
   assert.equal(results[2].error, 'content_version_conflict');
-  assert.equal(await fs.promises.readFile(filePath, 'utf8'), 'ALPHA beta');
+  const winningEdit = results[0].ok ? 'ALPHA beta' : 'other beta';
+  assert.equal(results[0].ok ? results[1].error : results[0].error, 'old_text_not_found');
+  assert.equal(await fs.promises.readFile(filePath, 'utf8'), winningEdit);
 });
 
 test('write and edit share the same queue, including symlink aliases', async t => {

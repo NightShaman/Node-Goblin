@@ -14,6 +14,17 @@ const PENDING_PAIRINGS_NAME = 'pendingNodeGoblinPairings';
 const TLS_METADATA_NAME = 'controllerTlsMetadata';
 const TARGET_ID = /^[a-z0-9][a-z0-9._-]*$/i;
 const OPERATION_ID = /^[a-z0-9][a-z0-9._:-]{0,255}$/i;
+const TRACEPARENT = /^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/;
+
+function cleanTraceContext(value) {
+  if (value == null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw problem('trace_context_invalid');
+  const traceparent = String(value.traceparent || '').trim().toLowerCase();
+  if (!TRACEPARENT.test(traceparent) || traceparent.slice(3, 35) === '0'.repeat(32) || traceparent.slice(36, 52) === '0'.repeat(16)) throw problem('trace_context_invalid');
+  const tracestate = value.tracestate == null ? null : String(value.tracestate).trim();
+  if (tracestate && (tracestate.length > 512 || /[\r\n]/.test(tracestate))) throw problem('trace_context_invalid');
+  return { traceparent, ...(tracestate ? { tracestate } : {}) };
+}
 
 function problem(message, statusCode = 400) {
   const error = new Error(message);
@@ -290,7 +301,7 @@ export function createProcessController(service, { logger = console, operationSt
       let process;
       try { process = cleanProcessRequest(request.process); }
       catch (error) { throw new Error(error.message); }
-      const params = { operationId, ...process };
+      const params = { operationId, ...process, ...(request.traceContext ? { traceContext: cleanTraceContext(request.traceContext) } : {}) };
       if (request.process.cwd) params.cwd = String(request.process.cwd);
       if (request.process.env) params.env = { ...request.process.env };
       if (request.process.timeoutMs != null) params.timeoutMs = Number(request.process.timeoutMs);
@@ -329,7 +340,7 @@ export function createProcessController(service, { logger = console, operationSt
       const gatewayId = targetId;
       if (!OPERATION_ID.test(operationId)) throw new Error('operation_id_invalid');
       if (!targetId) throw new Error('target_id_required');
-      const params = { operationId, parentRunId: request.parentRunId, toolCallId: request.toolCallId, tool: request.operation?.tool, arguments: { ...(request.operation?.arguments || {}) } };
+      const params = { operationId, parentRunId: request.parentRunId, toolCallId: request.toolCallId, tool: request.operation?.tool, arguments: { ...(request.operation?.arguments || {}) }, ...(request.traceContext ? { traceContext: cleanTraceContext(request.traceContext) } : {}) };
       let cancelPromise = null;
       const cancel = () => { if (!cancelPromise) cancelPromise = Promise.resolve(service.dispatchCancel(gatewayId, operationId)).catch((error) => logger.warn?.('Node Goblin cancellation dispatch failed: cancellation_dispatch_failed')); };
       abortSignal?.throwIfAborted();

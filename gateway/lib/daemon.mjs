@@ -8,9 +8,10 @@ import { OperationJournal } from './journal.mjs';
 import { PROTOCOL_VERSION, operationIdFromRequest, requestDigestFromParams } from './protocol.mjs';
 import { runProcess } from './process-runner.mjs';
 import { runFilesystem } from './filesystem-runner.mjs';
+import { createGatewayTelemetry } from './otel-runtime.mjs';
 
 export class GatewayDaemon {
-  constructor({ input = process.stdin, output = process.stdout, error = process.stderr, now = () => Date.now(), journal = new OperationJournal(), identity = {} } = {}) {
+  constructor({ input = process.stdin, output = process.stdout, error = process.stderr, now = () => Date.now(), journal = new OperationJournal(), identity = {}, telemetry = null } = {}) {
     this.input = input;
     this.output = output;
     this.error = error;
@@ -23,6 +24,7 @@ export class GatewayDaemon {
       transport: 'stdio-jsonl',
       ...identity,
     };
+    this.telemetry = telemetry || createGatewayTelemetry({ version: RELEASE_VERSION });
     this.controllers = new Map();
     this.rl = null;
     this.stopping = false;
@@ -120,12 +122,18 @@ export class GatewayDaemon {
 
     try {
       let terminalEvent;
-      const rawOutcome = method === 'process.exec'
-        ? await runProcess(safeParams, { protectedEnv: protectedValues, signal: controller.signal, now: this.now, emitEvent: (event) => {
-          if (event.type === 'process.terminal') terminalEvent = event;
-          else send({ ...event, operationId });
-        } })
-        : await runFilesystem(safeParams, { signal: controller.signal, now: this.now });
+      const rawOutcome = await this.telemetry.execute({
+        kind: method === 'process.exec' ? 'process' : 'filesystem',
+        tool: method === 'filesystem.execute' ? safeParams.tool : 'shell_exec',
+        operationId,
+        traceContext: safeParams.traceContext || null,
+        operation: () => method === 'process.exec'
+          ? runProcess(safeParams, { protectedEnv: protectedValues, signal: controller.signal, now: this.now, emitEvent: (event) => {
+            if (event.type === 'process.terminal') terminalEvent = event;
+            else send({ ...event, operationId });
+          } })
+          : runFilesystem(safeParams, { signal: controller.signal, now: this.now }),
+      });
       const outcome = boundCompletedOutcome(rawOutcome, { operationId, requestId: message.id ?? null });
       this.journal.put(operationId, requestDigest, outcome, this.now());
       if (terminalEvent) send({ ...terminalEvent, evidence: outcome, operationId });
@@ -164,5 +172,6 @@ export class GatewayDaemon {
   stop() {
     if (this.rl) this.rl.close();
     if (this.output !== process.stdout && typeof this.output.end === 'function') this.output.end();
+    void this.telemetry.shutdown();
   }
 }

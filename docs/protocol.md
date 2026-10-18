@@ -27,6 +27,8 @@ The daemon accepts one JSON request per line and emits JSON lines. Protocol vers
 
 Malformed JSON produces an `invalid_json` protocol error. Unsupported methods produce `unknown_method`. Network authentication messages are handled by the transport before daemon dispatch.
 
+Core may include a validated `traceContext` object containing W3C `traceparent` and optional `tracestate` on `process.exec` and `filesystem.execute`. The controller validates and forwards it as transport context. It is excluded from operation replay/idempotency digests and never injected into child process environments or filesystem arguments. When `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is configured on the gateway host, Node Goblin emits one bounded remote server span joined to Core's tool span. Collector failure never changes operation outcome.
+
 Use `shutdown` only after active operations have completed. For packaged deployments, use the systemd service lifecycle to stop the daemon; do not rely on this protocol method to drain or cancel active work.
 
 ## Process options

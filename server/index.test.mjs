@@ -90,6 +90,22 @@ test('registers a process controller without changing legacy routes and unregist
   assert.equal(service.closed, true);
 });
 
+test('process controller validates and forwards W3C trace context outside process data', async () => {
+  let received;
+  const service = {
+    async dispatchProcessExec(_gatewayId, params) {
+      received = params;
+      return { accepted: { operationId: params.operationId }, events: [{ type: 'process.terminal', operationId: params.operationId, evidence: { type: 'process.result', exitCode: 0, stdout: '', stderr: '' } }], response: { ok: true, result: { operationId: params.operationId, outcome: { type: 'process.result', exitCode: 0, stdout: '', stderr: '' } } } };
+    },
+    async dispatchCancel() {},
+  };
+  const traceContext = { traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01', tracestate: 'vendor=value' };
+  await createProcessController(service).executeProcess({ operationId: 'shell-trace', targetId: 'host-1', parentRunId: 'run', toolCallId: 'call', traceContext, process: { command: 'printf ok' } });
+  assert.deepEqual(received.traceContext, traceContext);
+  assert.equal(received.command, 'printf ok');
+  await assert.rejects(createProcessController(service).executeProcess({ operationId: 'shell-bad-trace', targetId: 'host-1', traceContext: { traceparent: 'invalid' }, process: { command: 'printf ok' } }), /trace_context_invalid/);
+});
+
 test('process controller dispatches correlated shell command and maps terminal evidence', async () => {
   const calls = [];
   const evidence = { type: 'process.result', cwd: '/repo', exitCode: 0, signal: null, timedOut: false, cancelled: false, truncated: false, durationMs: 12, stdout: 'ok\n', stderr: '' };
