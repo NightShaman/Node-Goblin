@@ -24,7 +24,7 @@ class Page(HTMLParser):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('site', nargs='?', default='site')
-    parser.add_argument('--base-path', default='/Node-Goblin/')
+    parser.add_argument('--base-path', default='/')
     args = parser.parse_args()
     root = Path(args.site).resolve()
     pages = {}
