@@ -50,6 +50,11 @@ export class GatewayDaemon {
       send({ type: 'response', requestId: message.id ?? null, ok: true, result: { status: this.stopping ? 'stopping' : 'ok', activeOperations: [...this.controllers.keys()] } });
       return;
     }
+    if (method === 'telemetry.configure') {
+      const result = await this.telemetry.configure(params);
+      send({ type: 'response', requestId: message.id ?? null, ok: true, result });
+      return;
+    }
     if (method === 'cancel') {
       const operationId = String(params.operationId ?? '');
       const active = this.controllers.get(operationId);

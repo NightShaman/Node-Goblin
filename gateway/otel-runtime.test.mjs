@@ -59,6 +59,48 @@ test('gateway telemetry is a no-op when no OTLP endpoint is configured', async (
   await telemetry.shutdown();
 });
 
+test('controller configuration enables and disables telemetry live while host environment remains authoritative', async () => {
+  const requests = [];
+  const telemetry = createGatewayTelemetry({ env: {}, fetchImpl: async (url, options) => { requests.push({ url, headers: options.headers }); return { ok: true }; } });
+  assert.equal(telemetry.status().configured, false);
+  await telemetry.configure({ enabled: true, endpoint: 'https://collector.example/base', headers: 'authorization=Bearer%20private' });
+  assert.equal(telemetry.status().source, 'controller');
+  await telemetry.execute({ kind: 'process', operation: async () => ({ exitCode: 0 }) });
+  await telemetry.flush();
+  assert.equal(requests[0].url, 'https://collector.example/base/v1/traces');
+  assert.equal(requests[0].headers.authorization, 'Bearer private');
+  assert.equal(JSON.stringify(telemetry.status()).includes('private'), false);
+  await telemetry.configure({ enabled: false, endpoint: '', headers: '' });
+  assert.equal(telemetry.status().configured, false);
+
+  const overridden = createGatewayTelemetry({ env: { OTEL_EXPORTER_OTLP_ENDPOINT: 'https://host.example' }, fetchImpl: async () => ({ ok: true }) });
+  await overridden.configure({ enabled: true, endpoint: 'https://controller.example', headers: 'authorization=Bearer%20central' });
+  assert.equal(overridden.status().configured, true);
+  assert.equal(overridden.status().headersConfigured, true);
+  await overridden.configure({ enabled: false, endpoint: '', headers: '' });
+  assert.equal(overridden.status().configured, true);
+  assert.equal(overridden.status().source, 'environment');
+  await overridden.shutdown();
+  await telemetry.shutdown();
+});
+
+test('reconfiguration never exports spans queued under an old collector to the new destination', async () => {
+  const requests = [];
+  const telemetry = createGatewayTelemetry({ env: {}, fetchImpl: async (url, options) => { requests.push({ url, body: options.body }); return { ok: true }; } });
+  await telemetry.configure({ enabled: true, endpoint: 'https://old.example', headers: '' });
+  for (let i = 0; i < 130; i += 1) await telemetry.execute({ kind: 'process', operationId: `op-${i}`, operation: async () => ({ exitCode: 0 }) });
+  await telemetry.configure({ enabled: true, endpoint: 'https://new.example', headers: '' });
+  assert.equal(requests.every((request) => request.url === 'https://old.example/v1/traces'), true);
+  assert.equal(telemetry.status().failures.dropped, 130);
+  await telemetry.shutdown();
+});
+
+test('malformed unused host headers do not prevent gateway telemetry construction', async () => {
+  const telemetry = createGatewayTelemetry({ env: { OTEL_EXPORTER_OTLP_HEADERS: 'bad%ZZ' }, fetchImpl: async () => ({ ok: true }) });
+  assert.equal(telemetry.status().configured, false);
+  await telemetry.shutdown();
+});
+
 test('collector failure and hung shutdown are bounded without failing remote work', async () => {
   const telemetry = createGatewayTelemetry({ env: { OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'http://collector/v1/traces', OTEL_BSP_MAX_QUEUE_SIZE: 'not-a-number', OTEL_EXPORTER_OTLP_TRACES_TIMEOUT: '20' }, fetchImpl: async () => new Promise(() => {}) });
   assert.deepEqual(await telemetry.execute({ kind: 'process', operation: async () => ({ exitCode: 0 }) }), { exitCode: 0 });

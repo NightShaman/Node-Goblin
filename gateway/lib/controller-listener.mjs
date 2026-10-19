@@ -6,6 +6,7 @@ import { controllerIdentity, pairingCode, verifyPairing } from './pairing.mjs';
 const AUTH_CONTEXT = 'burrow-host-gateway-auth-v1';
 import { MAX_FRAME_BYTES } from './output-frame.mjs';
 const DEFAULT_ACTIVITY_LIMIT = 256;
+const DEFAULT_CONFIGURATION_TIMEOUT_MS = 5_000;
 
 function optionalText(value, max = 255) {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null;
@@ -319,6 +320,7 @@ export class GatewayControllerListener extends EventEmitter {
     connection.send({ type: 'auth.ok', connectionId: connection.connectionId });
     const approved = { ...entry, status: 'approved' };
     this.emit('gatewayPairingApproved', approved);
+    this.emit('gatewayAuthenticated', { gatewayId, connection });
     return approved;
   }
   rejectPending(gatewayId) { const entry = this.pending.get(gatewayId); if (!entry) return null; this.pending.delete(gatewayId); const rejected = { ...entry, status: 'rejected' }; for (const connection of this.connections.values()) if (connection.gatewayId === gatewayId && connection.state === 'pending') connection.fail('pairing_rejected'); this.emit('gatewayPairingRejected', rejected); return rejected; }
@@ -454,5 +456,35 @@ export class GatewayControllerListener extends EventEmitter {
     const connection = this.liveGateway(gatewayId);
     if (!connection) return Promise.reject(Object.assign(new Error('gateway_not_connected'), { code: 'gateway_not_connected' }));
     return connection.dispatch('cancel', { operationId });
+  }
+
+  async dispatchTelemetryConfiguration(gatewayId, configuration, timeoutMs = DEFAULT_CONFIGURATION_TIMEOUT_MS) {
+    const connection = this.liveGateway(gatewayId);
+    if (!connection) throw Object.assign(new Error('gateway_not_connected'), { code: 'gateway_not_connected' });
+    let timer;
+    try {
+      const dispatched = connection.dispatch('telemetry.configure', configuration);
+      const requestId = [...connection.pendingRequests.keys()].at(-1);
+      const result = await Promise.race([
+        dispatched,
+        new Promise((_, reject) => { timer = setTimeout(() => {
+          const pending = connection.pendingRequests.get(requestId);
+          if (pending) { connection.pendingRequests.delete(requestId); pending.reject(Object.assign(new Error('gateway_configuration_timeout'), { code: 'gateway_configuration_timeout' })); }
+          reject(Object.assign(new Error('gateway_configuration_timeout'), { code: 'gateway_configuration_timeout' }));
+        }, timeoutMs); timer.unref?.(); }),
+      ]);
+      if (result?.response?.ok !== true) throw Object.assign(new Error(result?.response?.error?.code || 'gateway_configuration_failed'), { code: result?.response?.error?.code || 'gateway_configuration_failed' });
+      return result;
+    } finally { clearTimeout(timer); }
+  }
+
+  async configureTelemetry(configuration) {
+    const connected = [...this.connections.entries()].filter(([, connection]) => connection.state === 'ready');
+    const results = await Promise.allSettled(connected.map(([gatewayId]) => this.dispatchTelemetryConfiguration(gatewayId, configuration).then((result) => ({ gatewayId, result }))));
+    return {
+      configured: connected.length,
+      succeeded: results.filter((entry) => entry.status === 'fulfilled').length,
+      failed: results.filter((entry) => entry.status === 'rejected').length,
+    };
   }
 }

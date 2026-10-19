@@ -31,6 +31,16 @@ async function collect(run, options = {}) {
   return text.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
 }
 
+test('controller can configure telemetry through the authenticated daemon protocol', async () => {
+  let configured;
+  const telemetry = { async configure(value) { configured = value; return { configured: true, source: 'controller' }; }, async execute({ operation }) { return operation(); }, async shutdown() {} };
+  const messages = await collect(async ({ input }) => {
+    input.write(JSON.stringify({ id: 'telemetry', method: 'telemetry.configure', params: { enabled: true, endpoint: 'https://collector.example', headers: 'x-token=private' } }) + '\n');
+  }, { telemetry, waitMs: 50 });
+  assert.deepEqual(configured, { enabled: true, endpoint: 'https://collector.example', headers: 'x-token=private' });
+  assert.deepEqual(messages[0].result, { configured: true, source: 'controller' });
+});
+
 test('hello and health respond with identity and status', async () => {
   const messages = await collect(async ({ input }) => {
     input.write(JSON.stringify({ id: '1', method: 'hello' }) + '\n');

@@ -166,6 +166,19 @@ test('revoking a gateway removes its live connection and inventory immediately',
   } finally { listener.close(); }
 });
 
+test('fans telemetry configuration to authenticated gateways', async () => {
+  const { listener, server } = listenerFixture();
+  const socket = server.connect();
+  try {
+    authenticate(socket);
+    const pending = listener.configureTelemetry({ enabled: true, endpoint: 'https://collector.example', headers: 'x-token=private' });
+    const outbound = socket.messages().find((message) => message.method === 'telemetry.configure');
+    assert.equal(outbound.params.headers, 'x-token=private');
+    socket.feed({ type: 'response', requestId: outbound.id, ok: true, result: { configured: true, source: 'controller' } });
+    assert.deepEqual(await pending, { configured: 1, succeeded: 1, failed: 0 });
+  } finally { listener.close(); }
+});
+
 test('dispatches cancellation and reports malformed frames without corrupting live tracking', async () => {
   const { listener, server } = listenerFixture();
   const socket = server.connect();

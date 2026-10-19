@@ -16,10 +16,28 @@ function endpoint(env) {
   const base = String(env.OTEL_EXPORTER_OTLP_ENDPOINT || '').trim().replace(/\/$/, '');
   return base ? `${base}/v1/traces` : null;
 }
-function headers(env) {
-  const source = env.OTEL_EXPORTER_OTLP_TRACES_HEADERS || env.OTEL_EXPORTER_OTLP_HEADERS;
+function parseHeaders(source) {
   if (!source) return {};
-  return Object.fromEntries(String(source).split(',').map((entry) => entry.split('=', 2).map((item) => decodeURIComponent(item.trim()))).filter(([key, value]) => key && value));
+  try { return Object.fromEntries(String(source).split(',').map((entry) => entry.split('=', 2).map((item) => decodeURIComponent(item.trim()))).filter(([key, value]) => key && value)); }
+  catch { throw new Error('telemetry_headers_invalid'); }
+}
+function headers(env) { return parseHeaders(env.OTEL_EXPORTER_OTLP_TRACES_HEADERS || env.OTEL_EXPORTER_OTLP_HEADERS); }
+function controlledEndpoint(value) {
+  const source = String(value || '').trim();
+  if (!source) return null;
+  let url;
+  try { url = new URL(source); } catch { throw new Error('telemetry_endpoint_invalid'); }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('telemetry_endpoint_invalid');
+  const normalized = url.toString().replace(/\/$/, '');
+  return normalized.endsWith('/v1/traces') ? normalized : `${normalized}/v1/traces`;
+}
+function controlledHeaders(value) {
+  const source = String(value || '').trim();
+  if (!source) return {};
+  if (source.length > 8_192 || /[\r\n]/.test(source)) throw new Error('telemetry_headers_invalid');
+  const parsed = parseHeaders(source);
+  if (!Object.keys(parsed).length) throw new Error('telemetry_headers_invalid');
+  return parsed;
 }
 function attributes(values = {}) {
   return Object.entries(values).filter(([, value]) => value != null && value !== '').map(([key, value]) => ({ key, value: { stringValue: String(value).slice(0, 256) } }));
@@ -40,7 +58,14 @@ function boundedWait(promise, timeoutMs) {
 }
 
 export function createGatewayTelemetry({ env = process.env, version = null, fetchImpl = globalThis.fetch, randomTraceId = () => hex(16), randomSpanId = () => hex(8) } = {}) {
-  const url = endpoint(env);
+  const environmentUrl = endpoint(env);
+  let environmentHeaders = {};
+  if (environmentUrl) {
+    try { environmentHeaders = headers(env); } catch { environmentHeaders = {}; }
+  }
+  let url = environmentUrl;
+  let requestHeaders = environmentHeaders;
+  let source = environmentUrl ? 'environment' : 'default';
   const queueLimit = positiveInteger(env.OTEL_BSP_MAX_QUEUE_SIZE, DEFAULT_QUEUE_SIZE);
   const timeoutMs = positiveInteger(env.OTEL_EXPORTER_OTLP_TRACES_TIMEOUT || env.OTEL_EXPORTER_OTLP_TIMEOUT || env.OTEL_BSP_EXPORT_TIMEOUT, DEFAULT_TIMEOUT_MS);
   const scheduleDelayMs = positiveInteger(env.OTEL_BSP_SCHEDULE_DELAY, 1_000);
@@ -52,18 +77,21 @@ export function createGatewayTelemetry({ env = process.env, version = null, fetc
   let closed = false;
 
   async function flush() {
-    if (!url || flushing || !queue.length || closed) return flushing;
+    if (!url || !queue.length || closed) return flushing;
+    if (flushing) { await flushing; return flush(); }
     const batch = queue.splice(0, Math.min(queue.length, 64));
+    const targetUrl = url;
+    const targetHeaders = { ...requestHeaders };
     flushing = (async () => {
       try {
-        const response = await fetchImpl(url, {
+        const response = await fetchImpl(targetUrl, {
           method: 'POST', signal: AbortSignal.timeout(timeoutMs),
-          headers: { 'content-type': 'application/json', ...headers(env) },
+          headers: { 'content-type': 'application/json', ...targetHeaders },
           body: JSON.stringify({ resourceSpans: [{ resource: { attributes: attributes({ 'service.name': 'node-goblin', ...(version ? { 'service.version': version } : {}) }) }, scopeSpans: [{ scope: { name: 'node-goblin.gateway', ...(version ? { version } : {}) }, spans: batch }] }] }),
         });
         if (!response.ok) throw new Error('otlp_export_failed');
       } catch { failures.export += 1; failures.dropped += batch.length; }
-      finally { flushing = null; if (queue.length && !closed) void flush(); }
+      finally { flushing = null; }
     })();
     return flushing;
   }
@@ -75,6 +103,22 @@ export function createGatewayTelemetry({ env = process.env, version = null, fetc
     if (!timer) timer = setTimeout(() => { timer = null; void flush(); }, scheduleDelayMs).unref();
   }
 
+  async function configure(configuration = {}) {
+    if (!configuration || typeof configuration !== 'object' || Array.isArray(configuration)
+      || typeof configuration.enabled !== 'boolean' || typeof configuration.endpoint !== 'string'
+      || (configuration.headers !== undefined && typeof configuration.headers !== 'string')) throw new Error('telemetry_configuration_invalid');
+    const controlledUrl = configuration.enabled ? controlledEndpoint(configuration.endpoint) : null;
+    const nextUrl = environmentUrl || controlledUrl;
+    const nextHeaders = Object.keys(environmentHeaders).length ? environmentHeaders : controlledHeaders(configuration.headers);
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (flushing) await flushing;
+    if (queue.length) { failures.dropped += queue.length; queue.length = 0; }
+    url = nextUrl;
+    requestHeaders = nextHeaders;
+    source = environmentUrl ? 'environment' : nextUrl ? 'controller' : 'default';
+    return status();
+  }
+
   async function execute({ kind, tool = null, targetId = null, operationId = null, traceContext = null, operation }) {
     if (!url) return operation();
     const parent = parseTraceContext(traceContext);
@@ -82,13 +126,13 @@ export function createGatewayTelemetry({ env = process.env, version = null, fetc
     const traceId = parent?.traceId || randomTraceId();
     const spanId = randomSpanId();
     const startTimeUnixNano = nanos();
-    let status = { code: 0 };
+    let statusValue = { code: 0 };
     try {
       const result = await operation();
-      status = outcomeStatus(kind, result);
+      statusValue = outcomeStatus(kind, result);
       return result;
     } catch (error) {
-      status = { code: 2, message: kind === 'process' ? 'remote_process_failed' : 'remote_filesystem_failed' };
+      statusValue = { code: 2, message: kind === 'process' ? 'remote_process_failed' : 'remote_filesystem_failed' };
       throw error;
     } finally {
       enqueue({
@@ -102,10 +146,12 @@ export function createGatewayTelemetry({ env = process.env, version = null, fetc
           'node_goblin.target.id': safeTelemetryTargetId(targetId),
           'burrow.operation.id': safeTelemetryOperationId(operationId),
         }),
-        status,
+        status: statusValue,
       });
     }
   }
+
+  function status() { return { configured: Boolean(url), source, headersConfigured: Object.keys(requestHeaders).length > 0, queued: queue.length, failures: { ...failures } }; }
 
   async function shutdown({ timeout = shutdownTimeoutMs } = {}) {
     if (closed) return;
@@ -116,5 +162,5 @@ export function createGatewayTelemetry({ env = process.env, version = null, fetc
     closed = true;
   }
 
-  return Object.freeze({ execute, flush, shutdown, status: () => ({ configured: Boolean(url), queued: queue.length, failures: { ...failures } }) });
+  return Object.freeze({ configure, execute, flush, shutdown, status });
 }

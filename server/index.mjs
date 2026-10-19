@@ -382,6 +382,7 @@ export async function createControllerService({ settings, secrets, listenerFacto
   const tlsConfigured = { key: Boolean(key), cert: Boolean(cert), ca: Boolean(ca) };
   let listener = null;
   let listening = false;
+  let telemetryConfiguration = { enabled: false, endpoint: '' };
   if (config.enabled && !startError) {
     if (!key || !cert) startError = 'controller_tls_credentials_missing';
     else {
@@ -421,6 +422,11 @@ export async function createControllerService({ settings, secrets, listenerFacto
     await settings.set('controllerTrustMutations', [...ids]);
   };
 
+  if (listener?.on) listener.on('gatewayAuthenticated', ({ gatewayId, connection }) => {
+    if (!connection || connection.state !== 'ready') return;
+    void listener.dispatchTelemetryConfiguration(gatewayId, telemetryConfiguration)
+      .catch(() => logger.warn?.('Node Goblin telemetry configuration failed: telemetry_configuration_failed'));
+  });
   if (listener?.on) listener.on('gatewayPairingPending', (pairing) => {
     const token = generation(pairing.gatewayId);
     void transact(async () => {
@@ -515,6 +521,11 @@ export async function createControllerService({ settings, secrets, listenerFacto
       if (!listening) throw Object.assign(new Error(startError || 'controller_not_running'), { code: startError || 'controller_not_running' });
       return redact(await listener.dispatchCancel(gatewayId, operationId), secretValues);
     },
+    async configureTelemetry(configuration) {
+      telemetryConfiguration = { ...configuration };
+      if (!listening) return { configured: 0, succeeded: 0, failed: 0, controllerRunning: false };
+      return listener.configureTelemetry(telemetryConfiguration);
+    },
     revokeGateway(gatewayId) {
       invalidate(gatewayId);
       return transact(async () => {
@@ -535,7 +546,10 @@ export async function createControllerService({ settings, secrets, listenerFacto
 export async function activate({ api, settings, secrets, logger, processExecution, controllerService, listenerFactory } = {}) {
   const service = controllerService ?? await createControllerService({ settings, secrets, listenerFactory, logger });
   const operationStore = createOperationCorrelationStore(settings);
-  const unregisterController = processExecution?.registerController?.(createProcessController(service, { logger, operationStore }));
+  const unregisterController = processExecution?.registerController ? processExecution.registerController(Object.freeze({
+    ...createProcessController(service, { logger, operationStore }),
+    configureTelemetry: configuration => service.configureTelemetry(configuration),
+  })) : null;
   api.get('/targets', async () => ({ ok: true, targets: await storedTargets(settings) }));
   api.post('/targets', async ({ body = {} }) => {
     const targets = await storedTargets(settings); const target = cleanTarget(body);
