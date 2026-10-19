@@ -1,6 +1,6 @@
 <div class="burrow-hero" markdown>
 
-![Node Goblin](assets/node-goblin-logo.png){ .burrow-hero-logo }
+![Node Goblin](assets/hero.png){ .node-goblin-hero-art }
 
 # Put your agents to work on your machines.
 
@@ -10,8 +10,6 @@ Node Goblin connects Burrow to remote execution hosts. Pair a host, choose an ag
 [Pair your first host](pairing.md){ .md-button }
 
 Public-release guide · **2026.10.19**
-
-![Node Goblin remote execution](assets/hero.png){ .node-goblin-hero-art }
 
 </div>
 

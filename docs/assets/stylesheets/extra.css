@@ -19,7 +19,7 @@
 .md-typeset h2 { font-weight: 650; }
 .burrow-hero { text-align: center; padding: 1rem 0 1.5rem; }
 .md-typeset .burrow-hero-logo { display: block; width: min(20rem, 85%); max-height: 15rem; object-fit: contain; margin: 0 auto 1rem; }
-.md-typeset .node-goblin-hero-art { display: block; width: 100%; max-height: 34rem; object-fit: contain; margin: 1.5rem auto 0; border-radius: .6rem; }
+.md-typeset .node-goblin-hero-art { display: block; width: 100%; max-height: 34rem; object-fit: contain; margin: 0 auto 1.5rem; border-radius: .6rem; }
 .md-typeset .burrow-hero h1 { margin: .5rem 0 1rem; }
 .md-typeset .burrow-hero .md-button { margin: .3rem; border-radius: .45rem; }
 .md-typeset .grid.cards > ul > li { padding: 1.1rem; border-radius: .4rem; }
