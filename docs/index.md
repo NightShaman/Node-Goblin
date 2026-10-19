@@ -1,60 +1,69 @@
-# Node Goblin
+<div class="burrow-hero" markdown>
 
-*On narrow screens, swipe tables horizontally to see every column.*
+![Node Goblin](assets/node-goblin-logo.png){ .burrow-hero-logo }
 
-Node Goblin connects a BURROW controller to additional execution hosts. Install the **Node Goblin mod** in BURROW and **Mini Node Goblin** on each host that will execute work. Mini is the host-side part of the same implementation and protocol.
+# Put your agents to work on your machines.
 
-These pages cover the operator workflow, the developer contracts, and the behavior present in source release **2026.09.27**. They describe the repository, not the state of a deployed host. The [source map](source-map.md) identifies the exact baseline and ownership boundaries.
+Node Goblin connects Burrow to remote execution hosts. Pair a host, choose an agent, and let it run commands and work with files there.
 
-## Start here
+[Install Node Goblin](installation.md){ .md-button .md-button--primary }
+[Pair your first host](pairing.md){ .md-button }
 
-| Goal | Read |
-| --- | --- |
-| Add a remote Linux host | [Install](installation.md), then [pair and assign](pairing.md) |
-| Understand the settings screen | [Settings guide](settings.md) |
-| Diagnose a disconnected gateway | [Operations and recovery](operations.md) |
-| Configure ports, files, limits, and trust | [Configuration](configuration.md) and [security](security.md) |
-| Integrate or extend the mod | [Architecture](architecture.md), [HTTP API](api.md), and [wire protocol](protocol.md) |
-| Contribute safely | [Development](development.md) |
+Public-release guide · **2026.10.19**
 
-## What runs where
-
-<div class="diagram-scroll" role="region" tabindex="0" aria-label="Scrollable architecture diagram" markdown="1">
-
-```mermaid
-flowchart TB
-  O[Operator] --> U[BURROW settings UI]
-  U --> M[Node Goblin mod]
-  C[BURROW Core execution provider] --> M
-  M --> L[TLS controller listener]
-  G[Mini Node Goblin] -->|Outbound TLS connection| L
-  G --> P[Host processes]
-  G --> F[Host filesystem]
-```
+![Node Goblin remote execution](assets/hero.png){ .node-goblin-hero-art }
 
 </div>
 
-*On narrow screens, scroll the diagram horizontally to read all labels.*
+!!! danger "Node Goblin gives agents real access to your host."
+    **This is not a safe sandbox.** Agents can execute commands and read, change, or delete files with the permissions of the host service account. Commands can reach other systems and services accessible to that account. A workspace path does not contain that access. Use a disposable or deliberately restricted host, protect credentials, and pair only controllers you trust. Do not rely on an extra approval prompt to prevent damage.
 
-The gateway opens the outbound connection. The controller sends operations over that established connection. It does not need to SSH into the host. Core owns agent assignments and permission decisions; Node Goblin supplies the execution transport and host implementation.
+## Two pieces. One connection.
 
-!!! warning "Host access is real access"
-    Operations run with the operating-system permissions of the gateway service account. Pair only hosts and controllers you trust, limit network exposure, and choose a least-privileged account and workspace. A workspace path is not an operating-system sandbox.
+- **Node Goblin** is the mod on your Burrow controller. It manages the listener, host pairing, and agent assignments.
+- **Mini Node Goblin** is the runtime on each execution host. It connects outbound to the controller over TLS. You do not need a full Burrow installation on that host.
 
-## Two kinds of targets
+The packaged host installer supports **Linux with systemd**, **Node.js 24.x**, and **Python 3** for confirming a pairing. Start with a host you can safely experiment on.
 
-The `/targets` collection stores named HTTP(S) API targets. A paired gateway identity is a separate object used by remote process and filesystem execution. Adding an API target does not install, pair, or authorize a gateway. For agent assignments, use an approved gateway ID and `providerId: node-goblin`.
+<div class="grid cards" markdown>
 
-## Project links
+- **Connect your first host**
 
-- [Repository](https://github.com/GoblinKing-Burrow/Node-Goblin)
-- [Release assets](https://github.com/GoblinKing-Burrow/Node-Goblin/releases)
-- [Issue tracker](https://github.com/GoblinKing-Burrow/Node-Goblin/issues)
-- [BURROW](https://github.com/GoblinKing-Burrow/Burrow)
+    Install the controller mod and host service, then compare and confirm the pairing code on both sides.
 
-This documentation is source documentation. A proposed Pages workflow is included, but a successful local build or pull request does not mean a public Pages deployment exists.
+    [Installation →](installation.md)
 
-## Source references
+- **Choose where an agent works**
 
-- [`README.md`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/README.md)
-- [`burrow.mod.json`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/burrow.mod.json)
+    Assign an approved host and an absolute workspace path. Verify a harmless operation in a new turn.
+
+    [Pairing and assignments →](pairing.md)
+
+- **Keep the connection healthy**
+
+    Check service and host status, apply saved configuration, update deliberately, and recover from interrupted work.
+
+    [Operations and troubleshooting →](operations.md)
+
+- **Understand the access you grant**
+
+    Learn what pairing protects, what the service account can do, and why disconnecting is not proof that work stopped.
+
+    [Security and trust →](security.md)
+
+</div>
+
+## Before you start
+
+You need a working [Burrow installation](https://burrow-docs.blissful-psychosis.com/), permission to install a host service, and a controller address reachable from that host. The listener starts **disabled** and defaults to **127.0.0.1:7443**. Remote hosts need a reachable interface and an appropriately restricted firewall rule.
+
+Installing an API target is separate from pairing an execution host. For agent execution, use an approved gateway in **Agent assignments**. The [settings guide](settings.md) explains each section.
+
+## Reference and help
+
+- [Configuration](configuration.md) and [operator commands](cli.md)
+- [Architecture](architecture.md), [filesystem behavior](filesystem.md), [HTTP API](api.md), and [wire protocol](protocol.md)
+- [Source and verification scope](source-map.md)
+- [Public repository](https://github.com/GoblinKing-Burrow/Node-Goblin), [releases](https://github.com/GoblinKing-Burrow/Node-Goblin/releases), and [issues](https://github.com/GoblinKing-Burrow/Node-Goblin/issues)
+
+Node Goblin is distributed under its [Sustainable Use License](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/LICENSE).

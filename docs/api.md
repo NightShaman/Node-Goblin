@@ -2,7 +2,7 @@
 
 *On narrow screens, swipe tables horizontally to see every column.*
 
-The server module registers relative routes with BURROW's mod API. Their public prefix is **`/api/mods/node-goblin`**. Authentication, session handling, request admission, and route hosting belong to BURROW Core; this repository does not implement a standalone HTTP authentication layer. Do not expose these administrative routes independently.
+The server module registers relative routes with Burrow's mod API. Their public prefix is **`/api/mods/node-goblin`**. Authentication, session handling, request admission, and route hosting belong to Burrow Core; this repository does not implement a standalone HTTP authentication layer. Do not expose these administrative routes independently.
 
 A route success usually contains `ok: true`. Validation throws an error carrying an HTTP status, normally 400. The host determines final HTTP serialization. A dispatch response can contain an unsuccessful nested process/filesystem outcome even when the route request was accepted.
 
@@ -43,9 +43,9 @@ The GET route returns configured/ready flags, never secret key/certificate value
 | `PUT /gateway-trust/:gatewayId` | `{controllerId?, secret}` | Approved HMAC metadata; restart required |
 | `DELETE /gateway-trust/:gatewayId` | Path ID | Revoked metadata; restart required |
 
-Controller ID defaults `controller` and is nonempty, at most 255 characters. HMAC secret input must be nonempty. The trust-list route checks whether secret material exists and reports metadata, not its value.
+Controller ID defaults `controller` and is nonempty, at most 255 characters. HMAC secret input must be nonempty. Updating HMAC trust for an Ed25519-paired gateway returns 409 `gateway_credential_method_ed25519`; this route does not convert its credential method. The trust-list route checks whether secret material exists and reports metadata, not its value.
 
-Pairing approval requires the current live pending transcript. Controller-side trust deletion also removes pending records, clears both credential names, and invokes listener revocation. Treat these operations as administrative host-access changes.
+Pairing approval requires the current live pending transcript. Pending records are not automatically expired by age and can remain listed after disconnect or restart; the 60-second default authentication timeout applies to the live connection, not to record retention. Reconnect before approval if the challenge is no longer live. Controller-side trust deletion also removes pending records, clears both credential names, and invokes listener revocation. Treat these operations as administrative host-access changes.
 
 ## Gateways and operation activity
 
@@ -60,20 +60,26 @@ Operation IDs match `[a-z0-9][a-z0-9._:-]{0,255}` case-insensitively. `limit` de
 
 The process route requires either a nonempty `command` or a nonempty `executable`, never both; `args` is an array of strings and cannot be nonempty with `command`. Remaining body fields are forwarded to the dispatch service. Only supply reviewed options documented in the [protocol](protocol.md).
 
-`dispatch` contains accepted information, final response, and collected events. Inspect nested success and process evidence. Disconnected/not-ready gateway dispatch errors map to HTTP 503; other dispatch exceptions map to 400 with a code such as `gateway_dispatch_failed`.
+`dispatch` contains `accepted`, `response`, and `events`. A completed replay can have no new accepted envelope or stream events. Inspect nested success and process evidence. Disconnected/not-ready gateway dispatch errors map to HTTP 503; other dispatch exceptions map to 400 with a code such as `gateway_dispatch_failed`.
 
 There is no direct filesystem HTTP route in this module. Core calls `executeNativeFilesystem` through the registered execution provider.
 
 ## Core-owned assignment route
 
-The UI also calls `PATCH /api/agents/:agentId` with an `executionEnvironment` object. That route is not implemented by Node Goblin; consult BURROW's API contract for admission and persistence. Remote assignments use kind `remote`, provider `node-goblin`, target gateway ID, and an absolute workspace root.
+The UI also calls `PATCH /api/agents/:agentId` with an `executionEnvironment` object. That route is not implemented by Node Goblin; consult Burrow's API contract for admission and persistence. The exact remote assignment payload is:
+
+```json
+{"executionEnvironment":{"kind":"remote","providerId":"node-goblin","targetId":"my-gateway","workspaceRoot":"/srv/burrow/workspaces/example"}}
+```
+
+The UI requires an absolute workspace root and a gateway for remote assignments. Core owns validation and permission enforcement; this setting is not a host-side filesystem sandbox.
 
 ## Safe client behavior
 
-Use a current authenticated BURROW session and the normal administrative UI for credential changes. Never put TLS keys, HMAC secrets, protected values, or process output into logs or URLs. Do not automatically retry a mutating process with a new ID after a timeout. [Replay and recovery](protocol.md#replay-guarantees-and-limits) explains the evidence required.
+Use a current authenticated Burrow session and the normal administrative UI for credential changes. Never put TLS keys, HMAC secrets, protected values, or process output into logs or URLs. Do not automatically retry a mutating process with a new ID after a timeout. [Replay and recovery](protocol.md#replay-guarantees-and-limits) explains the evidence required.
 
 ## Source references
 
-- [`server/index.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/server/index.mjs)
-- [`ui/settings.js`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/ui/settings.js)
-- [`burrow.mod.json`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/burrow.mod.json)
+- [`server/index.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/server/index.mjs)
+- [`ui/settings.js`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/ui/settings.js)
+- [`burrow.mod.json`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/burrow.mod.json)

@@ -19,11 +19,27 @@ Configuration lives on both controller and gateway. Changing one side does not a
 
 The packaged environment file is `/etc/burrow-host-gateway/gateway.env`, root-owned and intended to be `root:burrow` mode `0640`. systemd reads it as an environment file, not a shell script. Do not use shell substitution or put reusable secrets into command-line arguments.
 
-Keep the packaged service's state directory at `/var/lib/burrow-host-gateway` when using the operator wrapper. Although the daemon accepts a different `BURROW_GATEWAY_STATE_DIR`, the wrapper's `connect`, `status`, `pairing-code`, and `unpair` commands use the fixed packaged state path and do not read that override. A custom daemon state directory needs separately coordinated operational tooling.
+Keep the packaged service's state directory at `/var/lib/burrow-host-gateway` when using the operator wrapper. Although the daemon accepts a different `BURROW_GATEWAY_STATE_DIR`, the wrapper's `connect`, `apply`, `status`, `pairing-code`, `confirm-pairing`, and `unpair` commands use the fixed packaged state path and do not read that override. A custom daemon state directory needs separately coordinated operational tooling.
 
 Library constructors additionally support programmatic options such as reconnect intervals, journal TTL/limit, injected clocks, and test TLS implementations. Those options do not imply matching environment variables. `HOSTNAME` is a library fallback gateway ID, but the network CLI explicitly requires `BURROW_GATEWAY_ID`.
 
 Installer/operator controls are separate: `BURROW_GATEWAY_ROOT` selects a staging root, `SYSTEMCTL` selects the operator command's systemctl executable, and `SOURCE_DATE_EPOCH` controls deterministic archive timestamps. They are not gateway protocol settings.
+
+## Telemetry overrides
+
+Core Settings normally delivers telemetry configuration through the provider. The host also supports these environment overrides:
+
+| Variable | Default / precedence |
+| --- | --- |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Exact trace URL; takes precedence over the base endpoint and Core Settings |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Base URL; runtime appends `/v1/traces`; takes precedence over Core Settings |
+| `OTEL_EXPORTER_OTLP_TRACES_HEADERS` / `OTEL_EXPORTER_OTLP_HEADERS` | Trace-specific header string takes precedence; comma-separated, percent-decoded `key=value` pairs |
+| `OTEL_BSP_MAX_QUEUE_SIZE` | 512 spans |
+| `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` / `OTEL_EXPORTER_OTLP_TIMEOUT` / `OTEL_BSP_EXPORT_TIMEOUT` | First nonempty setting in the listed order; invalid/nonpositive values fall back to 3,000 ms |
+| `OTEL_BSP_SCHEDULE_DELAY` | 1,000 ms |
+| `OTEL_BSP_SHUTDOWN_TIMEOUT` | Shutdown override; otherwise trace/general timeout, then effective export timeout |
+
+A configured environment endpoint remains active even if Core disables telemetry. Nonempty parsed environment headers also override controller headers. Keep collector credentials in protected configuration, never in endpoint URLs or command arguments. Core-delivered endpoints accept HTTP(S) without credentials, query, or fragment. Exports use OTLP/HTTP JSON and are best-effort with bounded queues; failed batches can be dropped.
 
 ## Controller settings names
 
@@ -33,6 +49,7 @@ Installer/operator controls are separate: `BURROW_GATEWAY_ROOT` selects a stagin
 | `controller` | `{enabled, host, port}`; defaults false, `127.0.0.1`, 7443 |
 | `controllerGateways` | Trusted gateway/controller identity metadata |
 | `pendingNodeGoblinPairings` | Pending public identity and transcript records |
+| `controllerTrustMutations` | Durable IDs blocked during interrupted trust mutations; do not manually clear to admit uncertain trust |
 | `controllerTlsMetadata` | Configured/generated source plus generated certificate dates/host metadata |
 | `controllerOperations` | Durable controller correlation: operation, parent run/tool call, target/kind, request digest, state, terminal reference |
 
@@ -64,6 +81,7 @@ These are logical names in BURROW's mod secret interface. This repository does n
 | State directory `/controller-trust.json` | HMAC controller trust and reusable shared secret |
 | State directory `/controller-enrollment-consumed` | Prevents automatic re-enrollment after consumption/unpair |
 | State directory `/pairing-code.json` | Current gateway ID/code and timestamp |
+| State directory `/pairing-confirmation.json` | Short-lived local confirmation written by the operator command and consumed by the daemon |
 | State directory `/operations.json` | Completed-operation journal with results/digests/expiry |
 
 “State directory /…” means a child of the configured state directory, not a filesystem-root path. Protect backups as credentials and potentially sensitive command/file output. The packaged unit uses `UMask=0077`; constructor use outside it inherits the caller's filesystem policy.
@@ -74,8 +92,9 @@ The checked-in unit runs as `burrow:burrow`, working directory `/opt/burrow-host
 
 ## Source references
 
-- [`gateway/cli.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/cli.mjs)
-- [`gateway/deploy/gateway.env.example`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/deploy/gateway.env.example)
-- [`gateway/deploy/burrow-host-gateway.service`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/deploy/burrow-host-gateway.service)
-- [`server/index.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/server/index.mjs)
-- [`gateway/lib/journal.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/lib/journal.mjs)
+- [`gateway/lib/otel-runtime.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/otel-runtime.mjs)
+- [`gateway/cli.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/cli.mjs)
+- [`gateway/deploy/gateway.env.example`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/deploy/gateway.env.example)
+- [`gateway/deploy/burrow-host-gateway.service`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/deploy/burrow-host-gateway.service)
+- [`server/index.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/server/index.mjs)
+- [`gateway/lib/journal.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/journal.mjs)

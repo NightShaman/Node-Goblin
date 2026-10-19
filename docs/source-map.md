@@ -1,44 +1,28 @@
-# Source map and coverage
+# Source and coverage
 
-*On narrow screens, swipe tables horizontally to see every column.*
+This guide covers the public **2026.10.19** release of [GoblinKing-Burrow/Node-Goblin](https://github.com/GoblinKing-Burrow/Node-Goblin/tree/0ff5f7ee03624aa8a2e7d19a492fdb871f4e698d), reviewed on 19 October 2026. Documentation-only updates do not change that runtime baseline.
 
-These docs were prepared against **NightShaman/Node-Goblin** main commit **`12d0f1daf74516e1f0120c80ad4716bd09e1dead`**, verified 2026-10-03 UTC, release metadata **2026.09.27**. Documentation-only changes do not change that runtime baseline.
+## What was checked
 
-The repository has 41 tracked baseline files, including one image asset, tests, release automation, and metadata. The runtime implementation is small enough to map directly. No `AGENTS.md` or repository `.agents/skills` files were present in this snapshot.
+The installation, pairing, settings, configuration, command, and recovery instructions were checked against the published installer, service unit, host wrapper, gateway runtime, controller server, and settings contribution. Source links in individual reference pages point to the public repository's current files; use the [reviewed release snapshot](https://github.com/GoblinKing-Burrow/Node-Goblin/tree/0ff5f7ee03624aa8a2e7d19a492fdb871f4e698d) when comparing exact behavior.
 
-## Implementation coverage
-
-| Source | Documentation |
+| Source | Guide |
 | --- | --- |
-| `burrow.mod.json`, `README.md` | [Overview](index.md), [installation](installation.md), [architecture](architecture.md) |
-| `server/index.mjs` | [HTTP API](api.md), [settings](settings.md), [configuration](configuration.md), [architecture](architecture.md) |
-| `ui/settings.js`, `ui/package.json` | [Settings](settings.md), [pairing and assignment](pairing.md), [API](api.md) |
-| `gateway/cli.mjs`, `node-goblin.mjs`, `index.mjs`, `package.json` | [CLI](cli.md), [configuration](configuration.md), [development](development.md) |
-| `gateway/lib/controller-listener.mjs` | [Architecture](architecture.md), [protocol](protocol.md), [pairing](pairing.md), [operations](operations.md) |
-| `gateway/lib/network-transport.mjs`, `pairing.mjs` | [Pairing](pairing.md), [security](security.md), [configuration](configuration.md) |
-| `gateway/lib/daemon.mjs`, `client.mjs`, `protocol.mjs` | [Wire protocol](protocol.md), [CLI](cli.md) |
-| `gateway/lib/process-runner.mjs` | [Process execution](protocol.md), [security](security.md) |
-| `gateway/lib/filesystem-runner.mjs` | [Native filesystem operations](filesystem.md) |
-| `gateway/lib/journal.mjs` | [Replay](protocol.md#replay-guarantees-and-limits), [operations](operations.md), [configuration](configuration.md) |
-| `gateway/deploy/*`, `gateway/VERSION` | [Installation](installation.md), [CLI](cli.md), [configuration](configuration.md), [development](development.md) |
-| `.github/workflows/release-node-goblin.yml` | [Releases](development.md#release-behavior) |
-| Tests under `gateway`, `server`, `ui` | [Development and test matrix](development.md) |
-| `NG-Logo.png`, `.gitignore` | Project asset and repository housekeeping |
+| `install.sh`, `gateway/deploy/` | [Installation](installation.md), [commands](cli.md), [operations](operations.md) |
+| `burrow.mod.json`, `ui/settings.js` | [Settings](settings.md), [pairing and assignments](pairing.md) |
+| `server/index.mjs` | [HTTP API](api.md), [configuration](configuration.md), [architecture](architecture.md) |
+| `gateway/cli.mjs` and `gateway/lib/network-transport.mjs` | [Configuration](configuration.md), [pairing](pairing.md), [security](security.md) |
+| `gateway/lib/controller-listener.mjs` and `pairing.mjs` | [Pairing](pairing.md), [architecture](architecture.md), [operations](operations.md) |
+| `gateway/lib/daemon.mjs`, `protocol.mjs`, `client.mjs`, `journal.mjs` | [Wire protocol](protocol.md), [recovery](operations.md) |
+| `gateway/lib/process-runner.mjs` and `filesystem-runner.mjs` | [Security](security.md), [filesystem](filesystem.md), [protocol](protocol.md) |
+| Gateway, server, UI, and deployment tests | [Development](development.md) |
 
-## Scope and limits
+## What this does not prove
 
-The BURROW Core implementation, its authentication/secret storage, and the wrapper installer hosted in BURROW are separate source boundaries. This guide explains the interfaces used here without claiming an audit of a deployed BURROW installation or a remote host.
+A source review and documentation build do not establish that your network, certificates, service account, or Burrow installation are configured correctly. Verify a new host with a harmless operation in a disposable workspace.
 
-Known semantics important to integrations include bounded completed replay, an independent HTTP target collection, future-turn Core assignments, account-level host access, and separate transport/tool success. The guide intentionally does not promise exactly-once execution, a workspace sandbox, automated TLS rotation, pairing expiry, or a supported Node minimum absent a repository declaration.
+Burrow owns the mod lifecycle, authenticated API hosting, agent assignments, and tool routing. This repository supplies the execution provider and host transport. It does not provide an operating-system sandbox or a blanket safety guarantee around agent actions.
 
-Release metadata and protocol-reported implementation version are separate code paths in this baseline. Inspect the selected source files rather than treating one display field as proof of installed provenance.
+Operations may continue after a transport failure. Replay and retention are bounded, and a new operation ID can repeat a side effect. Follow the recovery instructions before retrying uncertain work.
 
-## Maintaining the source links
-
-Each page links to its principal sources at the pinned baseline. Update links and behavior together when reviewing a new runtime revision. Public documentation should retain source-grounded operational guidance; detailed security investigation artifacts should follow the project's disclosure process.
-
-## Source references
-
-- [`burrow.mod.json`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/burrow.mod.json)
-- [`gateway/VERSION`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/VERSION)
-- [`gateway/package.json`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/package.json)
+Public release versions use `YYYY.MM.DD`. The wire protocol version is a separate compatibility identifier. Check the installed package and host status rather than treating a docs date as proof of what a machine is running.

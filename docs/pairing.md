@@ -16,6 +16,7 @@ sequenceDiagram
   H->>C: Gateway ID, public key, signed transcript
   C->>H: Pending pairing code
   O->>O: Compare code on host and controller
+  O->>H: Confirm exact current code locally
   O->>C: Approve exact pending gateway
   C->>C: Persist trusted public key
   C->>H: Authentication accepted and connection ID
@@ -45,7 +46,7 @@ After initial key pairing, the node persists the controller public key and certi
 
 Controller trust mutations have one serialized owner. Durable mutation intents block uncertain identities on restart after interrupted writes, including rollback failure. Revoke and re-pair an uncertain identity instead of manually clearing its intent.
 
-Pending request records can survive a controller restart for visibility, but approval requires the matching live connection and nonce. Wait for the node to reconnect and verify its current code. This release does not assign a pairing-expiry timestamp; the UI may show a dash for expiry. Do not interpret that display as an expiry guarantee.
+Pending request records can survive a controller restart for visibility, but approval requires the matching live connection and nonce. Wait for the node to reconnect and verify its current code. Pending records do not carry a pairing-expiry timestamp; the UI may show a dash. The transport has a 60-second default authentication timeout, so a reconnect can replace the live nonce and code. Read and compare the current code again if confirmation or approval becomes stale.
 
 ## Legacy shared-secret enrollment
 
@@ -81,6 +82,8 @@ The UI sends a Core-owned agent update shaped as:
 }
 ```
 
+No extra per-agent Node Goblin capability approval is required after the installed provider is admitted and the host is paired. Assignment selects where future turns execute; Core retains its normal execution policy.
+
 Assignments apply to future turns. Core owns when and how an assignment is admitted; the model does not select a different host mid-turn through this UI. An absolute workspace is a location, not confinement of process or filesystem access.
 
 To return an agent to the controller, choose **Local controller** and an absolute local workspace, then save. The local assignment omits provider and target IDs.
@@ -89,15 +92,26 @@ To return an agent to the controller, choose **Local controller** and an absolut
 
 Controller-side **Revoke** removes the persisted gateway record and secrets and asks the listener to remove/disconnect that identity. Follow the returned restart guidance. A socket disconnect is not evidence that already-started host processes have stopped; inspect and stop them separately when required.
 
-Host-side `sudo node-goblin unpair` stops the service, removes controller trust and pairing-code state, removes controller pins from the preserved node identity, and records enrollment consumption. It preserves the node's keypair and operation journal. Configure the intended controller, reconnect, and compare a new code.
+Host-side `sudo node-goblin unpair` stops the service and verifies it is inactive before changing trust. If stopping fails or the service remains active, it refuses the trust removal. On success it removes controller trust, pairing-code, and local confirmation state, removes controller pins from the preserved node identity, and records enrollment consumption. It preserves the node's keypair and operation journal. Configure the intended controller, reconnect, and compare a new code.
+
+### Recover from a changed controller or stuck pairing
+
+1. Investigate an unexpected key/certificate change before accepting it. Confirm the intended controller address and identity with its operator.
+2. Drain work and inspect any uncertain host operations before stopping or restarting services.
+3. Revoke the gateway in BURROW when old authorization should be removed; follow any returned restart guidance.
+4. Run `sudo node-goblin unpair` on the host and require it to succeed. Do not delete trust files manually to bypass a failed service-stop check.
+5. If necessary, run `sudo node-goblin configure controller.example:7443 worker-01` for the intended endpoint. An explicitly configured CA must also match the intended controller.
+6. Run `sudo node-goblin connect`, compare the fresh code, confirm it locally, and approve the matching live request. Verify a harmless operation before resuming work.
+
+Unpairing preserves the host keypair and journal. Do not remove `node-identity.json` or the whole state directory as a routine pairing fix: that loses identity or replay evidence. A stale enrollment token cannot silently restore old trust after explicit unpairing because the enrollment-consumed marker is retained.
 
 Do not clone the same durable node identity onto several concurrently running hosts. Give each host its own state directory and stable gateway ID.
 
 ## Source references
 
-- [`gateway/lib/pairing.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/lib/pairing.mjs)
-- [`gateway/lib/network-transport.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/lib/network-transport.mjs)
-- [`gateway/lib/controller-listener.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/lib/controller-listener.mjs)
-- [`server/index.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/server/index.mjs)
-- [`ui/settings.js`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/ui/settings.js)
-- [`gateway/deploy/node-goblin`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/deploy/node-goblin)
+- [`gateway/lib/pairing.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/pairing.mjs)
+- [`gateway/lib/network-transport.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/network-transport.mjs)
+- [`gateway/lib/controller-listener.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/controller-listener.mjs)
+- [`server/index.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/server/index.mjs)
+- [`ui/settings.js`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/ui/settings.js)
+- [`gateway/deploy/node-goblin`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/deploy/node-goblin)

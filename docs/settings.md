@@ -7,7 +7,7 @@ Node Goblin supplies declarative settings data and action handlers. BURROW rende
 | Section | Purpose | Important behavior |
 | --- | --- | --- |
 | Controller & TLS | Enable listener, choose bind host/port, save or clear TLS material | Saved listener/TLS changes require BURROW restart |
-| Pending pairings | Compare pairing transcript codes; approve/reject a host | Approval enables execution; needs a current live challenge |
+| Pending pairings | Compare pairing transcript codes; approve/reject a host | Requires a current live challenge and host confirmation for first no-CA pairing |
 | Gateways | View trust and live metadata; provision HMAC credentials; revoke | Secret input is not returned by the settings API |
 | Agent assignments | Select local or gateway execution and workspace | Writes the Core agent API and applies to future turns |
 | Operation activity | Inspect bounded execution metadata | Omits prompts, parameters, protected values, and raw output |
@@ -25,6 +25,14 @@ The UI password-style fields prevent redisplaying existing secret values. They d
 Approved and connected are separate conditions. A trusted but offline host can appear disconnected. Gateway metadata includes implementation name, reported version/protocol, connected time, and last-seen time. Last-seen time advances on incoming protocol data; there is no periodic heartbeat scheduler in this repository.
 
 A process list in gateway health is the controller's view of accepted operations on that connection. It is not a full operating-system process inventory.
+
+## Agent assignments and access
+
+Choose a configured, approved gateway and an absolute workspace, then save. This updates the Core agent execution environment for future turns. There is no additional per-agent Node Goblin capability approval. An assignment does not create a workspace, grant host filesystem permissions, or sandbox the agent; the `burrow` service account needs access and defines the operating-system authority available to execution.
+
+## Telemetry
+
+Telemetry configuration belongs to Core Settings, not a separate Node Goblin collector form. Node Goblin forwards that configuration to authenticated hosts and newly connected gateways. A host's explicit `OTEL_*` endpoint takes precedence; see [telemetry overrides](configuration.md#telemetry-overrides). Telemetry failure does not replace process-result or journal evidence.
 
 ## Activity
 
@@ -46,6 +54,6 @@ Save errors include the HTTP response text or a fallback status-based message. F
 
 ## Source references
 
-- [`ui/settings.js`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/ui/settings.js)
-- [`server/index.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/server/index.mjs)
-- [`gateway/lib/controller-listener.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/lib/controller-listener.mjs)
+- [`ui/settings.js`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/ui/settings.js)
+- [`server/index.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/server/index.mjs)
+- [`gateway/lib/controller-listener.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/controller-listener.mjs)

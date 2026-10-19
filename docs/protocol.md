@@ -20,6 +20,7 @@ The daemon accepts one JSON request per line and emits JSON lines. Protocol vers
 | --- | --- | --- |
 | `hello` | None | Name, implementation version, protocol version, transport |
 | `health` | None | Status and active operation IDs |
+| `telemetry.configure` | `{enabled, endpoint, headers?}` | Validated in-memory telemetry configuration status |
 | `process.exec` | Operation ID and process options | Accepted envelope, stream/terminal events, terminal response |
 | `filesystem.execute` | Operation ID, tool, arguments | Accepted envelope and terminal filesystem result |
 | `cancel` | `operationId` | `{operationId, cancelling}`; cancellation request is not terminal evidence |
@@ -41,7 +42,7 @@ Choose exactly one execution form:
 {"operationId":"demo-001","executable":"node","args":["-e","console.log('hello')"],"cwd":"/srv/burrow/workspaces/example","timeoutMs":30000}
 ```
 
-or a shell command string. `command` uses `shell: true`; `executable` with string `args` uses `shell: false`. A command cannot also supply an executable or a nonempty args array.
+or a shell command string. `command` uses `shell: true`; `executable` with an array of string `args` uses `shell: false`. A command cannot also supply an executable or a nonempty args array.
 
 | Option | Behavior |
 | --- | --- |
@@ -92,7 +93,9 @@ flowchart TD
 
 *On narrow screens, scroll the diagram horizontally to read all labels.*
 
-The journal defaults to five minutes and 256 completed operations. Entries are expired/evicted, so ID reuse outside that retained window can execute again. Only completed outcomes are journaled. A crash between side effects and journal persistence leaves an ambiguous result. The implementation therefore provides bounded completed-operation replay, not a universal exactly-once guarantee.
+The journal defaults to five minutes from completion and at most 256 completed operations across process and filesystem work. Capacity eviction removes the oldest retained entries; replay does not refresh their expiry. Entries are expired/evicted, so ID reuse outside that retained window can execute again.
+
+With a state directory or explicit journal file, completed outcomes are saved in `operations.json` (or that file); without either, the journal is memory-only. Only completed outcomes are journaled, not active work or thrown execution failures. A crash between side effects and journal persistence leaves an ambiguous result. The implementation therefore provides bounded completed-operation replay, not a universal exactly-once guarantee.
 
 Before retrying a mutating operation after uncertainty, inspect host-side effects. Reuse the same operation ID only with an unchanged request and an understood replay window.
 
@@ -107,12 +110,14 @@ Do not use this example with a controller URL already set in the environment: th
 
 ## Source references
 
-- [`gateway/lib/protocol.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/lib/protocol.mjs)
-- [`gateway/lib/daemon.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/lib/daemon.mjs)
-- [`gateway/lib/process-runner.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/lib/process-runner.mjs)
-- [`gateway/lib/journal.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/lib/journal.mjs)
-- [`gateway/lib/client.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/lib/client.mjs)
-- [`server/index.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/server/index.mjs)
+- [`gateway/lib/protocol.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/protocol.mjs)
+- [`gateway/lib/daemon.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/daemon.mjs)
+- [`gateway/lib/process-runner.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/process-runner.mjs)
+- [`gateway/lib/journal.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/journal.mjs)
+- [`gateway/lib/output-frame.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/output-frame.mjs)
+- [`gateway/lib/network-transport.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/network-transport.mjs)
+- [`gateway/lib/client.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/client.mjs)
+- [`server/index.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/server/index.mjs)
 
 ### Encoded output and reconnect limits
 

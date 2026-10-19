@@ -8,7 +8,7 @@ Operate Node Goblin as a host-execution service. Check service health, controlle
 
 1. Check `sudo node-goblin status` and `sudo journalctl -u burrow-host-gateway.service -n 100 --no-pager` on the host.
 2. Confirm the controller's current listener configuration and that the chosen port is reachable under your network policy.
-3. Complete current code comparison and approval.
+3. Compare the current pairing code, confirm it locally when required, and approve the matching live request.
 4. Confirm approved/connected state in BURROW.
 5. Assign a test agent to a disposable absolute workspace and run a harmless read-only operation.
 6. Check returned host identity, working directory, exit status, and target/operation IDs. A generic active status alone is insufficient.
@@ -21,6 +21,8 @@ Protect logs before sharing them. Pairing logs contain pairing codes; process re
 | --- | --- | --- |
 | Service will not start | Node path, readable env/state/TLS files, service account, journal JSON | Read service logs; correct the identified configuration problem |
 | Service active, no controller connection | Endpoint/DNS/port, outbound network, controller bind interface | Verify both ends; service-active is only local process state |
+| Saved host settings have no effect | `configure` only writes the environment file; `connect` does not restart an active service | Drain active work, then run `sudo node-goblin apply --restart` |
+| Unpair/uninstall refuses to proceed | Service stop result and reported active state | Resolve the service-state problem; do not manually delete trust/runtime to bypass the check |
 | Controller appears disabled | Saved enabled flag and restart | Save desired settings and restart BURROW |
 | TLS generation failed | OpenSSL availability and controller secret storage | Supply reviewed TLS material or restore required tooling/storage |
 | Certificate/identity mismatch | Current controller key/cert vs host's saved trust | Investigate unexpected change; do not bypass trust checks blindly |
@@ -50,7 +52,11 @@ A cancel response only says whether an active operation was asked to abort. Wait
 6. Verify authentication, target selection, a harmless process, and a filesystem read in the intended workspace.
 7. Keep the prior program package until the new version is verified. A code rollback does not automatically roll back external process side effects or storage format changes.
 
-The existing release workflow publishes on every push to main, including documentation-only pushes. Review that release behavior before merging documentation changes. The documentation workflow itself does not modify runtime version files.
+Node Goblin releases have their own calendar versions and packages. Use the selected Node Goblin release and checksum when upgrading the host; a BURROW upgrade is not evidence that the host runtime changed.
+
+## Telemetry and execution evidence
+
+Core Settings can deliver OTLP/HTTP telemetry configuration to connected hosts. Host environment overrides take precedence; check [configuration](configuration.md#telemetry-overrides) if disabling or changing Core telemetry appears ineffective. Export is bounded and best-effort, so collector failures or dropped spans do not establish whether a host operation ran. Use operation results and journal evidence for recovery, not the presence or absence of a trace alone.
 
 ## Backup and restore
 
@@ -62,14 +68,14 @@ Journal retention is bounded by time/count and is not an audit archive. The list
 
 ## Remove or change trust
 
-Revoke on the controller when the host should no longer be authorized. Unpair on the host when it should forget its controller. These are complementary actions. Verify active operating-system work separately, then re-pair only after comparing a new code.
+Follow the [pairing recovery procedure](pairing.md#recover-from-a-changed-controller-or-stuck-pairing) for changed controller trust. Revoke on the controller when the host should no longer be authorized. Unpair on the host when it should forget its controller. These are complementary actions. Verify active operating-system work separately, then re-pair only after comparing a new code.
 
 Uninstall deliberately preserves configuration and state. Secure decommissioning requires a separate reviewed credential/data-retention decision; do not mistake package removal for erasure.
 
 ## Source references
 
-- [`gateway/deploy/node-goblin`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/deploy/node-goblin)
-- [`gateway/deploy/install.sh`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/deploy/install.sh)
-- [`gateway/deploy/uninstall.sh`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/deploy/uninstall.sh)
-- [`gateway/lib/network-transport.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/lib/network-transport.mjs)
-- [`gateway/lib/journal.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/lib/journal.mjs)
+- [`gateway/deploy/node-goblin`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/deploy/node-goblin)
+- [`gateway/deploy/install.sh`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/deploy/install.sh)
+- [`gateway/deploy/uninstall.sh`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/deploy/uninstall.sh)
+- [`gateway/lib/network-transport.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/network-transport.mjs)
+- [`gateway/lib/journal.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/journal.mjs)

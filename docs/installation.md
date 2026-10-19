@@ -8,14 +8,14 @@ Install the mod on the controller and the host runtime on each execution host. T
 - Node 24.x available to `/usr/bin/env node` for the system service
 - Python 3 on the host for `node-goblin confirm-pairing`
 - Linux systemd for the packaged host service
-- `tar`, GNU tar for deterministic release builds, and standard installation/account utilities
+- `curl`, `tar`, `sha256sum`, and standard installation/account utilities (GNU tar is needed when building deterministic releases)
 - OpenSSL on the controller if it will generate its own TLS certificate
 - A hostname or IP that the gateway can reach on the controller's configured TLS port
 - Permission to install packages/services and assign host execution access
 
 ## Install the BURROW mod
 
-The upstream README uses the BURROW runtime's `mods` directory:
+Install into the `mods` directory of the Burrow runtime you actually use:
 
 ```bash
 BURROW_RUNTIME_ROOT="${BURROW_RUNTIME_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/burrow}"
@@ -23,19 +23,28 @@ mkdir -p "$BURROW_RUNTIME_ROOT/mods"
 git clone https://github.com/GoblinKing-Burrow/Node-Goblin.git   "$BURROW_RUNTIME_ROOT/mods/node-goblin"
 ```
 
-Restart BURROW to load the manifest, server entry point, and settings contribution. The manifest declares `execution-provider-v1`; it does not require a separate environment grant for that capability. Whether a particular BURROW deployment admits the installed mod remains a Core responsibility.
+Restart BURROW to load the manifest, server entry point, and settings contribution. The manifest marks Node Goblin as a system mod and requests only `execution-provider-v1`. It does not require a separate environment grant or an extra per-agent capability approval. Core still owns authentication, agent assignment, and execution policy; system status does not grant unrelated Core access.
 
-For a reproducible deployment, review and select a tag or commit before restarting. This guide's baseline is `12d0f1daf74516e1f0120c80ad4716bd09e1dead`.
+For a reproducible deployment, review and select a public release tag or commit before restarting. The source links in this guide track the public `main` branch; record your installed revision separately.
 
 ## Install Mini Node Goblin
 
-The repository README points to BURROW's wrapper installer. That wrapper is maintained in the BURROW repository and can change independently. For a reviewable installation, download a selected Node Goblin release archive and its matching `.sha256` from [Releases](https://github.com/GoblinKing-Burrow/Node-Goblin/releases), verify them, extract, and run the package installer:
+Node Goblin owns the Mini Node Goblin bootstrap installer, calendar version, release archives, and checksums. BURROW does not rebuild or republish the host runtime under a BURROW version. Review the [public bootstrap installer](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/install.sh) before running it as root:
 
 ```bash
-# Example release filename; select the version you intend to install.
-sha256sum -c node-goblin-2026.09.27.tar.gz.sha256
-tar -xzf node-goblin-2026.09.27.tar.gz
-cd node-goblin-2026.09.27
+curl -fsSL https://raw.githubusercontent.com/GoblinKing-Burrow/Node-Goblin/main/install.sh | sudo sh
+```
+
+By default, it resolves the latest Node Goblin release, downloads the archive and checksum, verifies the checksum, and runs the package installer. To select a version, download and review the bootstrap first, then run `sudo sh install.sh --version YYYY.MM.DD` with an actual published version. Optional `--controller HOST:PORT --node-id ID` values must be supplied together; they configure and connect after installation. Keep secrets out of these arguments.
+
+For a fully reviewable selected-release installation, download the matching archive and `.sha256` from [Releases](https://github.com/GoblinKing-Burrow/Node-Goblin/releases), verify them, inspect the extracted package, and run its installer:
+
+```bash
+# Replace with the published Node Goblin version you selected.
+VERSION=YYYY.MM.DD
+sha256sum -c "node-goblin-$VERSION.tar.gz.sha256"
+tar -xzf "node-goblin-$VERSION.tar.gz"
+cd "node-goblin-$VERSION"
 sudo sh deploy/install.sh
 ```
 
@@ -43,12 +52,12 @@ The checksum detects an accidental mismatch against the downloaded checksum file
 
 The package installer:
 
-1. Creates or adopts the `burrow` account and primary group. A newly created account uses UID 4226, is a system account, has no home created, and uses `/usr/sbin/nologin`. A newly created `burrow` group uses GID 4226; an existing `burrow` group retains its GID. A pre-existing account must have `burrow` as its primary group and may have broader access; inspect it.
+1. Validates required package assets, JavaScript syntax, runtime imports, and version metadata before replacing installed assets. Creates or adopts the `burrow` account and primary group. A newly created account uses UID 4226, is a system account, has no home created, and uses `/usr/sbin/nologin`. A newly created `burrow` group uses GID 4226; an existing `burrow` group retains its GID. A pre-existing account must have `burrow` as its primary group and may have broader access; inspect it.
 2. Installs runtime content at `/opt/burrow-host-gateway`.
 3. Creates `/etc/burrow-host-gateway/gateway.env` only when absent.
 4. Preserves configuration and `/var/lib/burrow-host-gateway` across replacement.
 5. Installs `burrow-host-gateway.service` and the `node-goblin` operator command, with `burrow-host-gateway` as a compatibility symlink.
-6. Reloads systemd. It does **not** enable/start the service; `connect` performs that step.
+6. Reloads systemd. On a failed package switch it attempts to restore the previous runtime and deployment assets; if rollback is incomplete it reports the retained recovery directory. It does **not** enable/start the service; `connect` performs that step.
 
 ## Configure the two sides
 
@@ -64,6 +73,10 @@ sudo node-goblin pairing-code
 
 Use a stable gateway ID beginning with a letter or digit and containing only letters, digits, dots, underscores, or hyphens. Avoid the reserved ID `local`. The operator command accepts a wider edge case set than some controller routes; this conservative form works across the interfaces.
 
+The newly created `burrow` account does not automatically gain access to your workspaces. Set ordinary host ownership/permissions deliberately. Paired agents can run processes and read or change files wherever that account is permitted; the configured workspace is not a sandbox.
+
+`configure` saves settings only. To apply changes to a running daemon, drain active work and run `sudo node-goblin apply --restart`; `connect` does not restart an already-active service.
+
 Continue with [pairing and assignment](pairing.md). `connect` reporting an active systemd service proves the daemon is running, not that pairing or remote execution succeeded.
 
 ## Non-privileged staging test
@@ -76,7 +89,7 @@ sh gateway/deploy/install.sh --root "$stage" --skip-account --no-systemd
 BURROW_GATEWAY_ROOT="$stage" "$stage/usr/local/bin/node-goblin" configure controller.example:7443 worker-01
 ```
 
-Staging intentionally avoids account ownership changes. `connect` and `status` refuse to operate under a staging root. Do not remove a staging folder until you have confirmed its path and that you no longer need it.
+Staging intentionally avoids account ownership changes. `connect`/`apply` refuse service operations under a staging root unless an explicit test `SYSTEMCTL` override is provided; `status` always refuses a staging root. Do not remove a staging folder until you have confirmed its path and that you no longer need it.
 
 ## Update or uninstall
 
@@ -86,7 +99,7 @@ For the mod, `git pull --ff-only` updates a clean checkout; then restart BURROW.
 
 ## Source references
 
-- [`README.md`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/README.md)
-- [`gateway/deploy/install.sh`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/deploy/install.sh)
-- [`gateway/deploy/burrow-host-gateway.service`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/deploy/burrow-host-gateway.service)
-- [`gateway/package.json`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/package.json)
+- [`README.md`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/README.md)
+- [`gateway/deploy/install.sh`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/deploy/install.sh)
+- [`gateway/deploy/burrow-host-gateway.service`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/deploy/burrow-host-gateway.service)
+- [`gateway/package.json`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/package.json)

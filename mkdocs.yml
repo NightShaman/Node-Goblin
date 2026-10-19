@@ -1,9 +1,9 @@
 site_name: Node Goblin
-site_description: Operator and developer documentation for the independent BURROW remote execution mod
+site_description: Install, pair, and operate remote execution hosts for Burrow
 site_url: https://GoblinKing-Burrow.github.io/Node-Goblin/
 repo_url: https://github.com/GoblinKing-Burrow/Node-Goblin
 repo_name: GoblinKing-Burrow/Node-Goblin
-edit_uri: edit/main/docs/
+edit_uri: ""
 strict: true
 
 theme:
@@ -15,15 +15,15 @@ theme:
   palette:
     - media: '(prefers-color-scheme: light)'
       scheme: default
-      primary: green
-      accent: lime
+      primary: deep purple
+      accent: purple
       toggle:
         icon: material/weather-night
         name: Switch to dark mode
     - media: '(prefers-color-scheme: dark)'
       scheme: slate
-      primary: green
-      accent: lime
+      primary: deep purple
+      accent: purple
       toggle:
         icon: material/weather-sunny
         name: Switch to light mode
@@ -35,7 +35,6 @@ theme:
     - search.suggest
     - search.highlight
     - content.code.copy
-    - content.action.edit
 plugins:
   - search
 markdown_extensions:
@@ -67,26 +66,26 @@ validation:
 extra_css:
   - assets/stylesheets/extra.css
 
+# Internal historical repair notes are not part of the user documentation or search index.
+exclude_docs: |
+  audit-repair-pass-5.md
+  repairs/
+
 nav:
   - Home: index.md
-  - Start:
-      - Installation: installation.md
-      - Pairing and assignment: pairing.md
-      - Settings guide: settings.md
-  - Architecture:
-      - Overview: architecture.md
-      - Wire protocol: protocol.md
-      - Native filesystem: filesystem.md
-  - Operate:
-      - Operations and recovery: operations.md
-      - Security: security.md
+  - User guide:
+      - Install Node Goblin: installation.md
+      - Pair and assign a host: pairing.md
+      - Settings: settings.md
+      - Operations and troubleshooting: operations.md
+      - Security and trust: security.md
   - Reference:
       - Configuration: configuration.md
-      - Commands: cli.md
+      - Operator commands: cli.md
+      - Architecture: architecture.md
+      - Native filesystem: filesystem.md
       - HTTP API: api.md
-  - Develop:
-      - Development and docs: development.md
-      - Source map: source-map.md
-      - Audit repair passes:
-          - Lifecycle pass 4: repairs/lifecycle-pass-4.md
-          - Audit pass 5: audit-repair-pass-5.md
+      - Wire protocol: protocol.md
+  - About this release:
+      - Source and coverage: source-map.md
+      - Development and documentation: development.md

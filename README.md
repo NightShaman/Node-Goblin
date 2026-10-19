@@ -60,7 +60,7 @@ Node Goblin owns its release version, gateway archives, checksum, and bootstrap 
 curl -fsSL https://raw.githubusercontent.com/GoblinKing-Burrow/Node-Goblin/main/install.sh | sudo sh
 ```
 
-The package installer creates or adopts the `burrow` account and installs the service. It does not start it until you connect. To pin a specific release, pass its Node Goblin version (for example `--version 2026.10.17.8`).
+The package installer creates or adopts the `burrow` account and installs the service. It does not start it until you connect. To pin a specific release, pass its Node Goblin version (for example `--version 2026.10.19`).
 
 Replace the example controller address and host ID below with your own:
 

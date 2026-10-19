@@ -17,8 +17,8 @@
 | `files_list` | `dirPath`, optional `maxDepth`, `maxEntries` | Relative entries with file/directory/symlink/other type |
 | `files_find` | `dirPath`, optional `pattern` (default `*`), `maxDepth`, `maxEntries`, `maxTraversalEntries` | Relative matching paths and completeness metadata |
 | `files_search` | `dirPath`, nonempty literal `query`, optional `maxDepth`, `maxMatches`, `maxTraversalEntries` | File, one-based line number, matching line excerpt |
-| `files_write` | `filePath`, `content`, optional `workspaceRoot` | Creates parent directories and writes UTF-8; reports create/overwrite and byte count |
-| `files_edit` | `filePath`, `oldText`, `newText` | Requires exactly one nonempty literal match, then replaces it |
+| `files_write` | `filePath`, `content`, optional `workspaceRoot`, `expectedContentHash` | Creates parent directories and writes UTF-8; reports create/overwrite and byte count |
+| `files_edit` | `filePath`, `oldText`, `newText`, optional `expectedContentHash` | Requires exactly one nonempty literal match, then replaces it |
 
 Paths are resolved on the host using Node path handling and the service's working directory. Use explicit absolute paths. The gateway runner does not enforce `workspaceRoot` as a boundary. Operating-system permissions and the calling Core policy remain essential.
 
@@ -60,6 +60,8 @@ Traversal sorts names, skips dot-prefixed entries and `node_modules`, and does n
 
 An empty match set does not prove no matching file exists outside the visited subset. Hidden entries and `node_modules` are intentionally excluded. Use the returned metadata when reporting search results to a user or model.
 
+Read ranges are byte offsets, not character offsets; a range can split a multibyte character. `contentHash` normally hashes the selected source bytes, while transport-shortened reads recompute it from the delivered content. A transport-shortened read is incomplete and cannot supply a whole-file version hash. See [encoded output limits](protocol.md#encoded-output-and-reconnect-limits).
+
 The current read/search implementation reads each selected file into memory before applying its returned-content limit. Returned-byte limits are not file-size or total-memory limits. Avoid unbounded or unexpectedly large files in automated workflows and choose conservative scopes.
 
 ## Errors and cancellation
@@ -70,5 +72,5 @@ Cancellation is checked before operations and during traversal/search loops. It 
 
 ## Source references
 
-- [`gateway/lib/filesystem-runner.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/lib/filesystem-runner.mjs)
-- [`gateway/filesystem-runner.test.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/filesystem-runner.test.mjs)
+- [`gateway/lib/filesystem-runner.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/filesystem-runner.mjs)
+- [`gateway/filesystem-runner.test.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/filesystem-runner.test.mjs)

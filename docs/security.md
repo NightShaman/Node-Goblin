@@ -19,7 +19,7 @@ flowchart TB
 
 *On narrow screens, scroll the diagram horizontally to read all labels.*
 
-Core decides who may configure and use the provider. The mod manages gateway identity and routes execution. The gateway executes with its account's permissions. It does not introduce a container, VM, chroot, or mandatory filesystem allowlist.
+The manifest requests only the Core-owned `execution-provider-v1` capability. The system-mod marker does not grant unrelated Core access, and there is no extra per-agent Node Goblin capability grant. Core decides who may configure and use the provider. The mod manages gateway identity and routes execution. The gateway executes with its account's permissions. It does not introduce a container, VM, chroot, or mandatory filesystem allowlist.
 
 ## Deployment checklist
 
@@ -50,6 +50,10 @@ The runtime inherits the service process environment and overlays requested ordi
 
 The gateway journal can retain process evidence, including ordinary output and command metadata, and filesystem results. Protect it as potentially sensitive data even when protected-value redaction worked.
 
+## Telemetry boundaries
+
+When configured, the host sends OTLP/HTTP traces to its configured collector. Execution spans include bounded operation kind, tool name, target ID, operation ID, timing, status, and trace context. The span builder does not include command arguments, file contents, prompts, protected values, or raw stdout/stderr. Treat identifiers and collector access headers as deployment-sensitive anyway. Host `OTEL_*` endpoint overrides take precedence over Core Settings; disabling Core telemetry does not disable a host override. Use a trusted collector and protect the environment file and its backups.
+
 ## Availability and resource policy
 
 Default timeouts, output limits, replay retention, and traversal budgets reduce routine resource use. They are not an external resource sandbox. Some bounds can be overridden by callers and file reads/searches are buffered. Choose reasonable request limits, storage quotas, operating-system controls, and monitoring for the deployment.
@@ -60,8 +64,9 @@ Do not post credentials, private outputs, or a live exploitation transcript in a
 
 ## Source references
 
-- [`gateway/lib/network-transport.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/lib/network-transport.mjs)
-- [`gateway/lib/controller-listener.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/lib/controller-listener.mjs)
-- [`gateway/lib/process-runner.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/lib/process-runner.mjs)
-- [`gateway/lib/filesystem-runner.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/lib/filesystem-runner.mjs)
-- [`gateway/deploy/burrow-host-gateway.service`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/deploy/burrow-host-gateway.service)
+- [`gateway/lib/otel-runtime.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/otel-runtime.mjs)
+- [`gateway/lib/network-transport.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/network-transport.mjs)
+- [`gateway/lib/controller-listener.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/controller-listener.mjs)
+- [`gateway/lib/process-runner.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/process-runner.mjs)
+- [`gateway/lib/filesystem-runner.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/filesystem-runner.mjs)
+- [`gateway/deploy/burrow-host-gateway.service`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/deploy/burrow-host-gateway.service)

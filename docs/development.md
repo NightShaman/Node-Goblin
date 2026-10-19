@@ -2,7 +2,7 @@
 
 *On narrow screens, swipe tables horizontally to see every column.*
 
-Work in this repository for Node Goblin-specific behavior. Keep Core interfaces generic and use the registered `execution-provider-v1` contract instead of adding Node Goblin implementation details into BURROW Core.
+Work in this repository for Node Goblin-specific behavior. Keep Core interfaces generic and use the registered `execution-provider-v1` contract instead of adding Node Goblin implementation details into Burrow Core.
 
 ## Source and runtime setup
 
@@ -16,9 +16,9 @@ node --version
 node --test ui/settings.test.mjs
 ```
 
-The gateway package test script runs gateway top-level tests, deployment/release tests under `gateway/test`, and `server/index.test.mjs`. It does **not** include `ui/settings.test.mjs`; run that explicitly.
+The gateway package test script runs gateway top-level tests, deployment/release tests under `gateway/test`, server tests, and UI settings tests. The separate UI command is useful for a focused check.
 
-Read tests before changing behavior. Test doubles cover socket/controller flows, while temporary roots keep deployment tests away from real accounts and services. Passing them does not prove a real network, systemd deployment, or BURROW-host integration works.
+Read tests before changing behavior. Test doubles cover socket/controller flows, while temporary roots keep deployment tests away from real accounts and services. Passing them does not prove a real network, systemd deployment, or Burrow-host integration works.
 
 ## Test areas
 
@@ -39,9 +39,7 @@ Read tests before changing behavior. Test doubles cover socket/controller flows,
 
 ## Release behavior
 
-`.github/workflows/release-node-goblin.yml` is the fast NightShaman development-package path. Main pushes run focused protocol, process, filesystem, network, protected-value, and version-identity contracts, assign the next UTC calendar revision, build the deterministic archive/checksum, and publish them as a NightShaman development release. This keeps the installable package immediately testable without putting the complete suite back on every push.
-
-The scheduled NightShaman Burrow public-promotion workflow separately freezes this repository's exact main SHA, runs the complete Node Goblin suite, rebuilds the deterministic archive/checksum from that frozen source, and publishes the coordinated UTC `YYYY.MM.DD` snapshot and release to `GoblinKing-Burrow/Node-Goblin`. Changes after that day's public release wait for the next UTC day.
+Node Goblin owns its host archives, checksum files, and bootstrap installer. Public releases use `YYYY.MM.DD` and are published in [Node Goblin releases](https://github.com/GoblinKing-Burrow/Node-Goblin/releases). Select a release deliberately; a checkout of `main` can include documentation changes after the tagged release.
 
 For a local non-publishing build:
 
@@ -72,22 +70,21 @@ Checks cover strict Markdown/nav/link validation, built HTML links/anchors/asset
 
 ## Documentation workflow
 
-The docs workflow builds/validates pull requests that touch docs configuration, pages, or checks and uploads the built site for review. Its Pages deployment job is restricted to main, after a successful build. Repository Pages configuration and merge/deployment approval remain separate operational steps. The workflow does not enable Pages settings itself.
+The docs workflow strictly builds changed documentation and checks local links, fragments, and assets. Only pushes to the public repository’s `main` branch (or a manual run there) upload and deploy the site. Pull requests only validate. Repository Pages settings must already be configured; this workflow does not enable Pages or change DNS.
 
 When updating docs, link to the reviewed source revision, distinguish Core-owned APIs from mod APIs, and update [source coverage](source-map.md). Do not publish private audit evidence, secrets, or host details in the documentation tree.
 
 ## Source references
 
-- [`gateway/package.json`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/package.json)
-- [`.github/workflows/release-node-goblin.yml`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/.github/workflows/release-node-goblin.yml)
-- [`gateway/deploy/build-release.sh`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/deploy/build-release.sh)
-- [`gateway/deploy/set-release-version.mjs`](https://github.com/NightShaman/Node-Goblin/blob/12d0f1daf74516e1f0120c80ad4716bd09e1dead/gateway/deploy/set-release-version.mjs)
+- [`gateway/package.json`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/package.json)
+- [`gateway/deploy/build-release.sh`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/deploy/build-release.sh)
+- [`gateway/deploy/set-release-version.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/deploy/set-release-version.mjs)
 
 ### Runtime cleanup contracts
 
 Node Goblin supports Node 24.x. The read-only pull-request runtime workflow runs
 all gateway, controller/server, deployment/package and UI settings contract tests;
-publishing occurs only after the coordinated daily public validation. Runtime identity
+public packages are published as dated releases. Runtime identity
 reads `gateway/VERSION`; the release stamper checks that file, the package and mod
 manifest together. Protocol version `1.0` is independent of the calendar release.
 
@@ -114,9 +111,7 @@ pairing after a fresh connection if approval takes longer.
 
 Legacy shared-secret changes for Ed25519 identities return HTTP 409
 `gateway_credential_method_ed25519`, without modifying credentials. These actions
-do not migrate a paired identity. The Smatchet-owned settings UI must hide or
-disable shared-secret replacement for `method: ed25519`, and label HMAC actions
-as legacy-only; that renderer change is not part of this runtime cleanup.
+do not migrate a paired identity. Use the pairing workflow for Ed25519 identities. Shared-secret replacement is a legacy HMAC operation, not an identity migration.
 
 Release archives use an explicit runtime/deployment allowlist. Default, external,
 and custom in-tree output directories are supported; output under `lib` or
