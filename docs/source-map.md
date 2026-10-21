@@ -26,3 +26,7 @@ Burrow owns the mod lifecycle, authenticated API hosting, agent assignments, and
 Operations may continue after a transport failure. Replay and retention are bounded, and a new operation ID can repeat a side effect. Follow the recovery instructions before retrying uncertain work.
 
 Public release versions use `YYYY.MM.DD`. The wire protocol version is a separate compatibility identifier. Check the installed package and host status rather than treating a docs date as proof of what a machine is running.
+
+## Review checkpoint: 21 October 2026
+
+All pages in this section were reconciled from the [2026.10.19 runtime baseline](https://github.com/GoblinKing-Burrow/Node-Goblin/tree/0ff5f7ee03624aa8a2e7d19a492fdb871f4e698d) through [public source `d5e0957`](https://github.com/GoblinKing-Burrow/Node-Goblin/tree/d5e095714bf4093c2ee5a04ec4d8d0bbe79a3531). The public runtime implementation is unchanged across that interval; documentation changes do not imply a new runtime release. Core-dependent and forthcoming managed-skill behavior is identified separately in the relevant guides.

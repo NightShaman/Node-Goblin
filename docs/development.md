@@ -44,7 +44,7 @@ Node Goblin owns its host archives, checksum files, and bootstrap installer. Pub
 For a local non-publishing build:
 
 ```bash
-SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)   gateway/deploy/build-release.sh gateway/dist
+SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD) sh gateway/deploy/build-release.sh gateway/dist
 node gateway/deploy/set-release-version.mjs "$(cat gateway/VERSION)" --check
 ```
 
@@ -117,3 +117,9 @@ Release archives use an explicit runtime/deployment allowlist. Default, external
 and custom in-tree output directories are supported; output under `lib` or
 `deploy`, or the gateway source root itself, is rejected to prevent output from
 becoming runtime input.
+
+### Public-snapshot test limitation
+
+The 2026.10.19 public snapshot retains development-release tests even though its promotion excludes the development release workflow. Its bootstrap fixtures also expect the development release authority rather than the public installer authority. Consequently, the aggregate `npm test` command can fail on those packaging/fixture assumptions. Do not treat this as a passing full suite or change the public installer to satisfy a development-only fixture. Focused runtime checks remain useful, but are not a substitute for fixing and rerunning the aggregate suite.
+
+The reviewed public checkout also records deployment shell scripts without executable mode bits. Invoke the documented build script with `sh` as shown above; direct-execution deployment tests can fail before the script starts. This is a source-packaging issue, not evidence that a host installation was exercised.

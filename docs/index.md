@@ -16,6 +16,13 @@ Public-release guide · **2026.10.19**
 !!! danger "Node Goblin gives agents real access to your host."
     **This is not a safe sandbox.** Agents can execute commands and read, change, or delete files with the permissions of the host service account. Commands can reach other systems and services accessible to that account. A workspace path does not contain that access. Use a disposable or deliberately restricted host, protect credentials, and pair only controllers you trust. Do not rely on an extra approval prompt to prevent damage.
 
+!!! tip "Strongly recommended companion: Burrow Backdoor"
+    Install and enable **Burrow Backdoor in your home Burrow** alongside Node Goblin. Node Goblin routes shell and filesystem execution to the selected remote host; Backdoor provides diagnostics and authorized mod administration for the **Burrow instance hosting your agent**, regardless of that execution target.
+
+    Backdoor is a recommended companion, not a Node Goblin dependency. Its Core-owned grants and agent access settings still apply; it does not grant arbitrary access to the home filesystem or root privileges.
+
+    [Install and enable Burrow Backdoor](https://burrow-docs.blissful-psychosis.com/burrow-backdoor/installation/).
+
 ## Two pieces. One connection.
 
 - **Node Goblin** is the mod on your Burrow controller. It manages the listener, host pairing, and agent assignments.

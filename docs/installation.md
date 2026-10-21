@@ -2,6 +2,11 @@
 
 Install the mod on the controller and the host runtime on each execution host. The checked-in package installer targets **Linux with systemd**. The JavaScript runtime uses Node built-ins and has no declared third-party runtime dependencies. The host package declares **Node 24.x** (`>=24 <25`) in `engines`.
 
+!!! tip "Strongly recommended: enable Backdoor in your home Burrow"
+    As part of setup, [install and enable Burrow Backdoor](https://burrow-docs.blissful-psychosis.com/burrow-backdoor/installation/) in the **Burrow instance hosting your agent**. Node Goblin routes shell and filesystem execution to your selected remote host. Backdoor keeps home-Burrow diagnostics and authorized mod administration available regardless of which execution host you select.
+
+    This is a strong recommendation, not a required dependency. Enable Backdoor explicitly and grant administration only to trusted agents through its access settings. Backdoor does not provide arbitrary home-filesystem access or root privileges.
+
 ## Prerequisites
 
 - A working BURROW installation that supports the Core-owned `execution-provider-v1` mod capability
@@ -103,3 +108,9 @@ For the mod, `git pull --ff-only` updates a clean checkout; then restart BURROW.
 - [`gateway/deploy/install.sh`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/deploy/install.sh)
 - [`gateway/deploy/burrow-host-gateway.service`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/deploy/burrow-host-gateway.service)
 - [`gateway/package.json`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/package.json)
+
+## Automatic operating skill
+
+On compatible Core and mod builds that declare managed skills, loading this mod automatically supplies the `node-goblin-operations` skill from [Burrow-Skills](https://github.com/GoblinKing-Burrow/Burrow-Skills/tree/main/node-goblin-operations). Core maintains the installed copy as read-only and refreshes managed skills at startup, on mod lifecycle changes, and on its default six-hour schedule. You do not paste, edit, or assign that managed copy manually. The skill provides instructions; it does not grant tool or data access.
+
+The public **2026.10.19** mod snapshot does not yet declare this managed skill. Automatic mod-managed delivery requires both the newer manifest and a Core build that supports it; updating only the skill repository cannot add the missing integration. See [how managed skills work](https://burrow-docs.blissful-psychosis.com/burrow-skills/managed-skills/).
