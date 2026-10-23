@@ -98,7 +98,7 @@ Staging intentionally avoids account ownership changes. `connect`/`apply` refuse
 
 ## Update or uninstall
 
-For the mod, `git pull --ff-only` updates a clean checkout; then restart BURROW. Review the incoming revision first. For the host package, stop the service, preserve a protected backup, install the selected replacement, and start/verify it. See [operations](operations.md).
+For the mod, `git pull --ff-only` updates a clean checkout; then restart BURROW. Review the incoming revision first. For the host package, drain work and preserve a protected backup, then run `sudo sh install.sh --update` with the reviewed bootstrap, or `sudo sh deploy/update.sh` from the selected verified release archive. Both install and restart together; verify controller connection and an operation afterward. Run locally or over SSH, not through the service being updated. See [operations](operations.md).
 
 `sudo node-goblin uninstall` removes runtime files, command links, and the unit. It preserves the account, configuration, identity/trust, and journal for reinstall. It is not a credential purge.
 

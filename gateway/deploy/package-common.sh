@@ -2,7 +2,7 @@
 validate_package() {
   package=$1
   for asset in VERSION package.json cli.mjs node-goblin.mjs index.mjs \
-    deploy/install.sh deploy/uninstall.sh deploy/node-goblin deploy/burrow-host-gateway.service \
+    deploy/install.sh deploy/update.sh deploy/uninstall.sh deploy/node-goblin deploy/burrow-host-gateway.service \
     deploy/gateway.env.example deploy/package-common.sh deploy/service-common.sh; do
     [ -f "$package/$asset" ] && [ -s "$package/$asset" ] && [ ! -L "$package/$asset" ] || {
       echo "Incomplete package: $asset" >&2; return 1;

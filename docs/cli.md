@@ -41,17 +41,22 @@ The JavaScript entry point does not parse the shell wrapper's subcommands or pro
 The repository-root `install.sh` downloads and verifies a Node Goblin release, then calls its package installer:
 
 ```text
-install.sh [--version YYYY.MM.DD[.N]] [--controller HOST:PORT] [--node-id ID]
+install.sh [--version YYYY.MM.DD[.N]] [--controller HOST:PORT] [--node-id ID] [--update]
 ```
 
 It requires root, `curl`, `tar`, and `sha256sum`. Version defaults to `latest`; controller and node ID must be supplied together and trigger configure/connect after installation. `NODE_GOBLIN_VERSION` selects a default version and `NODE_GOBLIN_REPOSITORY` overrides the release repository. Use the official public repository unless you have explicitly reviewed another publisher. See [installation](installation.md#install-mini-node-goblin).
 
+`--update` invokes the downloaded package's `deploy/update.sh`: an existing configured host is upgraded and its service restarted. It cannot be combined with `--controller` or `--node-id`, because updates preserve configuration. Drain work first and run from a local/SSH terminal, not through the service being replaced.
+
 ## Package installer and uninstaller scripts
 
 ```text
-install.sh [--root DIRECTORY] [--source DIRECTORY] [--no-systemd] [--skip-account]
+install.sh [--root DIRECTORY] [--source DIRECTORY] [--no-systemd] [--skip-account] [--restart]
+update.sh [--source DIRECTORY]
 uninstall.sh [--root DIRECTORY] [--no-systemd]
 ```
+
+`deploy/update.sh` requires an existing configured installation and invokes the transactional installer with `--restart`. It stops and verifies the old service before replacing files, checks the restarted service, and attempts package/service rollback on failure. Active state is not controller/execution verification.
 
 A non-root staging installation must use `--root` and `--skip-account`. `--source` identifies the package's gateway-root source directory. Use `--no-systemd` for staging; production use should preserve service lifecycle management.
 

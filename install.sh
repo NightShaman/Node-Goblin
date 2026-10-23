@@ -7,18 +7,23 @@ VERSION=${NODE_GOBLIN_VERSION:-latest}
 CONTROLLER=
 NODE_ID=
 TMP=
+UPDATE=false
 
 usage() {
   cat >&2 <<'EOF'
-usage: install.sh [--version YYYY.MM.DD[.N]] [--controller HOST:PORT] [--node-id ID]
+usage: install.sh [--version YYYY.MM.DD[.N]] [--controller HOST:PORT] [--node-id ID] [--update]
 
 Installs the latest calendar-versioned Mini Node Goblin release by default.
 Controller address and node ID are non-secret and may be supplied now or
 configured later with: sudo node-goblin configure
+
+--update upgrades an existing configured host and restarts its service. Run on
+that host after draining work; service-owned child processes will be stopped.
 EOF
 }
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --update) UPDATE=true; shift ;;
     --version) VERSION=$2; shift 2 ;;
     --controller) CONTROLLER=$2; shift 2 ;;
     --node-id) NODE_ID=$2; shift 2 ;;
@@ -33,6 +38,9 @@ valid_version() {
 if [ "$VERSION" != latest ] && ! valid_version "$VERSION"; then
   echo "version must be YYYY.MM.DD, YYYY.MM.DD.N, or latest" >&2
   exit 2
+fi
+if [ "$UPDATE" = true ] && { [ -n "$CONTROLLER" ] || [ -n "$NODE_ID" ]; }; then
+  echo "--update preserves existing configuration; do not supply --controller or --node-id" >&2; exit 2
 fi
 if [ -n "$CONTROLLER" ] || [ -n "$NODE_ID" ]; then
   [ -n "$CONTROLLER" ] && [ -n "$NODE_ID" ] || { echo "--controller and --node-id must be supplied together" >&2; exit 2; }
@@ -56,6 +64,10 @@ curl -fsSL "$BASE/$NAME.tar.gz" -o "$TMP/$NAME.tar.gz"
 curl -fsSL "$BASE/$NAME.tar.gz.sha256" -o "$TMP/$NAME.tar.gz.sha256"
 ( cd "$TMP" && sha256sum -c "$NAME.tar.gz.sha256" )
 tar -xzf "$TMP/$NAME.tar.gz" -C "$TMP"
+if [ "$UPDATE" = true ]; then
+  "$TMP/$NAME/deploy/update.sh" --source "$TMP/$NAME"
+  exit 0
+fi
 "$TMP/$NAME/deploy/install.sh" --source "$TMP/$NAME"
 
 if [ -n "$CONTROLLER" ]; then

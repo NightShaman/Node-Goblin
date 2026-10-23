@@ -9,14 +9,19 @@ ROOT=${BURROW_GATEWAY_ROOT:-/}
 SOURCE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 NO_SYSTEMD=false
 SKIP_ACCOUNT=false
+RESTART=false
+SERVICE=burrow-host-gateway.service
+SYSTEMCTL_OVERRIDE=${SYSTEMCTL:-}
+SYSTEMCTL=${SYSTEMCTL:-systemctl}
 
-usage() { echo "usage: $0 [--root DIRECTORY] [--source DIRECTORY] [--no-systemd] [--skip-account]" >&2; }
+usage() { echo "usage: $0 [--root DIRECTORY] [--source DIRECTORY] [--no-systemd] [--skip-account] [--restart]" >&2; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --root) ROOT=$2; shift 2 ;;
     --source) SOURCE=$2; shift 2 ;;
     --no-systemd) NO_SYSTEMD=true; shift ;;
     --skip-account) SKIP_ACCOUNT=true; shift ;;
+    --restart) RESTART=true; shift ;;
     *) usage; exit 2 ;;
   esac
 done
@@ -40,6 +45,18 @@ if [ "$NO_SYSTEMD" = false ] && [ "$ROOT" = / ]; then
   command -v "${SYSTEMCTL:-systemctl}" >/dev/null || exit 1
 fi
 validate_package "$SOURCE"
+. "$SOURCE/deploy/service-common.sh"
+if [ "$RESTART" = true ]; then
+  [ "$NO_SYSTEMD" = false ] && { [ "$ROOT" = / ] || [ -n "$SYSTEMCTL_OVERRIDE" ]; } || {
+    echo "--restart requires service management (staging tests must supply SYSTEMCTL)" >&2; exit 2;
+  }
+  [ -s "$(root_path /opt/burrow-host-gateway/VERSION)" ] || { echo "Update requires an installed Mini Node Goblin package" >&2; exit 1; }
+  config="$(root_path /etc/burrow-host-gateway/gateway.env)"
+  grep -q '^BURROW_GATEWAY_CONTROLLER_URL=tls://.' "$config" && grep -q '^BURROW_GATEWAY_ID=.' "$config" || {
+    echo "Update requires an existing controller and node ID; run configure first" >&2; exit 1;
+  }
+  echo "Updating Mini Node Goblin: restarting the service will disconnect the host and stop service-owned child processes."
+fi
 
 if [ "$SKIP_ACCOUNT" = false ]; then
   # Adopt a conventional pre-existing burrow login (including a full account),
@@ -79,12 +96,18 @@ tmp="$transaction/package"
 BIN_DIR=$(root_path /usr/local/bin)
 mkdir -p "$tmp" "$BIN_DIR"
 switched=false
+service_stopped=false
+restart_attempted=false
 rollback() {
   result=$?
   set +e
   restore_failed=false
   trap - EXIT HUP INT TERM
   if [ "$switched" = true ]; then
+    if [ "$restart_attempted" = true ] && ! stop_and_verify; then
+      echo "Cannot stop failed candidate; recovery assets retained at $transaction" >&2
+      exit 1
+    fi
     rm -rf "$INSTALL_DIR"
     [ ! -e "$transaction/previous" ] || mv "$transaction/previous" "$INSTALL_DIR" || restore_failed=true
     for entry in unit operator alias; do
@@ -96,12 +119,18 @@ rollback() {
       rm -f "$destination"
       [ ! -e "$transaction/$entry" ] && [ ! -L "$transaction/$entry" ] || cp -a "$transaction/$entry" "$destination" || restore_failed=true
     done
-    if [ "$NO_SYSTEMD" = false ] && [ "$ROOT" = / ]; then "${SYSTEMCTL:-systemctl}" daemon-reload || true; fi
+    if [ "$NO_SYSTEMD" = false ] && { [ "$ROOT" = / ] || [ -n "$SYSTEMCTL_OVERRIDE" ]; }; then "$SYSTEMCTL" daemon-reload || restore_failed=true; fi
     if [ "$restore_failed" = true ]; then
       echo "Rollback incomplete; recovery assets retained at $transaction" >&2
       exit 1
     fi
     echo "Installation failed; restored previous package and deployment assets." >&2
+  fi
+  if [ "$service_stopped" = true ]; then
+    "$SYSTEMCTL" restart "$SERVICE" && "$SYSTEMCTL" is-active --quiet "$SERVICE" || {
+      echo "Previous package restored but service recovery failed; inspect systemctl status $SERVICE" >&2
+      result=1
+    }
   fi
   rm -rf "$transaction"
   exit "$result"
@@ -118,6 +147,11 @@ chmod 0755 "$tmp/cli.mjs" "$tmp/node-goblin.mjs" "$tmp/deploy/"*.sh "$tmp/deploy
 [ ! -e "$UNIT_DIR/burrow-host-gateway.service" ] || cp -a "$UNIT_DIR/burrow-host-gateway.service" "$transaction/unit"
 [ ! -e "$BIN_DIR/node-goblin" ] || cp -a "$BIN_DIR/node-goblin" "$transaction/operator"
 if [ -e "$BIN_DIR/burrow-host-gateway" ] || [ -L "$BIN_DIR/burrow-host-gateway" ]; then cp -a "$BIN_DIR/burrow-host-gateway" "$transaction/alias"; fi
+if [ "$RESTART" = true ]; then
+  # Recovery also runs if a failed stop leaves the old service inactive.
+  service_stopped=true
+  stop_and_verify
+fi
 [ ! -d "$INSTALL_DIR" ] || mv "$INSTALL_DIR" "$transaction/previous"
 switched=true
 mv "$tmp" "$INSTALL_DIR"
@@ -131,11 +165,23 @@ if [ ! -e "$CONFIG_DIR/gateway.env" ]; then
   [ "$SKIP_ACCOUNT" = false ] && chown root:"$NAME" "$CONFIG_DIR/gateway.env"
 fi
 
-if [ "$NO_SYSTEMD" = false ] && [ "$ROOT" = / ]; then
-  "${SYSTEMCTL:-systemctl}" daemon-reload
+if [ "$NO_SYSTEMD" = false ] && [ "$ROOT" = / ] && [ "$RESTART" = false ]; then
+  "$SYSTEMCTL" daemon-reload
+fi
+if [ "$RESTART" = true ]; then
+  "$SYSTEMCTL" daemon-reload
+  restart_attempted=true
+  "$SYSTEMCTL" restart "$SERVICE"
+  "$SYSTEMCTL" is-active --quiet "$SERVICE" || { echo "Updated service did not become active" >&2; exit 1; }
 fi
 switched=false
+service_stopped=false
 trap - EXIT HUP INT TERM
 rm -rf "$transaction"
-echo "Node Goblin installed. Run: sudo node-goblin configure"
-echo "Then start and verify it with: sudo node-goblin connect"
+if [ "$RESTART" = true ]; then
+  echo "Mini Node Goblin $(cat "$INSTALL_DIR/VERSION") installed and service restarted. Verify controller connection and a real operation."
+else
+  echo "Node Goblin installed. Run: sudo node-goblin configure"
+  echo "Then start and verify it with: sudo node-goblin connect"
+  echo "For future upgrades use deploy/update.sh (installs and restarts together)."
+fi

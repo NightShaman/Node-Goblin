@@ -45,10 +45,10 @@ A cancel response only says whether an active operation was asked to abort. Wait
 ## Upgrade procedure
 
 1. Record the currently installed release and controller assignment/trust state.
-2. Stop or drain work and stop the host service before replacing program files.
+2. Drain work. Use a local terminal or SSH session independent of Node Goblin; the update stops its service and service-owned child processes.
 3. Make protected backups of configuration and state. Preserve ownership and permissions.
-4. Review and install the selected release. The installer preserves config/state but replaces the executable package.
-5. Restart BURROW if mod/controller changes require it; start the gateway service.
+4. Review and run the bootstrap with `sudo sh install.sh --update` (latest) or `sudo sh install.sh --update --version YYYY.MM.DD[.N]` using an actual published version. Alternatively extract the selected verified archive and run `sudo sh deploy/update.sh`. The update validates/stages the replacement, stops the service, installs it, reloads systemd, restarts, and checks active state as one operation. It preserves configuration, identity, trust, and operation journal. First-time `install.sh` behavior is unchanged.
+5. If installation/restart fails, the updater restores the previous package/deployment assets and attempts to restart the old service; it exits nonzero. If stopping the candidate or restoring assets fails, recovery assets are retained at the path reported in the error. Do not treat a failed update as success. Restart BURROW only if separate mod/controller changes require it.
 6. Verify authentication, target selection, a harmless process, and a filesystem read in the intended workspace.
 7. Keep the prior program package until the new version is verified. A code rollback does not automatically roll back external process side effects or storage format changes.
 
