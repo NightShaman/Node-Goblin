@@ -118,7 +118,15 @@ and custom in-tree output directories are supported; output under `lib` or
 `deploy`, or the gateway source root itself, is rejected to prevent output from
 becoming runtime input.
 
-### Public-snapshot test limitation
+### Public-snapshot test compatibility
+
+The updater correction makes bootstrap tests follow the release authority
+stamped into each snapshot. Both the public authority and explicit development
+override are exercised. The private development-workflow contract test is skipped
+only when that workflow is intentionally absent from the public snapshot.
+
+The following limitations describe older public snapshots, not the corrected
+source:
 
 The 2026.10.19 public snapshot retains development-release tests even though its promotion excludes the development release workflow. Its bootstrap fixtures also expect the development release authority rather than the public installer authority. Consequently, the aggregate `npm test` command can fail on those packaging/fixture assumptions. Do not treat this as a passing full suite or change the public installer to satisfy a development-only fixture. Focused runtime checks remain useful, but are not a substitute for fixing and rerunning the aggregate suite.
 

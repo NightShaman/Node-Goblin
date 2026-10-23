@@ -52,6 +52,12 @@ A cancel response only says whether an active operation was asked to abort. Wait
 6. Verify authentication, target selection, a harmless process, and a filesystem read in the intended workspace.
 7. Keep the prior program package until the new version is verified. A code rollback does not automatically roll back external process side effects or storage format changes.
 
+The public bootstrap downloads from `GoblinKing-Burrow/Node-Goblin`. Development
+packages from `NightShaman/Node-Goblin` are separate; use the README's explicit
+repository override only when intentionally testing them. The immutable public
+`2026.10.23` release predates `--update`; public updater availability requires a
+later promoted release containing it.
+
 Node Goblin releases have their own calendar versions and packages. Use the selected Node Goblin release and checksum when upgrading the host; a BURROW upgrade is not evidence that the host runtime changed.
 
 ## Telemetry and execution evidence

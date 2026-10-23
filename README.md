@@ -140,8 +140,22 @@ git -C "$BURROW_RUNTIME_ROOT/mods/node-goblin" pull --ff-only
 **Host runtime:** after draining work, update and restart together from a local terminal or SSH session on the host:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NightShaman/Node-Goblin/main/install.sh | sudo sh -s -- --update
+curl -fsSL https://raw.githubusercontent.com/GoblinKing-Burrow/Node-Goblin/main/install.sh | sudo sh -s -- --update
 ```
+
+This command uses **public releases** from `GoblinKing-Burrow/Node-Goblin`, not
+NightShaman development packages. The immutable public `2026.10.23` release
+predates `--update`; public updater availability requires a later promoted
+release containing it. Public promotion never replaces an existing release.
+
+For an intentionally selected **development** update instead:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NightShaman/Node-Goblin/main/install.sh \
+  | sudo env NODE_GOBLIN_REPOSITORY=NightShaman/Node-Goblin sh -s -- --update
+```
+
+The repository override must reach the root installer, not just `curl`.
 
 This verifies the latest release package, preserves configuration/identity/trust, installs it, and restarts the service. No separate `apply --restart` is needed. Service-owned child processes stop during the update; do not launch this through the Node Goblin service being updated. To select a version, download/review the bootstrap and use `sudo sh install.sh --update --version YYYY.MM.DD[.N]` with an actual published version. An extracted package also contains `deploy/update.sh`. See the [upgrade procedure](docs/operations.md#upgrade-procedure) for backup and verification.
 

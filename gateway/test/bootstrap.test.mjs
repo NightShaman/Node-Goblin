@@ -6,10 +6,11 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 const script = path.resolve('..', 'install.sh');
+const authority = fs.readFileSync(script, 'utf8').match(/^REPOSITORY=\$\{NODE_GOBLIN_REPOSITORY:-([^}]+)\}$/m)?.[1];
 
 test('Mini Node Goblin bootstrap uses this repository release authority', () => {
   const text = fs.readFileSync(script, 'utf8');
-  assert.match(text, /REPOSITORY=.*NightShaman\/Node-Goblin/);
+  assert.ok(['NightShaman/Node-Goblin', 'GoblinKing-Burrow/Node-Goblin'].includes(authority));
   assert.match(text, /releases\/download\/v\$VERSION/);
   assert.match(text, /sha256sum -c/);
   assert.match(text, /releases\/latest/);
@@ -44,12 +45,12 @@ test('selected revisioned release is verified and passed to its package installe
 set -eu
 printf '%s\\n' "$*" >> "$URL_LOG"
 case "$2" in
- https://github.com/NightShaman/Node-Goblin/releases/download/v2026.10.18.2/${name}.tar.gz) cp "$FIXTURE" "$4" ;;
- https://github.com/NightShaman/Node-Goblin/releases/download/v2026.10.18.2/${name}.tar.gz.sha256) cp "$FIXTURE.sha256" "$4" ;;
+ https://github.com/$EXPECTED_REPOSITORY/releases/download/v2026.10.18.2/${name}.tar.gz) cp "$FIXTURE" "$4" ;;
+ https://github.com/$EXPECTED_REPOSITORY/releases/download/v2026.10.18.2/${name}.tar.gz.sha256) cp "$FIXTURE.sha256" "$4" ;;
  *) echo 'unexpected release authority' >&2; exit 42 ;;
 esac
 `, { mode: 0o755 });
-    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, NODE_GOBLIN_VERSION: '2026.10.18.2', FIXTURE: archive, URL_LOG: path.join(tmp, 'urls'), RECEIPT: path.join(tmp, 'receipt') };
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, NODE_GOBLIN_VERSION: '2026.10.18.2', FIXTURE: archive, URL_LOG: path.join(tmp, 'urls'), RECEIPT: path.join(tmp, 'receipt'), EXPECTED_REPOSITORY: authority };
     const run = (args = [], extra = {}) => spawnSync('sh', [script, ...args], { env: { ...env, ...extra }, encoding: 'utf8' });
     const incomplete = run(['--controller', 'host:123']);
     assert.equal(incomplete.status, 2); assert.equal(fs.existsSync(env.URL_LOG), false);
@@ -66,5 +67,15 @@ esac
     assert.equal(updated.status, 0, updated.stderr);
     assert.equal(fs.readFileSync(env.RECEIPT, 'utf8'), 'source-verified\nupdate-and-restart\n');
     assert.doesNotMatch(updated.stdout, /Next:.*configure/);
+    for (const repository of ['NightShaman/Node-Goblin', 'GoblinKing-Burrow/Node-Goblin']) {
+      const selected = run(['--update'], { NODE_GOBLIN_REPOSITORY: repository, EXPECTED_REPOSITORY: repository });
+      assert.equal(selected.status, 0, selected.stderr);
+    }
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test('README public updater and explicit development override remain separate', () => {
+  const readme = fs.readFileSync(path.resolve('..', 'README.md'), 'utf8');
+  assert.ok(readme.includes('https://raw.githubusercontent.com/GoblinKing-Burrow/Node-Goblin/main/install.sh | sudo sh -s -- --update'));
+  assert.ok(readme.includes('sudo env NODE_GOBLIN_REPOSITORY=NightShaman/Node-Goblin'));
 });
