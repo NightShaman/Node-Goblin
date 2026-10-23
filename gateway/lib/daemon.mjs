@@ -9,6 +9,7 @@ import { PROTOCOL_VERSION, normalizeTraceContext, operationIdFromRequest, reques
 import { runProcess } from './process-runner.mjs';
 import { runFilesystem } from './filesystem-runner.mjs';
 import { createGatewayTelemetry } from './otel-runtime.mjs';
+import { collectHostMetadata } from './host-metadata.mjs';
 
 export class GatewayDaemon {
   constructor({ input = process.stdin, output = process.stdout, error = process.stderr, now = () => Date.now(), journal = new OperationJournal(), identity = {}, telemetry = null } = {}) {
@@ -43,7 +44,7 @@ export class GatewayDaemon {
     const method = String(message.method ?? '');
     const params = message.params && typeof message.params === 'object' ? message.params : {};
     if (method === 'hello') {
-      send({ type: 'response', requestId: message.id ?? null, ok: true, result: { ...this.identity } });
+      send({ type: 'response', requestId: message.id ?? null, ok: true, result: { ...this.identity, host: collectHostMetadata() } });
       return;
     }
     if (method === 'health') {

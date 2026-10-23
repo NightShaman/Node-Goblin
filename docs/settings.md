@@ -22,7 +22,7 @@ The UI password-style fields prevent redisplaying existing secret values. They d
 
 ## Trust and connection status
 
-Approved and connected are separate conditions. A trusted but offline host can appear disconnected. Gateway metadata includes implementation name, reported version/protocol, connected time, and last-seen time. Last-seen time advances on incoming protocol data; there is no periodic heartbeat scheduler in this repository.
+Approved and connected are separate conditions. A trusted but offline host can appear disconnected. Gateway metadata includes implementation name, reported version/protocol, connected time, and last-seen time. Last-seen time advances on incoming protocol data; there is no periodic heartbeat scheduler in this repository. The gateway can return current bounded hostname, platform, and interface IPs when Core explicitly requests `hello`; these are local observations, not persisted reachability, primary-route, or verified LAN claims. Existing Settings/UI do not automatically display them.
 
 A process list in gateway health is the controller's view of accepted operations on that connection. It is not a full operating-system process inventory.
 

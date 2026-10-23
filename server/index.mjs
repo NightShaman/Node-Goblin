@@ -286,6 +286,7 @@ export function shellExecResult(request, dispatch) {
 export function createProcessController(service, { logger = console, operationStore = null } = {}) {
   if (!service || typeof service.dispatchProcessExec !== 'function' || typeof service.dispatchCancel !== 'function') throw new Error('controller_service_invalid');
   return Object.freeze({
+    describeHost: targetId => service.describeHost?.(targetId) ?? null,
     async executeProcess(request = {}, { abortSignal = null } = {}) {
       const operationId = String(request.operationId ?? '').trim();
       const targetId = String(request.targetId ?? '').trim();
@@ -504,6 +505,7 @@ export async function createControllerService({ settings, secrets, listenerFacto
         await intent(id, false);
       });
     },
+    describeHost: (gatewayId) => listener?.describeHost?.(gatewayId) ?? null,
     listLiveGateways: () => listener ? listener.listLiveGateways() : [],
     listGateways: () => listener
       ? (listener.listGateways?.() ?? listener.listLiveGateways())

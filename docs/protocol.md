@@ -11,20 +11,22 @@ The daemon accepts one JSON request per line and emits JSON lines. Protocol vers
 ```
 
 ```json
-{"type":"response","requestId":"request-1","ok":true,"result":{"name":"burrow-host-gateway","protocolVersion":"1.0","transport":"stdio-jsonl"}}
+{"type":"response","requestId":"request-1","ok":true,"result":{"name":"burrow-host-gateway","protocolVersion":"1.0","transport":"stdio-jsonl","host":{"hostname":"worker-1","platform":"linux","addresses":[{"interface":"en0","interfaceKind":"lan-candidate","family":"IPv4","address":"192.0.2.10"}]}}}
 ```
 
 `requestId` correlates a transport request. `operationId` identifies execution for deduplication/replay and must be kept stable across a safe retry of the same operation. They serve different purposes.
 
 | Method | Parameters | Result |
 | --- | --- | --- |
-| `hello` | None | Name, implementation version, protocol version, transport |
+| `hello` | None | Name, implementation version, protocol version, transport, current host metadata |
 | `health` | None | Status and active operation IDs |
 | `telemetry.configure` | `{enabled, endpoint, headers?}` | Validated in-memory telemetry configuration status |
 | `process.exec` | Operation ID and process options | Accepted envelope, stream/terminal events, terminal response |
 | `filesystem.execute` | Operation ID, tool, arguments | Accepted envelope and terminal filesystem result |
 | `cancel` | `operationId` | `{operationId, cancelling}`; cancellation request is not terminal evidence |
 | `shutdown` | None | Idle-daemon administrative/development stop; complete active operations first |
+
+`hello.result.host` is sampled from the gateway OS for each hello request (stdio or authenticated network application request): `{hostname: string|null, platform: string|null, addresses: [{interface, interfaceKind, family, address}]}`. `family` is `IPv4` or `IPv6`; `interfaceKind` is `lan-candidate`, `container`, `vpn`, or `unknown`, inferred from interface **names** only. Hostname/platform and interface names/IPs are validated and bounded; internal/loopback entries and MAC addresses are omitted. At most 32 interface names and 64 addresses are reported. The list is an observed local snapshot, **not** a chosen primary route, assurance of LAN membership, or promise any listed address is reachable from Core. Docker and VPN addresses may be present; verify topology and reachability independently. No periodic heartbeat or automatic polling is implied.
 
 Malformed JSON produces an `invalid_json` protocol error. Unsupported methods produce `unknown_method`. Network authentication messages are handled by the transport before daemon dispatch.
 

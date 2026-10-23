@@ -344,3 +344,37 @@ test('listener bounds authentication lifetime', async () => {
   assert.equal(socket.messages().at(-1).error.code, 'authentication_timeout');
   await listener.close();
 });
+
+test('describeHost reads current authenticated hello metadata, tolerates old gateways, and clears deadlines', async () => {
+  const { listener, server } = listenerFixture();
+  const socket = server.connect();
+  try {
+    assert.equal(await listener.describeHost('gateway-1'), null);
+    authenticate(socket);
+    const host = { hostname: 'worker', platform: 'linux', addresses: [
+      { interface: 'docker0', family: 'IPv4', address: '172.17.0.1', interfaceKind: 'lan-candidate', mac: 'secret' },
+      { interface: 'eno1', family: 'IPv4', address: '10.10.20.105' },
+      { interface: 'evil\ntext', family: 'IPv4', address: '10.0.0.1' },
+    ] };
+    const read = listener.describeHost('gateway-1');
+    const request = socket.messages().at(-1);
+    assert.equal(request.method, 'hello');
+    socket.feed({ type: 'response', requestId: request.id, ok: true, result: { host } });
+    const result = await read;
+    assert.equal(result.hostname, 'worker');
+    assert.equal(result.addresses[0].address, '10.10.20.105');
+    assert.equal(result.addresses[1].interfaceKind, 'container');
+    assert.equal(JSON.stringify(result).includes('mac'), false);
+    assert.ok(Number.isFinite(Date.parse(result.observedAt)));
+    const legacy = listener.describeHost('gateway-1');
+    socket.feed({ type: 'response', requestId: socket.messages().at(-1).id, ok: true, result: { name: 'old' } });
+    assert.equal(await legacy, null);
+    const keepAlive = setInterval(() => {}, 20);
+    try { assert.equal(await listener.describeHost('gateway-1', 10), null); }
+    finally { clearInterval(keepAlive); }
+    assert.equal(listener.liveGateway('gateway-1').pendingRequests.size, 0);
+    const disconnected = listener.describeHost('gateway-1');
+    socket.destroy();
+    assert.equal(await disconnected, null);
+  } finally { listener.close(); }
+});

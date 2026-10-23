@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import tls from 'node:tls';
+import { normalizeHostMetadata } from './host-metadata.mjs';
 import { controllerIdentity, pairingCode, verifyPairing } from './pairing.mjs';
 
 const AUTH_CONTEXT = 'burrow-host-gateway-auth-v1';
@@ -456,6 +457,32 @@ export class GatewayControllerListener extends EventEmitter {
     const connection = this.liveGateway(gatewayId);
     if (!connection) return Promise.reject(Object.assign(new Error('gateway_not_connected'), { code: 'gateway_not_connected' }));
     return connection.dispatch('cancel', { operationId });
+  }
+
+  // Read fresh interface state over the selected authenticated connection. Never
+  // infer the host's advertised addresses from a controller-side socket/NAT IP.
+  async describeHost(gatewayId, timeoutMs = 800) {
+    const connection = this.liveGateway(gatewayId);
+    if (!connection || connection.state !== 'ready') return null;
+    let timer;
+    try {
+      const dispatched = connection.dispatch('hello');
+      const requestId = [...connection.pendingRequests.keys()].at(-1);
+      const result = await Promise.race([
+        dispatched,
+        new Promise((resolve) => { timer = setTimeout(() => {
+          const pending = connection.pendingRequests.get(requestId);
+          if (pending) { connection.pendingRequests.delete(requestId); pending.resolve(null); }
+          resolve(null);
+        }, timeoutMs); timer.unref?.(); }),
+      ]);
+      // Disconnection/replacement during the request invalidates its snapshot.
+      if (this.liveGateway(gatewayId) !== connection || connection.state !== 'ready'
+        || result?.response?.ok !== true) return null;
+      const host = normalizeHostMetadata(result.response.result?.host);
+      return host ? { ...host, observedAt: new Date().toISOString() } : null;
+    } catch { return null; }
+    finally { clearTimeout(timer); }
   }
 
   async dispatchTelemetryConfiguration(gatewayId, configuration, timeoutMs = DEFAULT_CONFIGURATION_TIMEOUT_MS) {

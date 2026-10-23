@@ -110,6 +110,20 @@ test('unauthenticated and malformed requests cannot reach daemon', async () => {
   } finally { transport.stop(); }
 });
 
+test('authenticated network hello returns current bounded host metadata', async () => {
+  const { transport, sockets } = fixture();
+  try {
+    authenticate(sockets[0]);
+    sockets[0].feed({ id: 'host-hello', method: 'hello' });
+    await waitFor(() => sockets[0].messages().some((message) => message.requestId === 'host-hello'));
+    const host = sockets[0].messages().find((message) => message.requestId === 'host-hello').result.host;
+    assert.equal(typeof host.hostname === 'string' || host.hostname === null, true);
+    assert.equal(typeof host.platform === 'string' || host.platform === null, true);
+    assert.equal(Array.isArray(host.addresses), true);
+    assert.equal(host.addresses.every((entry) => !Object.hasOwn(entry, 'mac') && !Object.hasOwn(entry, 'reachable')), true);
+  } finally { await transport.stop(); }
+});
+
 test('authenticated execution correlates accepted, terminal evidence, and response', async () => {
   const { transport, sockets } = fixture();
   try {

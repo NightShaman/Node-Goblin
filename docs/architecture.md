@@ -95,3 +95,21 @@ Core storage implementation and encryption guarantees are outside this repositor
 - [`server/index.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/server/index.mjs)
 - [`gateway/lib/controller-listener.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/controller-listener.mjs)
 - [`gateway/lib/daemon.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/daemon.mjs)
+
+
+## Selected-host network provenance
+
+Mini Node Goblin collects its current hostname, OS platform and external interface
+addresses for each authenticated `hello`. The controller's optional
+`describeHost(targetId)` execution-provider method requests that fresh snapshot,
+validates and bounds it, and stamps `observedAt` on receipt. Core can include it
+in the selected-host prompt context without changing target IDs or routing.
+Offline, old, malformed or unresponsive hosts return no address metadata; a short
+deadline prevents metadata discovery from holding up a turn. Reports are not
+saved as static host addresses. Interface-name hints distinguish likely host,
+container and VPN interfaces but never establish reachability from a browser or
+another execution host. Settings display is unchanged.
+
+This requires the updated controller mod, Mini Node Goblin host package and Core
+execution-provider bridge. They remain backward-compatible when updated in any
+order; missing metadata does not block ordinary execution.
