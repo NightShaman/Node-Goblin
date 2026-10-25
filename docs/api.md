@@ -30,7 +30,7 @@ These targets are distinct from paired gateway execution identities.
 
 Controller enabled is true only for literal boolean true. Host defaults `127.0.0.1`, must be nonempty and at most 255 characters. Port defaults 7443 and must be an integer 1–65535. TLS input is stored; do not assume route validation fully proves certificate/key compatibility. Empty/omitted CA clears the optional CA.
 
-The GET route returns configured/ready flags, never secret key/certificate values. Saved configuration and active service state can differ until restart.
+Both TLS mutation responses also include a `warning`: replacing or clearing the certificate changes host pins, so key-paired hosts may need verified unpair/re-pair. The controller cannot diagnose a remote pin mismatch. The GET route returns configured/ready flags, never secret key/certificate values. Saved configuration and active service state can differ until restart.
 
 ## Pairing and trust
 
@@ -45,7 +45,7 @@ The GET route returns configured/ready flags, never secret key/certificate value
 
 Controller ID defaults `controller` and is nonempty, at most 255 characters. HMAC secret input must be nonempty. Updating HMAC trust for an Ed25519-paired gateway returns 409 `gateway_credential_method_ed25519`; this route does not convert its credential method. The trust-list route checks whether secret material exists and reports metadata, not its value.
 
-Pairing approval requires the current live pending transcript. Pending records are not automatically expired by age and can remain listed after disconnect or restart; the 60-second default authentication timeout applies to the live connection, not to record retention. Reconnect before approval if the challenge is no longer live. Controller-side trust deletion also removes pending records, clears both credential names, and invokes listener revocation. Treat these operations as administrative host-access changes.
+Pairing approval requires the current live pending transcript and its matching connection generation. New key pairings require TLS-certificate channel binding. Pending records are validated and bounded to 256 entries. Pending records are not automatically expired by age and can remain listed after disconnect or restart; the 60-second default authentication timeout applies to the live connection, not to record retention. Reconnect before approval if the challenge is no longer live. Controller-side trust deletion also removes pending records, clears both credential names, and invokes listener revocation. Treat these operations as administrative host-access changes.
 
 ## Gateways and operation activity
 

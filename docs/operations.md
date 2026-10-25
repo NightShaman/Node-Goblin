@@ -26,6 +26,7 @@ Protect logs before sharing them. Pairing logs contain pairing codes; process re
 | Controller appears disabled | Saved enabled flag and restart | Save desired settings and restart BURROW |
 | TLS generation failed | OpenSSL availability and controller secret storage | Supply reviewed TLS material or restore required tooling/storage |
 | Certificate/identity mismatch | Current controller key/cert vs host's saved trust | Investigate unexpected change; do not bypass trust checks blindly |
+| `channel_binding_required` on a new pairing | Controller and host pairing-protocol compatibility | Update both to compatible channel-binding-capable versions; do not bypass identity checks |
 | Pending request cannot be approved | Current node connection/nonce vs persisted pending record | Reconnect and compare the fresh code |
 | Gateway already connected | Duplicate gateway ID or cloned state | Stop the unintended duplicate; preserve independent host identities |
 | `gateway_not_connected` / `gateway_not_ready` | Connection and approval state | Establish trusted connection before execution |

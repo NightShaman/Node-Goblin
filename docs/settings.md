@@ -16,7 +16,7 @@ Node Goblin supplies declarative settings data and action handlers. BURROW rende
 
 The initial listener is disabled, bound to `127.0.0.1:7443` when enabled with defaults. Saving settings does not reconfigure the active listener in place. Inspect its reported state after restart and verify an actual connection.
 
-You can save a key and certificate together, with an optional CA. Clearing TLS removes saved material. When the controller is enabled and required key/certificate material is absent, activation attempts to generate a self-signed RSA-3072 certificate using OpenSSL. Certificates generated here are configured for 3,650 days, with metadata suggesting rotation after nine years; there is no automatic rotation scheduler in this repository.
+You can save a key and certificate together, with an optional CA. Clearing TLS removes saved material. Both Save TLS and Clear TLS ask for confirmation about changed certificate pins and possible verified host unpair/re-pair; clearing and restarting can generate a different certificate. The controller cannot diagnose a host-side pin mismatch. When the controller is enabled and required key/certificate material is absent, activation attempts to generate a self-signed RSA-3072 certificate using OpenSSL. Certificates generated here are configured for 3,650 days, with metadata suggesting rotation after nine years; there is no automatic rotation scheduler in this repository.
 
 The UI password-style fields prevent redisplaying existing secret values. They do not replace access control over the BURROW session, secrets store, browser, or backups. A supplied CA alone does not document a requirement for TLS client certificates; application-layer gateway identity still matters.
 
