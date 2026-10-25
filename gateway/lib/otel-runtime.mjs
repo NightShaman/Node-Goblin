@@ -18,7 +18,11 @@ function endpoint(env) {
 }
 function parseHeaders(source) {
   if (!source) return {};
-  try { return Object.fromEntries(String(source).split(',').map((entry) => entry.split('=', 2).map((item) => decodeURIComponent(item.trim()))).filter(([key, value]) => key && value)); }
+  try { return Object.fromEntries(String(source).split(',').map((entry) => {
+    const separator = entry.indexOf('=');
+    return [decodeURIComponent((separator < 0 ? entry : entry.slice(0, separator)).trim()),
+      separator < 0 ? undefined : decodeURIComponent(entry.slice(separator + 1).trim())];
+  }).filter(([key, value]) => key && value)); }
   catch { throw new Error('telemetry_headers_invalid'); }
 }
 function headers(env) { return parseHeaders(env.OTEL_EXPORTER_OTLP_TRACES_HEADERS || env.OTEL_EXPORTER_OTLP_HEADERS); }
@@ -57,7 +61,7 @@ function boundedWait(promise, timeoutMs) {
   ]).finally(() => clearTimeout(timer));
 }
 
-export function createGatewayTelemetry({ env = process.env, version = null, fetchImpl = globalThis.fetch, randomTraceId = () => hex(16), randomSpanId = () => hex(8) } = {}) {
+export function createGatewayTelemetry({ env = process.env, version = null, fetchImpl = globalThis.fetch, randomTraceId = () => hex(16), randomSpanId = () => hex(8), logger = console } = {}) {
   const environmentUrl = endpoint(env);
   let environmentHeaders = {};
   if (environmentUrl) {
@@ -72,6 +76,7 @@ export function createGatewayTelemetry({ env = process.env, version = null, fetc
   const shutdownTimeoutMs = positiveInteger(env.OTEL_BSP_SHUTDOWN_TIMEOUT || env.OTEL_EXPORTER_OTLP_TRACES_TIMEOUT || env.OTEL_EXPORTER_OTLP_TIMEOUT, timeoutMs);
   const queue = [];
   const failures = { export: 0, dropped: 0, shutdown: 0 };
+  let lastExportFailure = null;
   let flushing = null;
   let timer = null;
   let closed = false;
@@ -89,9 +94,18 @@ export function createGatewayTelemetry({ env = process.env, version = null, fetc
           headers: { 'content-type': 'application/json', ...targetHeaders },
           body: JSON.stringify({ resourceSpans: [{ resource: { attributes: attributes({ 'service.name': 'node-goblin', ...(version ? { 'service.version': version } : {}) }) }, scopeSpans: [{ scope: { name: 'node-goblin.gateway', ...(version ? { version } : {}) }, spans: batch }] }] }),
         });
-        if (!response.ok) throw new Error('otlp_export_failed');
-      } catch { failures.export += 1; failures.dropped += batch.length; }
-      finally { flushing = null; }
+        if (!response.ok) {
+          const statusCode = Number.isInteger(response.status) && response.status >= 100 && response.status <= 599 ? response.status : null;
+          lastExportFailure = { reason: 'http_status', ...(statusCode ? { statusCode } : {}) };
+        } else lastExportFailure = null;
+      } catch { lastExportFailure = { reason: 'transport_error' }; }
+      finally {
+        if (lastExportFailure) {
+          failures.export += 1; failures.dropped += batch.length;
+          try { logger.warn?.(`Node Goblin telemetry export failed: ${lastExportFailure.reason}${lastExportFailure.statusCode ? ` status=${lastExportFailure.statusCode}` : ''}`); } catch { /* Logging must not affect remote operations. */ }
+        }
+        flushing = null;
+      }
     })();
     return flushing;
   }
@@ -111,7 +125,8 @@ export function createGatewayTelemetry({ env = process.env, version = null, fetc
     const nextUrl = environmentUrl || controlledUrl;
     const nextHeaders = Object.keys(environmentHeaders).length ? environmentHeaders : controlledHeaders(configuration.headers);
     if (timer) { clearTimeout(timer); timer = null; }
-    if (flushing) await flushing;
+    // An in-flight export already owns its URL and headers. Do not hold a
+    // configuration response hostage to a collector that ignores abort signals.
     if (queue.length) { failures.dropped += queue.length; queue.length = 0; }
     url = nextUrl;
     requestHeaders = nextHeaders;
@@ -151,7 +166,7 @@ export function createGatewayTelemetry({ env = process.env, version = null, fetc
     }
   }
 
-  function status() { return { configured: Boolean(url), source, headersConfigured: Object.keys(requestHeaders).length > 0, queued: queue.length, failures: { ...failures } }; }
+  function status() { return { configured: Boolean(url), source, headersConfigured: Object.keys(requestHeaders).length > 0, queued: queue.length, failures: { ...failures, ...(lastExportFailure ? { lastExportFailure: { ...lastExportFailure } } : {}) } }; }
 
   async function shutdown({ timeout = shutdownTimeoutMs } = {}) {
     if (closed) return;

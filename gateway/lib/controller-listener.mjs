@@ -8,6 +8,14 @@ const AUTH_CONTEXT = 'burrow-host-gateway-auth-v1';
 import { MAX_FRAME_BYTES } from './output-frame.mjs';
 const DEFAULT_ACTIVITY_LIMIT = 256;
 const DEFAULT_CONFIGURATION_TIMEOUT_MS = 5_000;
+const SAFE_CONFIGURATION_REASONS = new Set([
+  'gateway_not_connected', 'gateway_not_ready', 'gateway_disconnected',
+  'gateway_configuration_timeout', 'telemetry_configuration_invalid',
+  'telemetry_endpoint_invalid', 'telemetry_headers_invalid',
+]);
+function configurationReason(error) {
+  return SAFE_CONFIGURATION_REASONS.has(error?.code) ? error.code : 'gateway_configuration_failed';
+}
 
 function optionalText(value, max = 255) {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null;
@@ -511,18 +519,23 @@ export class GatewayControllerListener extends EventEmitter {
           reject(Object.assign(new Error('gateway_configuration_timeout'), { code: 'gateway_configuration_timeout' }));
         }, timeoutMs); timer.unref?.(); }),
       ]);
-      if (result?.response?.ok !== true) throw Object.assign(new Error(result?.response?.error?.code || 'gateway_configuration_failed'), { code: result?.response?.error?.code || 'gateway_configuration_failed' });
+      if (result?.response?.ok !== true) {
+        const code = configurationReason(result?.response?.error);
+        throw Object.assign(new Error(code), { code });
+      }
       return result;
     } finally { clearTimeout(timer); }
   }
 
   async configureTelemetry(configuration) {
     const connected = [...this.connections.entries()].filter(([, connection]) => connection.state === 'ready');
-    const results = await Promise.allSettled(connected.map(([gatewayId]) => this.dispatchTelemetryConfiguration(gatewayId, configuration).then((result) => ({ gatewayId, result }))));
+    const results = await Promise.allSettled(connected.map(([gatewayId]) => this.dispatchTelemetryConfiguration(gatewayId, configuration)));
     return {
       configured: connected.length,
       succeeded: results.filter((entry) => entry.status === 'fulfilled').length,
       failed: results.filter((entry) => entry.status === 'rejected').length,
+      failures: results.flatMap((entry, index) => entry.status === 'rejected'
+        ? [{ gatewayId: connected[index][0], reason: configurationReason(entry.reason) }] : []),
     };
   }
 }

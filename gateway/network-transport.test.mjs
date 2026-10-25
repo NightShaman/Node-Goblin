@@ -7,6 +7,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { authenticationProof, enrollController, enrollmentConsumedPath, markEnrollmentConsumed, OutboundGatewayTransport, pairingCodePath, readControllerTrust, writePairingCode } from './lib/network-transport.mjs';
 import { controllerIdentity } from './lib/pairing.mjs';
+import { GatewayDaemon } from './lib/daemon.mjs';
+import { createGatewayTelemetry } from './lib/otel-runtime.mjs';
 import { MAX_FRAME_BYTES } from './lib/output-frame.mjs';
 
 class FakeSocket extends EventEmitter {
@@ -320,4 +322,23 @@ test('local confirmation is transcript-scoped and is discarded on reconnect', ()
     assert.equal(transport.authenticated, false);
     assert.equal(JSON.parse(fs.readFileSync(path.join(stateDir, 'node-identity.json'))).controllerPublicKey, undefined);
   } finally { transport.stop(); fs.rmSync(stateDir, { recursive: true, force: true }); }
+});
+
+
+test('configuration delivered immediately after authentication is acknowledged despite a hung export', async () => {
+  let started;
+  const exportStarted = new Promise((resolve) => { started = resolve; });
+  const telemetry = createGatewayTelemetry({ env: { OTEL_EXPORTER_OTLP_ENDPOINT: 'https://host.example' }, fetchImpl: async () => { started(); return new Promise(() => {}); } });
+  const daemon = new GatewayDaemon({ telemetry });
+  const { transport, sockets, stateDir } = fixture({ daemon, reconnectMinMs: 10000, reconnectMaxMs: 10000 });
+  try {
+    await telemetry.execute({ kind: 'process', operation: async () => ({ exitCode: 0 }) });
+    void telemetry.flush();
+    await exportStarted;
+    authenticate(sockets[0]);
+    assert.equal(transport.authenticated, true);
+    sockets[0].feed({ id: 'config-1', method: 'telemetry.configure', params: { enabled: true, endpoint: 'https://controller.example', headers: 'authorization=private==' } });
+    await waitFor(() => sockets[0].messages().some((message) => message.requestId === 'config-1'));
+    assert.equal(sockets[0].messages().find((message) => message.requestId === 'config-1').ok, true);
+  } finally { await transport.stop({ flushTelemetry: false }); await telemetry.shutdown({ timeout: 20 }); fs.rmSync(stateDir, { recursive: true, force: true }); }
 });

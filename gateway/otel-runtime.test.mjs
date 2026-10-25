@@ -109,3 +109,61 @@ test('collector failure and hung shutdown are bounded without failing remote wor
   assert.ok(Date.now() - started < 250);
   assert.equal(telemetry.status().failures.shutdown, 1);
 });
+
+
+test('header values retain padding and embedded equals after percent decoding', async () => {
+  const requests = [];
+  const telemetry = createGatewayTelemetry({ env: { OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example', OTEL_EXPORTER_OTLP_HEADERS: 'authorization=Bearer%20abc==,x-token=abc%3D%3D' }, fetchImpl: async (_url, options) => { requests.push(options.headers); return { ok: true }; } });
+  await telemetry.execute({ kind: 'process', operation: async () => ({ exitCode: 0 }) });
+  await telemetry.flush();
+  assert.equal(requests[0].authorization, 'Bearer abc==');
+  assert.equal(requests[0]['x-token'], 'abc==');
+  await telemetry.configure({ enabled: true, endpoint: 'https://other.example', headers: 'authorization=ignored==' });
+  await telemetry.shutdown();
+  const controller = createGatewayTelemetry({ env: {}, fetchImpl: async (_url, options) => { requests.push(options.headers); return { ok: true }; } });
+  await controller.configure({ enabled: true, endpoint: 'https://collector.example', headers: 'authorization=Bearer%20def==' });
+  await controller.execute({ kind: 'process', operation: async () => ({ exitCode: 0 }) });
+  await controller.shutdown();
+  assert.equal(requests[1].authorization, 'Bearer def==');
+});
+
+test('collector failures expose only safe reason and numeric HTTP status', async () => {
+  const logs = [];
+  let response = { ok: false, status: 401, body: 'collector-secret' };
+  const telemetry = createGatewayTelemetry({ env: { OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example', OTEL_EXPORTER_OTLP_HEADERS: 'authorization=secret-token' }, logger: { warn: (message) => logs.push(message) }, fetchImpl: async () => {
+    if (response instanceof Error) throw response;
+    return response;
+  } });
+  for (const outcome of [response, new Error('secret-token'), { ok: false, status: 'secret-token' }]) {
+    response = outcome;
+    await telemetry.execute({ kind: 'process', operation: async () => ({ exitCode: 0 }) });
+    await telemetry.flush();
+  }
+  assert.deepEqual(logs, [
+    'Node Goblin telemetry export failed: http_status status=401',
+    'Node Goblin telemetry export failed: transport_error',
+    'Node Goblin telemetry export failed: http_status',
+  ]);
+  assert.equal(telemetry.status().failures.export, 3);
+  assert.equal(JSON.stringify(telemetry.status()).includes('secret-token'), false);
+  await telemetry.shutdown();
+});
+
+test('reconfiguration responds while an old collector export is hung', async () => {
+  let oldRequestStarted;
+  const started = new Promise((resolve) => { oldRequestStarted = resolve; });
+  const telemetry = createGatewayTelemetry({ env: {}, fetchImpl: async (url) => {
+    if (url.includes('old.example')) { oldRequestStarted(); return new Promise(() => {}); }
+    return { ok: true };
+  } });
+  await telemetry.configure({ enabled: true, endpoint: 'https://old.example', headers: '' });
+  await telemetry.execute({ kind: 'process', operation: async () => ({ exitCode: 0 }) });
+  void telemetry.flush();
+  await started;
+  await Promise.race([
+    telemetry.configure({ enabled: true, endpoint: 'https://new.example', headers: '' }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('configuration_blocked')), 100)),
+  ]);
+  assert.equal(telemetry.status().source, 'controller');
+  await telemetry.shutdown({ timeout: 20 });
+});

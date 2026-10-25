@@ -177,7 +177,7 @@ test('fans telemetry configuration to authenticated gateways', async () => {
     const outbound = socket.messages().find((message) => message.method === 'telemetry.configure');
     assert.equal(outbound.params.headers, 'x-token=private');
     socket.feed({ type: 'response', requestId: outbound.id, ok: true, result: { configured: true, source: 'controller' } });
-    assert.deepEqual(await pending, { configured: 1, succeeded: 1, failed: 0 });
+    assert.deepEqual(await pending, { configured: 1, succeeded: 1, failed: 0, failures: [] });
   } finally { listener.close(); }
 });
 
@@ -378,5 +378,18 @@ test('describeHost reads current authenticated hello metadata, tolerates old gat
     const disconnected = listener.describeHost('gateway-1');
     socket.destroy();
     assert.equal(await disconnected, null);
+  } finally { listener.close(); }
+});
+
+
+test('failed configuration reports gateway identity and allowlisted reason without host error content', async () => {
+  const { listener, server } = listenerFixture();
+  const socket = server.connect();
+  try {
+    authenticate(socket);
+    const pending = listener.configureTelemetry({ enabled: true, endpoint: 'https://collector.example', headers: 'authorization=secret-token' });
+    const outbound = socket.messages().find((message) => message.method === 'telemetry.configure');
+    socket.feed({ type: 'response', requestId: outbound.id, ok: false, error: { code: 'private collector response secret-token' } });
+    assert.deepEqual(await pending, { configured: 1, succeeded: 0, failed: 1, failures: [{ gatewayId: 'gateway-1', reason: 'gateway_configuration_failed' }] });
   } finally { listener.close(); }
 });

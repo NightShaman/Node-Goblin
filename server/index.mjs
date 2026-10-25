@@ -444,7 +444,13 @@ export async function createControllerService({ settings, secrets, listenerFacto
   if (listener?.on) listener.on('gatewayAuthenticated', ({ gatewayId, connection }) => {
     if (!connection || connection.state !== 'ready') return;
     void listener.dispatchTelemetryConfiguration(gatewayId, telemetryConfiguration)
-      .catch(() => logger.warn?.('Node Goblin telemetry configuration failed: telemetry_configuration_failed'));
+      .catch((error) => {
+        const reason = error?.code === 'gateway_configuration_timeout' ? 'gateway_configuration_timeout'
+          : error?.code === 'gateway_disconnected' ? 'gateway_disconnected'
+          : ['telemetry_configuration_invalid', 'telemetry_endpoint_invalid', 'telemetry_headers_invalid'].includes(error?.code)
+            ? error.code : 'gateway_configuration_failed';
+        logger.warn?.(`Node Goblin telemetry configuration failed: gateway=${JSON.stringify(gatewayId)} reason=${reason}`);
+      });
   });
   if (listener?.on) listener.on('gatewayPairingPending', (pairing) => {
     const token = generation(pairing.gatewayId);

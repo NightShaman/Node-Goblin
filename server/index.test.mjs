@@ -487,3 +487,20 @@ test('durable pending collection is validated and bounded even when listener is 
   assert.equal(JSON.stringify(value.values.get('pendingNodeGoblinPairings')).includes('oversizedMetadata'), false);
   service.close();
 });
+
+test('authenticated telemetry delivery failure logs host identity and safe reason only', async () => {
+  const value = harness();
+  await value.settings.set('controller', { enabled: true });
+  await value.secrets.set('controller.tls.key', 'key'); await value.secrets.set('controller.tls.cert', 'cert');
+  const warnings = [];
+  const listener = Object.assign(new EventEmitter(), {
+    listen() { this.emit('listening'); }, close() {},
+    dispatchTelemetryConfiguration: async () => { throw Object.assign(new Error('secret-token collector details'), { code: 'secret-token' }); },
+  });
+  const service = await createControllerService({ settings: value.settings, secrets: value.secrets, listenerFactory: () => listener, logger: { warn: (message) => warnings.push(message) } });
+  listener.emit('gatewayAuthenticated', { gatewayId: 'host-1', connection: { state: 'ready' } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(warnings, ['Node Goblin telemetry configuration failed: gateway="host-1" reason=gateway_configuration_failed']);
+  assert.equal(warnings.join('').includes('secret-token'), false);
+  service.close();
+});

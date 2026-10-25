@@ -33,13 +33,13 @@ Core Settings normally delivers telemetry configuration through the provider. Th
 | --- | --- |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Exact trace URL; takes precedence over the base endpoint and Core Settings |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Base URL; runtime appends `/v1/traces`; takes precedence over Core Settings |
-| `OTEL_EXPORTER_OTLP_TRACES_HEADERS` / `OTEL_EXPORTER_OTLP_HEADERS` | Trace-specific header string takes precedence; comma-separated, percent-decoded `key=value` pairs |
+| `OTEL_EXPORTER_OTLP_TRACES_HEADERS` / `OTEL_EXPORTER_OTLP_HEADERS` | Trace-specific header string takes precedence; comma-separated, percent-decoded `key=value` pairs (values may contain `=` padding) |
 | `OTEL_BSP_MAX_QUEUE_SIZE` | 512 spans |
 | `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` / `OTEL_EXPORTER_OTLP_TIMEOUT` / `OTEL_BSP_EXPORT_TIMEOUT` | First nonempty setting in the listed order; invalid/nonpositive values fall back to 3,000 ms |
 | `OTEL_BSP_SCHEDULE_DELAY` | 1,000 ms |
 | `OTEL_BSP_SHUTDOWN_TIMEOUT` | Shutdown override; otherwise trace/general timeout, then effective export timeout |
 
-A configured environment endpoint remains active even if Core disables telemetry. Nonempty parsed environment headers also override controller headers. Keep collector credentials in protected configuration, never in endpoint URLs or command arguments. Core-delivered endpoints accept HTTP(S) without credentials, query, or fragment. Exports use OTLP/HTTP JSON and are best-effort with bounded queues; failed batches can be dropped.
+A configured environment endpoint remains active even if Core disables telemetry. Nonempty parsed environment headers also override controller headers. Keep collector credentials in protected configuration, never in endpoint URLs or command arguments. Core-delivered endpoints accept HTTP(S) without credentials, query, or fragment. Exports use OTLP/HTTP JSON and are best-effort with bounded queues; failed batches can be dropped. Export warnings and status include only a fixed failure reason and, for HTTP failures, a numeric status code; collector response bodies, header values, and exception text are not logged. Telemetry configuration failures identify the gateway and a fixed safe reason without logging credentials or remote response text. An in-flight export keeps its original destination and does not delay new configuration delivery.
 
 ## Controller settings names
 
