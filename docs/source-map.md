@@ -30,3 +30,13 @@ Public release versions use `YYYY.MM.DD`. The wire protocol version is a separat
 ## Review checkpoint: 21 October 2026
 
 All pages in this section were reconciled from the [2026.10.19 runtime baseline](https://github.com/GoblinKing-Burrow/Node-Goblin/tree/0ff5f7ee03624aa8a2e7d19a492fdb871f4e698d) through [public source `d5e0957`](https://github.com/GoblinKing-Burrow/Node-Goblin/tree/d5e095714bf4093c2ee5a04ec4d8d0bbe79a3531). The public runtime implementation is unchanged across that interval; documentation changes do not imply a new runtime release. Core-dependent and forthcoming managed-skill behavior is identified separately in the relevant guides.
+
+### Pairing audit remediation coverage
+
+`gateway/audit-remediation.test.mjs` covers certificate-transcript substitution,
+new-pairing downgrade refusal, approved-v1 compatibility, pending admission/restore
+bounds and restrictive journal replacement. `server/index.test.mjs` covers durable
+pending normalization, DER TLS metadata and dynamically saved credential redaction;
+`gateway/test/lifecycle.test.mjs` covers atomic pairing-confirmation replacement.
+See [pairing compatibility](pairing.md#upgrade-compatibility) and
+[controller TLS replacement](operations.md#controller-tls-replacement).

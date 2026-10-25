@@ -1,3 +1,4 @@
+import { boundedPending } from '../gateway/lib/pairing.mjs';
 import { createHash } from 'node:crypto';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -111,7 +112,7 @@ async function configuredGatewayIdentities(settings, secrets) {
   }))).filter(Boolean);
 }
 
-async function pendingPairings(settings) { const values = await settings.get(PENDING_PAIRINGS_NAME, []); return Array.isArray(values) ? values.filter((value) => value?.gatewayId && value?.publicKey && value.status === 'pending') : []; }
+async function pendingPairings(settings) { return boundedPending(await settings.get(PENDING_PAIRINGS_NAME, [])); }
 
 async function controllerTlsMetadata(settings) {
   const value = await settings?.get?.(TLS_METADATA_NAME, null);
@@ -132,7 +133,7 @@ function generateControllerTls(host) {
     const cert = fs.readFileSync(certFile, 'utf8');
     if (!key.includes('PRIVATE KEY') || !cert.includes('CERTIFICATE')) throw new Error('generated_tls_invalid');
     const createdAt = new Date().toISOString();
-    return { key, cert, metadata: { source: 'generated', algorithm: 'rsa-3072', host, subjectAltName: san, createdAt, expiresAt: new Date(Date.now() + 3650 * 24 * 60 * 60 * 1000).toISOString(), rotateAfter: new Date(Date.now() + 9 * 365 * 24 * 60 * 60 * 1000).toISOString(), fingerprintSha256: crypto.createHash('sha256').update(cert).digest('hex') } };
+    return { key, cert, metadata: { source: 'generated', algorithm: 'rsa-3072', host, subjectAltName: san, createdAt, expiresAt: new Date(Date.now() + 3650 * 24 * 60 * 60 * 1000).toISOString(), rotateAfter: new Date(Date.now() + 9 * 365 * 24 * 60 * 60 * 1000).toISOString(), fingerprintSha256: crypto.createHash('sha256').update(new crypto.X509Certificate(cert).raw).digest('hex') } };
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 }
 
@@ -147,7 +148,7 @@ async function gatewayRecords(settings, secrets) {
     if (!TARGET_ID.test(gatewayId) || !controllerId) return null;
     const secret = await secrets?.get?.(`controller.gateway.${gatewayId}`);
     const publicKey = await secrets?.get?.(`controller.gateway.publicKey.${gatewayId}`) || value.publicKey;
-    return secret ? { gatewayId, controllerId, secret, publicKey } : (publicKey ? { gatewayId, controllerId, secret: '', publicKey } : null);
+    return secret ? { gatewayId, controllerId, secret, publicKey, channelBinding: value.channelBinding === true } : (publicKey ? { gatewayId, controllerId, secret: '', publicKey, channelBinding: value.channelBinding === true } : null);
   }))).filter(Boolean);
 }
 
@@ -362,7 +363,14 @@ export async function createControllerService({ settings, secrets, listenerFacto
   let pairingIdentity; const savedPairingIdentity = await secrets?.get?.('controller.pairing.identity');
   try { pairingIdentity = savedPairingIdentity ? JSON.parse(savedPairingIdentity) : null; } catch {}
   if (!pairingIdentity?.publicKey || !pairingIdentity?.privateKey) { pairingIdentity = controllerIdentity(); await secrets?.set?.('controller.pairing.identity', JSON.stringify(pairingIdentity)); }
-  const secretValues = records.map((record) => record.secret);
+  const secretValues = new Set(records.map((record) => record.secret).filter(Boolean));
+  // Normalize old/oversized durable collections before loading the listener.
+  const oldPending = await settings.get(PENDING_PAIRINGS_NAME, []);
+  const normalizedPending = boundedPending(oldPending);
+  if (JSON.stringify(oldPending) !== JSON.stringify(normalizedPending)) {
+    try { await settings.set(PENDING_PAIRINGS_NAME, normalizedPending); }
+    catch { logger.error?.('Node Goblin pairing persistence failed: pairing_persistence_failed'); }
+  }
   let key = await secrets?.get?.('controller.tls.key');
   let cert = await secrets?.get?.('controller.tls.cert');
   const ca = await secrets?.get?.('controller.tls.ca');
@@ -380,6 +388,16 @@ export async function createControllerService({ settings, secrets, listenerFacto
     }
   }
   if (!tlsMetadata && key && cert) { tlsMetadata = { source: 'configured' }; await settings?.set?.(TLS_METADATA_NAME, tlsMetadata); }
+  // Repair metadata from older PEM-text hashing; never infer a remote host pin.
+  if (cert) {
+    try {
+      const fingerprintSha256 = crypto.createHash('sha256').update(new crypto.X509Certificate(cert).raw).digest('hex');
+      if (tlsMetadata?.fingerprintSha256 !== fingerprintSha256) {
+        tlsMetadata = { ...tlsMetadata, fingerprintSha256 };
+        await settings.set(TLS_METADATA_NAME, tlsMetadata);
+      }
+    } catch { /* Invalid configured material is reported by TLS listener startup. */ }
+  }
   const tlsConfigured = { key: Boolean(key), cert: Boolean(cert), ca: Boolean(ca) };
   let listener = null;
   let listening = false;
@@ -435,7 +453,7 @@ export async function createControllerService({ settings, secrets, listenerFacto
       const values = await pendingPairings(settings);
       const index = values.findIndex((entry) => entry.gatewayId === pairing.gatewayId);
       if (index < 0) values.push(pairing); else values[index] = pairing;
-      await settings.set(PENDING_PAIRINGS_NAME, values);
+      await settings.set(PENDING_PAIRINGS_NAME, boundedPending(values));
     }).catch(() => logger.error?.('Node Goblin pairing persistence failed: pairing_persistence_failed'));
   });
   return Object.freeze({
@@ -453,7 +471,7 @@ export async function createControllerService({ settings, secrets, listenerFacto
         const previousPublicKey = await secrets?.get?.(publicKeyName);
         const gateways = Array.isArray(previousGateways) ? previousGateways.map((entry) => ({ ...entry })) : [];
         const index = gateways.findIndex((entry) => entry?.gatewayId === gatewayId);
-        const trusted = { gatewayId, controllerId: pairing.controllerId };
+        const trusted = { gatewayId, controllerId: pairing.controllerId, channelBinding: true };
         if (index < 0) gateways.push(trusted); else gateways[index] = trusted;
         await intent(gatewayId, true);
         try {
@@ -500,6 +518,7 @@ export async function createControllerService({ settings, secrets, listenerFacto
         const gateways = await settings.get(CONTROLLER_GATEWAYS_NAME, []);
         const remaining = gateways.filter((entry) => entry.gatewayId !== id);
         remaining.push(identity);
+        secretValues.add(secret);
         await secrets.set(`controller.gateway.${id}`, secret);
         await settings.set(CONTROLLER_GATEWAYS_NAME, remaining);
         await intent(id, false);
@@ -513,15 +532,15 @@ export async function createControllerService({ settings, secrets, listenerFacto
     listOperationActivity: (options) => listener?.listOperationActivity?.(options) ?? [],
     async dispatchProcessExec(gatewayId, params) {
       if (!listening) throw Object.assign(new Error(startError || 'controller_not_running'), { code: startError || 'controller_not_running' });
-      return redact(await listener.dispatchProcessExec(gatewayId, params), secretValues);
+      return redact(await listener.dispatchProcessExec(gatewayId, params), [...secretValues]);
     },
     async dispatchFilesystem(gatewayId, params) {
       if (!listening) throw Object.assign(new Error(startError || 'controller_not_running'), { code: startError || 'controller_not_running' });
-      return redact(await listener.dispatchFilesystem(gatewayId, params), secretValues);
+      return redact(await listener.dispatchFilesystem(gatewayId, params), [...secretValues]);
     },
     async dispatchCancel(gatewayId, operationId) {
       if (!listening) throw Object.assign(new Error(startError || 'controller_not_running'), { code: startError || 'controller_not_running' });
-      return redact(await listener.dispatchCancel(gatewayId, operationId), secretValues);
+      return redact(await listener.dispatchCancel(gatewayId, operationId), [...secretValues]);
     },
     async configureTelemetry(configuration) {
       telemetryConfiguration = { ...configuration };
@@ -578,11 +597,11 @@ export async function activate({ api, settings, secrets, logger, processExecutio
     await secrets.set('controller.tls.key', key); await secrets.set('controller.tls.cert', cert); await settings.set(TLS_METADATA_NAME, { source: 'configured' });
     if (body.ca == null || body.ca === '') await secrets.clear?.('controller.tls.ca');
     else await secrets.set('controller.tls.ca', String(body.ca));
-    return { ok: true, restartRequired: true };
+    return { ok: true, restartRequired: true, warning: 'TLS replacement changes certificate pins; existing key-paired hosts may require verified unpair/re-pair. The controller cannot diagnose a remote pin mismatch.' };
   });
   api.delete('/controller/tls', async () => {
     await secrets.clear?.('controller.tls.key'); await secrets.clear?.('controller.tls.cert'); await secrets.clear?.('controller.tls.ca'); await settings.delete?.(TLS_METADATA_NAME);
-    return { ok: true, restartRequired: true };
+    return { ok: true, restartRequired: true, warning: 'TLS replacement changes certificate pins; existing key-paired hosts may require verified unpair/re-pair. The controller cannot diagnose a remote pin mismatch.' };
   });
   api.get('/pairings', async () => ({ ok: true, pairings: await service.listPendingPairings?.() ?? [] }));
   api.post('/pairings/:gatewayId/approve', async ({ params }) => ({ ok: true, pairing: await service.approvePairing(cleanId(params.gatewayId)) }));

@@ -134,8 +134,8 @@ export async function createSettingsContribution(context) {
     description: `The active listener is ${controller.running ? 'running' : 'not running'} at ${controller.host || '—'}:${controller.port || '—'}${controller.error ? ` · ${controller.error}` : ''}. Changes require a Burrow restart when the listener reports it.`,
     actions: [
       { id: 'save-controller', label: 'Save controller', tone: 'primary', confirm: 'Save the Host Gateway controller configuration?' },
-      { id: 'save-tls', label: 'Save TLS', tone: 'primary', confirm: 'Save these TLS credentials? They will not be shown again.' },
-      { id: 'clear-tls', label: 'Clear TLS', tone: 'danger', confirm: 'Clear controller TLS credentials?' },
+      { id: 'save-tls', label: 'Save TLS', tone: 'primary', confirm: 'Replace TLS credentials? Certificate pins change; key-paired hosts may need verified unpair/re-pair. Credentials will not be shown again.' },
+      { id: 'clear-tls', label: 'Clear TLS', tone: 'danger', confirm: 'Clear TLS credentials? Restart regenerates the certificate; key-paired hosts may need verified unpair/re-pair. The controller cannot diagnose remote pin mismatches.' },
     ],
   };
   const gatewayItems = trusted.map((item) => {

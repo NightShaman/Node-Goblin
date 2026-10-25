@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_JOURNAL_LIMIT, DEFAULT_JOURNAL_TTL_MS, nowMs } from './protocol.mjs';
@@ -28,11 +29,13 @@ export class OperationJournal {
 
   save() {
     if (!this.filePath) return;
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
+    fs.mkdirSync(path.dirname(this.filePath), { recursive: true, mode: 0o700 });
     const payload = JSON.stringify({ entries: [...this.entries.entries()].map(([id, entry]) => ({ id, ...entry })) });
-    const tempPath = `${this.filePath}.tmp-${process.pid}`;
-    fs.writeFileSync(tempPath, payload);
-    fs.renameSync(tempPath, this.filePath);
+    const tempPath = `${this.filePath}.tmp-${process.pid}-${crypto.randomBytes(8).toString('hex')}`;
+    try {
+      fs.writeFileSync(tempPath, payload, { mode: 0o600, flag: 'wx' });
+      fs.renameSync(tempPath, this.filePath);
+    } finally { fs.rmSync(tempPath, { force: true }); }
   }
 
   prune(current = nowMs(), persist = true) {

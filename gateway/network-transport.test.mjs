@@ -262,7 +262,7 @@ test('no-CA first pairing permits only bootstrap TLS, pins the approved controll
     sockets[0].emit('secureConnect');
     const controller = controllerIdentity();
     const nonce = '0123456789abcdef';
-    sockets[0].feed({ type: 'auth.challenge', nonce, controllerPublicKey: controller.publicKey });
+    sockets[0].feed({ type: 'auth.challenge', channelBinding: 'tls-cert-sha256', nonce, controllerPublicKey: controller.publicKey });
     const response = sockets[0].messages()[0];
     assert.equal(response.nodePublicKey != null, true);
     sockets[0].feed({ type: 'pairing.pending', pairingCode: response.pairingCode });
@@ -273,7 +273,7 @@ test('no-CA first pairing permits only bootstrap TLS, pins the approved controll
     sockets[0].destroy(); transport.timer && clearTimeout(transport.timer); transport.timer = null; transport.connect();
     assert.equal(sockets[1].options.rejectUnauthorized, false);
     sockets[1].emit('secureConnect');
-    sockets[1].feed({ type: 'auth.challenge', nonce: 'fedcba9876543210', controllerPublicKey: controller.publicKey });
+    sockets[1].feed({ type: 'auth.challenge', channelBinding: 'tls-cert-sha256', nonce: 'fedcba9876543210', controllerPublicKey: controller.publicKey });
     assert.equal(sockets[1].messages()[0].nodePublicKey != null, true);
     sockets[1].feed({ type: 'auth.ok', connectionId: 'approved-2' }); assert.equal(transport.authenticated, true);
     sockets[1].destroy(); transport.timer && clearTimeout(transport.timer); transport.timer = null; transport.connect();
@@ -288,7 +288,7 @@ test('unconfirmed bootstrap never persists trust or admits requests; mismatched 
     const socket = sockets[0];
     socket.getPeerCertificate = () => ({ raw: Buffer.from('certificate') });
     socket.emit('secureConnect');
-    socket.feed({ type: 'auth.challenge', nonce: '0123456789abcdef', controllerPublicKey: controllerIdentity().publicKey });
+    socket.feed({ type: 'auth.challenge', channelBinding: 'tls-cert-sha256', nonce: '0123456789abcdef', controllerPublicKey: controllerIdentity().publicKey });
     const code = socket.messages()[0].pairingCode;
     socket.feed({ type: 'auth.ok' });
     assert.equal(transport.authenticated, false);
@@ -306,11 +306,15 @@ test('local confirmation is transcript-scoped and is discarded on reconnect', ()
   const { transport, sockets, stateDir } = fixture({ enrollmentToken: undefined });
   try {
     const controller = controllerIdentity();
-    sockets[0].feed({ type: 'auth.challenge', nonce: '0123456789abcdef', controllerPublicKey: controller.publicKey });
+    sockets[0].getPeerCertificate = () => ({ raw: Buffer.from('certificate') });
+    sockets[0].emit('secureConnect');
+    sockets[0].feed({ type: 'auth.challenge', channelBinding: 'tls-cert-sha256', nonce: '0123456789abcdef', controllerPublicKey: controller.publicKey });
     const oldCode = sockets[0].messages()[0].pairingCode;
     assert.equal(transport.confirmControllerPairing(oldCode), true);
     sockets[0].destroy(); clearTimeout(transport.timer); transport.timer = null; transport.connect();
-    sockets[1].feed({ type: 'auth.challenge', nonce: 'fedcba9876543210', controllerPublicKey: controller.publicKey });
+    sockets[1].getPeerCertificate = () => ({ raw: Buffer.from('certificate') });
+    sockets[1].emit('secureConnect');
+    sockets[1].feed({ type: 'auth.challenge', channelBinding: 'tls-cert-sha256', nonce: 'fedcba9876543210', controllerPublicKey: controller.publicKey });
     assert.equal(transport.confirmControllerPairing(oldCode), false);
     sockets[1].feed({ type: 'auth.ok' });
     assert.equal(transport.authenticated, false);

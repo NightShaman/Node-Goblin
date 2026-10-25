@@ -36,7 +36,7 @@ sequenceDiagram
 6. Approve only the intended host in BURROW. Reject unexpected requests.
 7. Confirm the gateway appears approved and connected, then perform a harmless test in a disposable workspace.
 
-The node creates an Ed25519 keypair in `node-identity.json`. The transcript binds the nonce, gateway ID, node public key, and controller public key. The displayed code is 12 hexadecimal characters grouped as `XXXX-XXXX-XXXX`. An unpaired node without an explicit CA temporarily permits an unauthenticated TLS channel for bootstrap. For controlled networks, provision `BURROW_GATEWAY_CA_FILE` before the first connection so standard TLS verification also applies from the outset.
+The node creates an Ed25519 keypair in `node-identity.json`. The v2 transcript binds the nonce, gateway ID, node public key, controller public key, and SHA-256 fingerprint of the controller TLS certificate DER bytes. The host hashes its peer certificate and the listener hashes its own socket certificate; neither trusts a fingerprint supplied in a protocol message. The signature and comparison code cover the same transcript. The displayed code is 12 hexadecimal characters grouped as `XXXX-XXXX-XXXX`. An unpaired node without an explicit CA temporarily permits an unauthenticated TLS channel for bootstrap. For controlled networks, provision `BURROW_GATEWAY_CA_FILE` before the first connection so standard TLS verification also applies from the outset.
 
 An explicitly configured CA provides controller authentication through standard TLS verification instead of local confirmation. Do not install an untrusted CA to bypass confirmation.
 
@@ -46,7 +46,15 @@ After initial key pairing, the node persists the controller public key and certi
 
 Controller trust mutations have one serialized owner. Durable mutation intents block uncertain identities on restart after interrupted writes, including rollback failure. Revoke and re-pair an uncertain identity instead of manually clearing its intent.
 
+At most 256 pending identities are retained in memory and durable settings. New identities are refused when full (`pending_pairings_full`); reject unwanted requests to free capacity. Reconnection of an existing pending identity remains possible. Pending gateway/controller IDs must be 1–255 ASCII letters, digits, dots, underscores or hyphens, begin with a letter/digit, and not be `local`; public keys must be Ed25519 PEM and at most 1024 characters. Restored collections discard invalid entries, remove unrecognized fields and retain only the last 256 unique valid IDs. Pending sockets do not create permanent disconnected health records.
+
 Pending request records can survive a controller restart for visibility, but approval requires the matching live connection and nonce. Wait for the node to reconnect and verify its current code. Pending records do not carry a pairing-expiry timestamp; the UI may show a dash. The transport has a 60-second default authentication timeout, so a reconnect can replace the live nonce and code. Read and compare the current code again if confirmation or approval becomes stale.
+
+### Upgrade compatibility
+
+New pairing requires the `tls-cert-sha256` channel-binding feature on **both** peers, including when an explicit CA is installed. Stripping that feature or omitting locally observed certificate bytes fails closed; there is no v1 retry for new pairing. Upgrade host and controller before enrolling a new host.
+
+Already approved Ed25519 identities without the persisted `channelBinding` marker retain v1 reconnect compatibility with older peers, using their existing controller-key/certificate pins. New pairings persist the marker on both sides and cannot reconnect with an unbound transcript. Upgrading alone does not claim to retrofit channel binding into existing trust: verified unpair/re-pair establishes that guarantee. Legacy HMAC proof and CA verification are unchanged.
 
 ## Legacy shared-secret enrollment
 

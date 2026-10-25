@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -64,7 +65,7 @@ test('administers controller trust and TLS through secrets without returning mat
   assert.deepEqual((await value.routes.get('GET /controller')({})).controller.tls, { configured: false, ready: false, keyConfigured: false, certConfigured: false, caConfigured: false });
   assert.deepEqual(await value.routes.get('PUT /controller')({ body: { enabled: true, host: '0.0.0.0', port: 8443 } }), { ok: true, controller: { enabled: true, host: '0.0.0.0', port: 8443 }, restartRequired: true });
   const tlsResult = await value.routes.get('PUT /controller/tls')({ body: { key: 'PRIVATE', cert: 'CERT', ca: 'CA' } });
-  assert.deepEqual(tlsResult, { ok: true, restartRequired: true }); assert.equal(JSON.stringify(tlsResult).includes('PRIVATE'), false);
+  assert.equal(tlsResult.ok, true); assert.equal(tlsResult.restartRequired, true); assert.match(tlsResult.warning, /cannot diagnose a remote pin mismatch/); assert.equal(JSON.stringify(tlsResult).includes('PRIVATE'), false);
   const enrolled = await value.routes.get('PUT /gateway-trust/:gatewayId')({ params: { gatewayId: 'host-1' }, body: { controllerId: 'controller-a', secret: 'shared-secret' } });
   assert.deepEqual(enrolled, { ok: true, gateway: { gatewayId: 'host-1', controllerId: 'controller-a', status: 'approved', approved: true, revoked: false, trusted: true, method: 'hmac' }, restartRequired: true });
   assert.equal(value.secretValues.get('controller.gateway.host-1'), 'shared-secret');
@@ -210,6 +211,7 @@ test('enabled controller generates long-lived host-bound TLS into secrets and ex
   assert.equal(state.tls.host, 'controller.example.test'); assert.equal(typeof state.tls.expiresAt, 'string');
   assert.equal(state.tls.rotateAfter < state.tls.expiresAt, true);
   assert.match(value.secretValues.get('controller.tls.key'), /PRIVATE KEY/); assert.match(value.secretValues.get('controller.tls.cert'), /CERTIFICATE/);
+  assert.equal(value.values.get('controllerTlsMetadata').fingerprintSha256, crypto.createHash('sha256').update(new crypto.X509Certificate(options.serverOptions.cert).raw).digest('hex'));
   assert.match(options.serverOptions.cert, /CERTIFICATE/); assert.equal(JSON.stringify(state).includes('PRIVATE KEY'), false); assert.equal(JSON.stringify(state).includes('CERTIFICATE'), false);
   service.close();
 });
@@ -279,9 +281,9 @@ test('pairing approval persists trust before auth.ok commit and survives control
   const service = await createControllerService({ settings: value.settings, secrets: value.secrets, listenerFactory: () => listener });
   const approved = await service.approvePairing('fresh-node');
   assert.equal(approved.status, 'approved');
-  assert.deepEqual(order.find((entry) => entry[0] === 'commit'), ['commit', 'PUBLIC', [{ gatewayId: 'fresh-node', controllerId: 'controller' }]]);
+  assert.deepEqual(order.find((entry) => entry[0] === 'commit'), ['commit', 'PUBLIC', [{ gatewayId: 'fresh-node', controllerId: 'controller', channelBinding: true }]]);
   const recreated = await createControllerService({ settings: value.settings, secrets: value.secrets, listenerFactory: (options) => ({ ...listener, options }) });
-  assert.deepEqual((await value.settings.get('controllerGateways'))[0], { gatewayId: 'fresh-node', controllerId: 'controller' });
+  assert.deepEqual((await value.settings.get('controllerGateways'))[0], { gatewayId: 'fresh-node', controllerId: 'controller', channelBinding: true });
   assert.equal(await value.secrets.get('controller.gateway.publicKey.fresh-node'), 'PUBLIC');
   service.close(); recreated.close();
 });
@@ -313,7 +315,7 @@ test('revoke clears durable trust, both credential forms, pending pairing, and l
   await revoke({ params: { gatewayId: 'node' } });
   await revoke({ params: { gatewayId: 'node' } });
   assert.deepEqual(value.values.get('controllerGateways'), []);
-  assert.deepEqual(value.values.get('pendingNodeGoblinPairings'), [{ gatewayId: 'other', publicKey: 'OTHER-PUBLIC', status: 'pending' }]);
+  assert.deepEqual(value.values.get('pendingNodeGoblinPairings'), []); // invalid restored identities are discarded
   assert.equal(value.secretValues.has('controller.gateway.node'), false);
   assert.equal(value.secretValues.has('controller.gateway.publicKey.node'), false);
   assert.deepEqual(await value.settings.get('controllerTrustMutations'), []);
@@ -333,9 +335,10 @@ async function trustFixture(value = harness()) {
   } });
   function pair(id) {
     const socket = Object.assign(new EventEmitter(), { writable: true, destroyed: false, writes: [], setEncoding() {}, write(data) { this.writes.push(JSON.parse(data)); return true; }, destroy() { this.destroyed = true; this.emit('close'); } });
+    socket.getCertificate = () => ({ raw: Buffer.from('test-controller-cert') });
     const connection = listener.onSocket(socket);
     const node = controllerIdentity();
-    connection.onAuthMessage({ type: 'auth.response', gatewayId: id, controllerId: 'controller', nodePublicKey: node.publicKey, pairingSignature: signPairing(node, connection.nonce, id, listener.pairingIdentity.publicKey) });
+    connection.onAuthMessage({ type: 'auth.response', channelBinding: 'tls-cert-sha256', gatewayId: id, controllerId: 'controller', nodePublicKey: node.publicKey, pairingSignature: signPairing(node, connection.nonce, id, listener.pairingIdentity.publicKey, connection.tlsFingerprint) });
     return { socket, connection };
   }
   return { ...value, service, listener, pair };
@@ -459,4 +462,28 @@ test('legacy credential mutation refuses key-paired identities without misleadin
   await assert.rejects(value.routes.get('PUT /gateway-trust/:gatewayId')({ params: { gatewayId: 'paired-node' }, body: { secret: 'new-secret' } }), /gateway_credential_method_ed25519/);
   assert.equal(value.secretValues.has('controller.gateway.paired-node'), false);
   assert.equal((await value.routes.get('GET /gateway-trust')({})).gateways[0].method, 'ed25519');
+});
+
+test('newly saved controller shared secrets redact dynamic dispatch responses without restart', async () => {
+  const value = harness(); value.values.set('controller', { enabled: true });
+  value.secretValues.set('controller.tls.key', 'key'); value.secretValues.set('controller.tls.cert', 'cert');
+  const service = await createControllerService({ ...value, listenerFactory: () => Object.assign(new EventEmitter(), {
+    listen() { this.emit('listening'); }, close() {}, revokeGateway() {},
+    dispatchProcessExec: async () => ({ response: { result: { stdout: 'new-secret old-secret' } } }),
+  }) });
+  await service.setGatewayTrust({ gatewayId: 'node', controllerId: 'controller' }, 'old-secret');
+  await service.setGatewayTrust({ gatewayId: 'node', controllerId: 'controller' }, 'new-secret');
+  const result = await service.dispatchProcessExec('node', {});
+  assert.equal(result.response.result.stdout, '[redacted] [redacted]');
+  service.close();
+});
+
+test('durable pending collection is validated and bounded even when listener is disabled', async () => {
+  const value = harness(); const publicKey = controllerIdentity().publicKey;
+  value.values.set('pendingNodeGoblinPairings', Array.from({ length: 300 }, (_, i) => ({ gatewayId: `node-${i}`, controllerId: 'controller', publicKey, status: 'pending', oversizedMetadata: 'x'.repeat(1000) })).concat([{ gatewayId: '../bad', publicKey, status: 'pending' }]));
+  const service = await createControllerService(value);
+  assert.equal((await service.listPendingPairings()).length, 256);
+  assert.equal(value.values.get('pendingNodeGoblinPairings').length, 256);
+  assert.equal(JSON.stringify(value.values.get('pendingNodeGoblinPairings')).includes('oversizedMetadata'), false);
+  service.close();
 });

@@ -137,3 +137,21 @@ test('custom in-tree builder output is excluded and repeatable', () => {
     assert.equal(build().status, 0); assert.deepEqual(fs.readFileSync(archive), first);
   } finally { f.clean(); }
 });
+
+test('confirm-pairing atomically replaces symlinks with mode-0600 state without touching their target', () => {
+  const f = fixture();
+  try {
+    const state = path.join(f.root, 'var/lib/burrow-host-gateway'); fs.mkdirSync(state, { recursive: true });
+    fs.writeFileSync(path.join(state, 'pairing-code.json'), JSON.stringify({ pairingCode: 'ABCD-1234-5678' }));
+    const victim = path.join(f.dir, 'victim'); fs.writeFileSync(victim, 'untouched');
+    const confirmation = path.join(state, 'pairing-confirmation.json'); fs.symlinkSync(victim, confirmation);
+    f.stub('id', 'echo 0');
+    const result = f.run('node-goblin', ['confirm-pairing', 'ABCD-1234-5678']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(fs.readFileSync(victim, 'utf8'), 'untouched');
+    assert.equal(fs.lstatSync(confirmation).isSymbolicLink(), false);
+    assert.equal(fs.statSync(confirmation).mode & 0o777, 0o600);
+    assert.deepEqual(JSON.parse(fs.readFileSync(confirmation)), { pairingCode: 'ABCD-1234-5678' });
+    assert.equal(f.run('node-goblin', ['confirm-pairing', 'WRONG']).status === 0, false);
+  } finally { f.clean(); }
+});

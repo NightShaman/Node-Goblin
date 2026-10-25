@@ -85,3 +85,15 @@ Uninstall deliberately preserves configuration and state. Secure decommissioning
 - [`gateway/deploy/uninstall.sh`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/deploy/uninstall.sh)
 - [`gateway/lib/network-transport.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/network-transport.mjs)
 - [`gateway/lib/journal.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/journal.mjs)
+
+### Controller TLS replacement
+
+Saving replacement TLS credentials or clearing them requires a controller restart.
+Clearing credentials causes regeneration when the listener is next enabled; the
+certificate fingerprint changes. Existing key-paired hosts pin the DER certificate
+and can refuse the replacement. Coordinate the change, verify the new controller
+identity independently, and use the verified unpair/re-pair procedure in
+[pairing](pairing.md). Do not disable validation or delete identity/journal state.
+The controller cannot observe a host's saved pin or diagnose a remote pin mismatch
+from a disconnect; inspect the host's local `controller_tls_identity_mismatch`
+diagnostic. TLS metadata fingerprints use SHA-256 over DER, not PEM text.

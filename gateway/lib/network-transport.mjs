@@ -228,14 +228,20 @@ export class OutboundGatewayTransport extends EventEmitter {
     if (!this.authenticated) {
       if (message?.type === 'auth.challenge' && typeof message.nonce === 'string' && message.nonce.length >= 16) {
         if (this.proofSent) { this.reject('unexpected_auth_message'); this.socket.destroy(); return; }
+        const bound = message.channelBinding === 'tls-cert-sha256';
+        const requiresBinding = !this.nodeIdentity.controllerPublicKey || this.nodeIdentity.channelBinding === true;
+        if (!this.trust && ((requiresBinding && !bound) || (bound && !this.pendingControllerTlsFingerprint))) {
+          this.reject('channel_binding_required'); this.socket.destroy(); return;
+        }
+        const tlsFingerprint = !this.trust && bound ? this.pendingControllerTlsFingerprint : undefined;
         this.pendingControllerPublicKey = message.controllerPublicKey;
-        this.localPairingCode = pairingCode({ nonce: message.nonce, gatewayId: this.gatewayId, gatewayPublicKey: this.nodeIdentity.publicKey, controllerPublicKey: message.controllerPublicKey });
+        this.localPairingCode = pairingCode({ nonce: message.nonce, gatewayId: this.gatewayId, gatewayPublicKey: this.nodeIdentity.publicKey, controllerPublicKey: message.controllerPublicKey, tlsFingerprint });
         if (!this.trust && (!message.controllerPublicKey || (this.nodeIdentity.controllerPublicKey && this.nodeIdentity.controllerPublicKey !== message.controllerPublicKey))) { this.reject('controller_identity_mismatch'); this.socket.destroy(); return; }
         this.send({
           type: 'auth.response',
           gatewayId: this.gatewayId,
           controllerId: this.trust?.controllerId ?? 'controller',
-          ...(this.trust ? { proof: authenticationProof(this.trust.secret, this.gatewayId, message.nonce) } : { nodePublicKey: this.nodeIdentity.publicKey, pairingSignature: signPairing(this.nodeIdentity, message.nonce, this.gatewayId, message.controllerPublicKey), pairingCode: pairingCode({ nonce: message.nonce, gatewayId: this.gatewayId, gatewayPublicKey: this.nodeIdentity.publicKey, controllerPublicKey: message.controllerPublicKey }) }),
+          ...(this.trust ? { proof: authenticationProof(this.trust.secret, this.gatewayId, message.nonce) } : { ...(bound ? { channelBinding: 'tls-cert-sha256' } : {}), nodePublicKey: this.nodeIdentity.publicKey, pairingSignature: signPairing(this.nodeIdentity, message.nonce, this.gatewayId, message.controllerPublicKey, tlsFingerprint), pairingCode: pairingCode({ nonce: message.nonce, gatewayId: this.gatewayId, gatewayPublicKey: this.nodeIdentity.publicKey, controllerPublicKey: message.controllerPublicKey, tlsFingerprint }) }),
           gateway: {
             name: this.daemon.identity.name,
             version: this.daemon.identity.version,
@@ -261,6 +267,7 @@ export class OutboundGatewayTransport extends EventEmitter {
         clearPairingCode(this.stateDir);
         if (!this.trust && !this.nodeIdentity.controllerPublicKey) {
           if (!this.pendingControllerPublicKey || !this.pendingControllerTlsFingerprint) { this.reject('controller_identity_missing'); this.socket.destroy(); return; }
+          this.nodeIdentity.channelBinding = true;
           this.nodeIdentity.controllerPublicKey = this.pendingControllerPublicKey;
           this.nodeIdentity.controllerTlsFingerprint = this.pendingControllerTlsFingerprint;
           this.pinnedTlsFingerprint = this.pendingControllerTlsFingerprint;

@@ -120,17 +120,23 @@ NODE
     [ "$#" -eq 1 ] || { usage; exit 2; }; need_root confirm-pairing
     state="$(path /var/lib/burrow-host-gateway)"
     python3 - "$state" "$1" <<'PYCONFIRM'
-import json, os, sys
+import json, os, sys, tempfile
 state, code = sys.argv[1:]
 with open(os.path.join(state, 'pairing-code.json')) as f:
     pending = json.load(f)
 if pending['pairingCode'] != code:
     raise SystemExit('pairing code mismatch')
 file = os.path.join(state, 'pairing-confirmation.json')
-with open(file, 'w') as f:
-    os.chmod(file, 0o600)
-    json.dump({'pairingCode': code}, f)
-    os.chown(file, os.stat(os.path.join(state, 'pairing-code.json')).st_uid, -1)
+fd, temporary = tempfile.mkstemp(prefix='.pairing-confirmation-', dir=state)
+try:
+    with os.fdopen(fd, 'w') as f:
+        os.fchmod(f.fileno(), 0o600)
+        os.fchown(f.fileno(), os.stat(os.path.join(state, 'pairing-code.json')).st_uid, -1)
+        json.dump({'pairingCode': code}, f)
+    os.replace(temporary, file)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
 PYCONFIRM
     ;;
   pairing-code)

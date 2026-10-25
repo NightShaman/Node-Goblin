@@ -70,3 +70,19 @@ Do not post credentials, private outputs, or a live exploitation transcript in a
 - [`gateway/lib/process-runner.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/process-runner.mjs)
 - [`gateway/lib/filesystem-runner.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/filesystem-runner.mjs)
 - [`gateway/deploy/burrow-host-gateway.service`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/deploy/burrow-host-gateway.service)
+
+### Audit hardening contracts
+
+New Ed25519 pairings require certificate-bound v2 signatures and comparison codes;
+see [upgrade compatibility](pairing.md#upgrade-compatibility) for the explicitly
+retained already-approved v1 path. Pending registrations and persisted pending
+settings are limited to 256 validated identities. This admission limit is not a
+network connection-rate limit or an OS resource sandbox.
+
+The operation journal and host pairing-confirmation file are created as exclusive,
+randomized mode-0600 temporary files and atomically renamed in their destination
+directory; existing destination symlinks are replaced, not followed. Atomic rename
+is not a guarantee against power loss. Protect the parent state directory and its
+backups. Controller dispatch redaction includes shared secrets saved during the
+running service lifetime (including replaced values), not only startup credentials.
+These changes do not reduce or sandbox an approved host's execution authority.

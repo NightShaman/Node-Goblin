@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import process from 'node:process';
@@ -11,6 +12,7 @@ class FakeSocket extends EventEmitter {
     this.destroyed = false;
     this.writable = true;
   }
+  getCertificate() { return { raw: Buffer.from("test-controller-cert") }; }
   setEncoding() {}
   write(value) {
     this.writes.push(String(value));
@@ -255,8 +257,8 @@ test('pending approval is committed only after its live challenge is revalidated
   const identity = loadNodeIdentity(stateDir);
   try {
     const nonce = socket.messages()[0].nonce;
-    socket.feed({ type: 'auth.response', gatewayId: 'fresh-node', controllerId: 'controller', nodePublicKey: identity.publicKey,
-      pairingSignature: signPairing(identity, nonce, 'fresh-node', pairingIdentity.publicKey) });
+    socket.feed({ type: 'auth.response', channelBinding: 'tls-cert-sha256', gatewayId: 'fresh-node', controllerId: 'controller', nodePublicKey: identity.publicKey,
+      pairingSignature: signPairing(identity, nonce, 'fresh-node', pairingIdentity.publicKey, crypto.createHash('sha256').update(Buffer.from('test-controller-cert')).digest('hex')) });
     const pending = listener.preparePendingApproval('fresh-node');
     assert.equal(pending.gatewayId, 'fresh-node');
     assert.equal(socket.messages().some((message) => message.type === 'auth.ok'), false);
