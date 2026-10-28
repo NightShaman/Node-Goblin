@@ -76,7 +76,7 @@ test('controller configuration enables and disables telemetry live while host en
   const overridden = createGatewayTelemetry({ env: { OTEL_EXPORTER_OTLP_ENDPOINT: 'https://host.example' }, fetchImpl: async () => ({ ok: true }) });
   await overridden.configure({ enabled: true, endpoint: 'https://controller.example', headers: 'authorization=Bearer%20central' });
   assert.equal(overridden.status().configured, true);
-  assert.equal(overridden.status().headersConfigured, true);
+  assert.equal(overridden.status().headersConfigured, false, 'controller auth must not go to a different host endpoint');
   await overridden.configure({ enabled: false, endpoint: '', headers: '' });
   assert.equal(overridden.status().configured, true);
   assert.equal(overridden.status().source, 'environment');
@@ -91,8 +91,10 @@ test('reconfiguration never exports spans queued under an old collector to the n
   for (let i = 0; i < 130; i += 1) await telemetry.execute({ kind: 'process', operationId: `op-${i}`, operation: async () => ({ exitCode: 0 }) });
   await telemetry.configure({ enabled: true, endpoint: 'https://new.example', headers: '' });
   assert.equal(requests.every((request) => request.url === 'https://old.example/v1/traces'), true);
-  assert.equal(telemetry.status().failures.dropped, 130);
   await telemetry.shutdown();
+  assert.equal(requests.every((request) => request.url === 'https://old.example/v1/traces'), true);
+  assert.equal(requests.reduce((count, request) => count + JSON.parse(request.body).resourceSpans[0].scopeSpans[0].spans.length, 0), 130);
+  assert.equal(telemetry.status().failures.dropped, 0);
 });
 
 test('malformed unused host headers do not prevent gateway telemetry construction', async () => {
@@ -107,7 +109,8 @@ test('collector failure and hung shutdown are bounded without failing remote wor
   const started = Date.now();
   await telemetry.shutdown({ timeout: 25 });
   assert.ok(Date.now() - started < 250);
-  assert.equal(telemetry.status().failures.shutdown, 1);
+  assert.equal(telemetry.status().failures.export, 1);
+  assert.equal(telemetry.status().failures.dropped, 1);
 });
 
 
@@ -166,4 +169,94 @@ test('reconfiguration responds while an old collector export is hung', async () 
   ]);
   assert.equal(telemetry.status().source, 'controller');
   await telemetry.shutdown({ timeout: 20 });
+});
+
+test('scalar override keeps headers at their own endpoint without leaking to a different host', async () => {
+  const requests = [];
+  const telemetry = createGatewayTelemetry({ env: { OTEL_EXPORTER_OTLP_ENDPOINT: 'https://host.example/base' }, fetchImpl: async (url, { headers }) => { requests.push({ url, headers }); return { ok: true }; } });
+  await telemetry.configure({ enabled: true, endpoint: 'https://elsewhere.example/base', headers: 'authorization=wrong-owner-secret' });
+  await telemetry.execute({ kind: 'process', operation: () => ({ exitCode: 0 }) }); await telemetry.flush();
+  assert.equal(requests[0].url, 'https://host.example/base/v1/traces');
+  assert.equal(requests[0].headers.authorization, undefined);
+  await telemetry.configure({ enabled: true, endpoint: 'https://host.example/base', headers: 'authorization=same-owner-secret' });
+  await telemetry.execute({ kind: 'process', operation: () => ({ exitCode: 0 }) }); await telemetry.flush();
+  assert.equal(requests[1].headers.authorization, 'same-owner-secret');
+  await telemetry.configure({ enabled: false, endpoint: '', headers: '' });
+  assert.equal(telemetry.status().configured, true);
+  await telemetry.execute({ kind: 'process', operation: () => ({ exitCode: 0 }) }); await telemetry.flush();
+  assert.equal(requests[2].headers.authorization, undefined);
+  await telemetry.shutdown();
+});
+
+test('invalid private owner cannot fall back to active configuration or change operation outcome', async () => {
+  const requests = []; const logs = [];
+  const telemetry = createGatewayTelemetry({ env: {}, logger: { warn: (message) => logs.push(message) }, fetchImpl: async (url) => { requests.push(url); return { ok: true }; } });
+  await telemetry.configure({ enabled: true, destinations: [{ id: 'active', enabled: true, endpoint: 'https://active.example', headers: 'authorization=active-private' }] });
+  const bad = { enabled: true, destinations: [{ id: 'old', enabled: true, endpoint: 'https://wrong.example?secret=private' }] };
+  const result = { exitCode: 0, stdout: 'unmodified' };
+  assert.equal(await telemetry.execute({ kind: 'process', telemetryConfiguration: bad, operation: () => result }), result);
+  let calls = 0; const sentinel = new Error('operation-secret');
+  await assert.rejects(telemetry.execute({ kind: 'process', telemetryConfiguration: null, operation: () => { calls++; throw sentinel; } }), error => error === sentinel);
+  assert.equal(calls, 1);
+  await telemetry.flush(); assert.deepEqual(requests, []);
+  assert.equal(telemetry.status().configured, true);
+  assert.equal(telemetry.status().failures.configure, 2);
+  assert.deepEqual(logs, Array(2).fill('Node Goblin telemetry configuration failed: telemetry_configuration_invalid'));
+  assert.doesNotMatch(JSON.stringify([logs, telemetry.status()]), /secret|private|wrong\.example|active\.example/);
+  await telemetry.execute({ kind: 'process', operation: () => result }); await telemetry.flush();
+  assert.deepEqual(requests, ['https://active.example/v1/traces']);
+  await telemetry.shutdown();
+});
+
+test('private and active telemetry setup errors never re-run or replace a synchronous operation failure', async () => {
+  const sentinel = new Error('operation-failed');
+  let calls = 0;
+  const telemetry = createGatewayTelemetry({ env: { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://host.example' }, randomTraceId: () => { throw new Error('random failed'); } });
+  await assert.rejects(telemetry.execute({ kind: 'process', operation: () => { calls++; throw sentinel; } }), error => error === sentinel);
+  assert.equal(calls, 1);
+  await assert.rejects(telemetry.execute({ kind: 'process', traceContext: { traceparent: 'invalid' }, operation: () => { calls++; throw sentinel; } }), error => error === sentinel);
+  assert.equal(calls, 2);
+  await telemetry.shutdown();
+});
+
+test('temporary owner exports share the configured queue budget even if collectors hang', async () => {
+  let sends = 0; const logs = [];
+  const telemetry = createGatewayTelemetry({ env: { OTEL_BSP_MAX_QUEUE_SIZE: '2', OTEL_EXPORTER_OTLP_TIMEOUT: '500' },
+    fetchImpl: async () => { sends++; return new Promise(() => {}); }, logger: { warn: (line) => logs.push(line) } });
+  const owner = { enabled: true, destinations: [{ id: 'bounded', enabled: true, endpoint: 'https://old.example', headers: 'x-token=private' }] };
+  for (let i = 0; i < 6; i++) assert.deepEqual(await telemetry.execute({ kind: 'process', telemetryConfiguration: owner, operation: () => ({ exitCode: 0 }) }), { exitCode: 0 });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(sends, 2);
+  assert.equal(telemetry.status().failures.dropped, 4);
+  await telemetry.shutdown({ timeout: 10 });
+  assert.equal(telemetry.status().failures.dropped, 6);
+  assert.doesNotMatch(JSON.stringify([logs, telemetry.status()]), /private|old\.example/);
+});
+
+test('hung temporary owner budget does not deny an independent healthy destination', async () => {
+  const sends = [];
+  const telemetry = createGatewayTelemetry({ env: { OTEL_BSP_MAX_QUEUE_SIZE: '2', OTEL_EXPORTER_OTLP_TIMEOUT: '500' },
+    fetchImpl: async (url) => { sends.push(url); if (url.includes('hung')) return new Promise(() => {}); return { ok: true }; }, logger: { warn() {} } });
+  const owner = { enabled: true, destinations: [{ id: 'hung', enabled: true, endpoint: 'https://hung.example' }, { id: 'healthy', enabled: true, endpoint: 'https://healthy.example' }] };
+  for (let i = 0; i < 6; i++) {
+    await telemetry.execute({ kind: 'process', telemetryConfiguration: owner, operation: () => ({ exitCode: 0 }) });
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(sends.filter(url => url.includes('hung')).length, 2);
+  assert.equal(sends.filter(url => url.includes('healthy')).length, 6);
+  const destinations = Object.fromEntries(telemetry.status().destinations.map(item => [item.id, item]));
+  assert.equal(destinations.hung.failures.dropped, 4);
+  assert.equal(destinations.healthy.failures.dropped, 0);
+  await telemetry.shutdown({ timeout: 10 });
+});
+
+test('running private generation cannot export after shutdown', async () => {
+  let finish; let sends = 0;
+  const telemetry = createGatewayTelemetry({ env: {}, fetchImpl: async () => { sends++; return { ok: true }; } });
+  const owner = { enabled: true, destinations: [{ id: 'private', enabled: true, endpoint: 'https://private.example', headers: 'x-token=private' }] };
+  const running = telemetry.execute({ kind: 'process', telemetryConfiguration: owner, operation: () => new Promise(resolve => { finish = resolve; }) });
+  await telemetry.shutdown();
+  finish({ exitCode: 0 }); assert.deepEqual(await running, { exitCode: 0 });
+  await telemetry.flush(); assert.equal(sends, 0);
+  assert.doesNotMatch(JSON.stringify(telemetry.status()), /private\.example|x-token/);
 });

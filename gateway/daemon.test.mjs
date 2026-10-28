@@ -311,3 +311,47 @@ test('daemon telemetry shutdown is awaited', async () => {
   await stopping;
   assert.equal(done, true);
 });
+
+test('private owner configuration reaches telemetry only; process/filesystem journal and replay remain independent', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-private-owner-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const privateValue = 'fake-private-telemetry-header';
+  const privateConfig = { enabled: true, endpoint: 'http://collector.invalid', headers: `x-token=${privateValue}`,
+    destinations: [{ id: 'one', enabled: true, endpoint: 'http://collector.invalid', headers: `x-token=${privateValue}`,
+      protocol: 'http/json', tracesEnabled: true, metricsEnabled: false, tls: { verify: true, caCertificate: 'private-ca-fixture' }, credentials: { token: 'drop-this' } }],
+    unrelatedCredential: 'drop-this' };
+  const seen = []; const frames = [];
+  const telemetry = { async execute({ operation, ...context }) { seen.push(context); return operation(); }, async shutdown() {} };
+  const journal = new OperationJournal({ stateDir: dir });
+  const daemon = new GatewayDaemon({ telemetry, journal });
+  const processRequest = { id: 'p', method: 'process.exec', params: { operationId: 'process-private', executable: process.execPath,
+    args: ['-e', 'process.stdout.write("ok")'], telemetryConfiguration: privateConfig } };
+  const fsRequest = { id: 'f', method: 'filesystem.execute', params: { operationId: 'filesystem-private', tool: 'files_inspect',
+    arguments: { path: dir }, telemetryConfiguration: privateConfig } };
+  await assert.rejects(daemon.handle(processRequest, value => frames.push(value)), /telemetry_configuration_transport_required/);
+  assert.equal(seen.length, 0);
+  daemon.secureTransportContext = { gatewayId: 'gateway-1', connectionId: 'authenticated-fixture' };
+  await daemon.handle(processRequest, value => frames.push(value));
+  await daemon.handle(fsRequest, value => frames.push(value));
+  assert.equal(seen.length, 2); assert.deepEqual(seen.map(item => item.kind), ['process', 'filesystem']);
+  for (const entry of seen) {
+    assert.equal(entry.telemetryConfiguration.headers, `x-token=${privateValue}`);
+    assert.equal(entry.telemetryConfiguration.destinations[0].tls.caCertificate, 'private-ca-fixture');
+    assert.equal(entry.telemetryConfiguration.destinations[0].credentials, undefined);
+    assert.equal(entry.telemetryConfiguration.unrelatedCredential, undefined);
+  }
+  const disk = fs.readdirSync(dir).filter(file => fs.statSync(path.join(dir, file)).isFile()).map(file => fs.readFileSync(path.join(dir, file), 'utf8'));
+  for (const value of [frames, journal.inspect('process-private'), journal.inspect('filesystem-private'), disk]) {
+    assert.equal(JSON.stringify(value).includes(privateValue), false);
+    assert.equal(JSON.stringify(value).includes('private-ca-fixture'), false);
+  }
+  const listOnly = { enabled: true, destinations: [{ id: 'only', enabled: true, endpoint: 'http://collector.invalid', tracesEnabled: true }] };
+  await daemon.handle({ ...fsRequest, id: 'list-only', params: { ...fsRequest.params, operationId: 'list-only', telemetryConfiguration: listOnly } }, value => frames.push(value));
+  assert.deepEqual(seen.at(-1).telemetryConfiguration, listOnly);
+  const other = { enabled: true, endpoint: 'http://other.invalid', headers: 'x-token=other' };
+  await daemon.handle({ ...processRequest, id: 'replay', params: { ...processRequest.params, telemetryConfiguration: other } }, value => frames.push(value));
+  assert.equal(frames.find(item => item.requestId === 'replay').result.replay, true);
+  assert.equal(seen.length, 3, 'replay does not execute or export again');
+  await assert.rejects(daemon.handle({ ...processRequest, id: 'invalid', params: { ...processRequest.params, operationId: 'invalid', telemetryConfiguration: { enabled: true, endpoint: 42 } } }, value => frames.push(value)), /telemetry_configuration_invalid/);
+  assert.equal(JSON.stringify(frames).includes(privateValue), false);
+});

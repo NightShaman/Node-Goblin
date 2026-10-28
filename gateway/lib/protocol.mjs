@@ -67,6 +67,10 @@ export function canonicalProcessRequest(params = {}, method = 'process.exec') {
     // with the same operationId may arrive under a replacement parent span.
     traceContext: undefined,
   };
+  // Private exporter configuration is transport context, never semantics.
+  // Omit the key entirely: canonicalize includes keys with undefined values,
+  // and adding a new one would invalidate pre-upgrade journal digests and IDs.
+  delete normalized.telemetryConfiguration;
   return { method, params: normalized };
 }
 

@@ -1,4 +1,5 @@
 import { boundedPending } from '../gateway/lib/pairing.mjs';
+import { normalizePrivateTelemetryConfiguration } from '../gateway/lib/telemetry-configuration.mjs';
 import { createHash } from 'node:crypto';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -159,6 +160,35 @@ function redact(value, secretValues) {
   return value;
 }
 
+// Gateways may inadvertently echo their private request, including inside
+// outcomes. Strip the reserved transport field without changing other content.
+function safeTelemetryDispatch(value, code) {
+  let result;
+  try { result = JSON.parse(JSON.stringify(value)); } catch { throw Object.assign(new Error(code), { code }); }
+  const pending = [result];
+  while (pending.length) {
+    const current = pending.pop();
+    if (current && typeof current === 'object') {
+      for (const key of Object.keys(current)) {
+        if (key === 'telemetryConfiguration') { delete current[key]; continue; }
+        pending.push(current[key]);
+      }
+    }
+  }
+  return result;
+}
+
+// Keep documented operational categories while discarding arbitrary exception text.
+const SAFE_GATEWAY_DISPATCH_ERRORS = new Set([
+  'gateway_not_connected', 'gateway_not_ready', 'gateway_disconnected', 'gateway_dispatch_failed',
+  'operation_id_conflict', 'operation_in_progress', 'protected_redelivery_forbidden',
+]);
+function safeTelemetryDispatchError(error) {
+  const candidate = error?.code || error?.message;
+  const code = SAFE_GATEWAY_DISPATCH_ERRORS.has(candidate) ? candidate : 'gateway_dispatch_failed';
+  return Object.assign(new Error(code), { code });
+}
+
 function serviceError(error) {
   const code = error?.code || 'gateway_dispatch_failed';
   const statusCode = code === 'gateway_not_connected' || code === 'gateway_not_ready' || code === 'gateway_disconnected' ? 503 : 400;
@@ -167,10 +197,11 @@ function serviceError(error) {
 
 function dispatchError(envelope) {
   const detail = envelope?.error || {};
-  const error = new Error(detail.code || 'gateway_dispatch_failed');
-  error.code = detail.code || 'gateway_dispatch_failed';
+  const code = SAFE_GATEWAY_DISPATCH_ERRORS.has(detail.code) ? detail.code : 'gateway_dispatch_failed';
+  const error = new Error(code);
+  error.code = code;
   error.operationId = detail.operationId;
-  error.envelope = envelope;
+  error.envelope = { ...envelope, error: { ...detail, code } };
   return error;
 }
 
@@ -297,6 +328,7 @@ export function createProcessController(service, { logger = console, operationSt
       let process;
       try { process = cleanProcessRequest(request.process); }
       catch (error) { throw new Error(error.message); }
+      const telemetryConfiguration = normalizePrivateTelemetryConfiguration(request.telemetryConfiguration);
       const params = { operationId, ...process, ...(request.traceContext ? { traceContext: cleanTraceContext(request.traceContext) } : {}) };
       if (request.process.cwd) params.cwd = String(request.process.cwd);
       if (request.process.env) params.env = { ...request.process.env };
@@ -313,16 +345,22 @@ export function createProcessController(service, { logger = console, operationSt
         });
       };
       abortSignal?.throwIfAborted();
-      await operationStore?.begin(request, 'process', params);
+      await operationStore?.begin({ operationId, targetId, parentRunId: request.parentRunId, toolCallId: request.toolCallId }, 'process', params);
       abortSignal?.throwIfAborted();
       // Values exist only in this transient dispatch object. The listener binds
       // them to its authenticated connection and generated request id.
-      const dispatchParams = protectedValues ? { ...params, protectedValues } : params;
-      const dispatchPromise = service.dispatchProcessExec(gatewayId, dispatchParams);
+      const dispatchParams = { ...params, ...(protectedValues ? { protectedValues } : {}),
+        ...(telemetryConfiguration ? { telemetryConfiguration } : {}) };
+      let dispatchPromise;
+      try { dispatchPromise = service.dispatchProcessExec(gatewayId, dispatchParams); }
+      catch (error) { throw safeTelemetryDispatchError(error); }
       if (abortSignal?.aborted) cancel();
       else abortSignal?.addEventListener('abort', cancel, { once: true });
       try {
-        const dispatch = await dispatchPromise;
+        let rawDispatch;
+        try { rawDispatch = await dispatchPromise; }
+        catch (error) { throw safeTelemetryDispatchError(error); }
+        const dispatch = safeTelemetryDispatch(rawDispatch, 'gateway_process_result_invalid');
         const result = shellExecResult(request, dispatch);
         await operationStore?.terminal(operationId, dispatch);
         return result;
@@ -336,16 +374,22 @@ export function createProcessController(service, { logger = console, operationSt
       const gatewayId = targetId;
       if (!OPERATION_ID.test(operationId)) throw new Error('operation_id_invalid');
       if (!targetId) throw new Error('target_id_required');
+      const telemetryConfiguration = normalizePrivateTelemetryConfiguration(request.telemetryConfiguration);
       const params = { operationId, parentRunId: request.parentRunId, toolCallId: request.toolCallId, tool: request.operation?.tool, arguments: { ...(request.operation?.arguments || {}) }, ...(request.traceContext ? { traceContext: cleanTraceContext(request.traceContext) } : {}) };
       let cancelPromise = null;
       const cancel = () => { if (!cancelPromise) cancelPromise = Promise.resolve(service.dispatchCancel(gatewayId, operationId)).catch((error) => logger.warn?.('Node Goblin cancellation dispatch failed: cancellation_dispatch_failed')); };
       abortSignal?.throwIfAborted();
-      await operationStore?.begin(request, 'filesystem', params);
+      await operationStore?.begin({ operationId, targetId, parentRunId: request.parentRunId, toolCallId: request.toolCallId }, 'filesystem', params);
       abortSignal?.throwIfAborted();
-      const dispatchPromise = service.dispatchFilesystem(gatewayId, params);
+      let dispatchPromise;
+      try { dispatchPromise = service.dispatchFilesystem(gatewayId, { ...params, ...(telemetryConfiguration ? { telemetryConfiguration } : {}) }); }
+      catch (error) { throw safeTelemetryDispatchError(error); }
       if (abortSignal?.aborted) cancel(); else abortSignal?.addEventListener('abort', cancel, { once: true });
       try {
-        const dispatch = await dispatchPromise;
+        let rawDispatch;
+        try { rawDispatch = await dispatchPromise; }
+        catch (error) { throw safeTelemetryDispatchError(error); }
+        const dispatch = safeTelemetryDispatch(rawDispatch, 'gateway_filesystem_result_invalid');
         if (!dispatch?.response?.ok) throw dispatchError(dispatch?.response);
         const correlated = [dispatch.accepted?.operationId, dispatch.response?.result?.operationId].filter(Boolean);
         if (correlated.some((id) => id !== operationId)) throw new Error('gateway_operation_id_mismatch');
@@ -643,7 +687,9 @@ export async function activate({ api, settings, secrets, logger, processExecutio
     if (!OPERATION_ID.test(operationId)) throw problem('operation_id_invalid');
     const process = cleanProcessRequest(body);
     const traceContext = cleanTraceContext(body.traceContext);
-    const dispatchBody = { ...body, ...process, operationId, ...(traceContext ? { traceContext } : {}) };
+    // This public route cannot select a Core run's private exporter.
+    const { telemetryConfiguration: ignoredTelemetryConfiguration, ...publicBody } = body;
+    const dispatchBody = { ...publicBody, ...process, operationId, ...(traceContext ? { traceContext } : {}) };
     try { return { ok: true, operationId, dispatch: await service.dispatchProcessExec(params.gatewayId, dispatchBody) }; }
     catch (error) { throw serviceError(error); }
   });

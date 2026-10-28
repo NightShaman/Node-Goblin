@@ -26,7 +26,7 @@ jobs:
       - name: Fast development contract gate
         working-directory: gateway
         run: |
-          node --test client.test.mjs process-runner.test.mjs filesystem-runner.test.mjs network-transport.test.mjs protected-e2e.test.mjs test/bootstrap.test.mjs test/development-release-workflow.test.mjs test/update.test.mjs
+          node --test otel-runtime.test.mjs otel-transport.test.mjs otel-replay-upgrade.test.mjs client.test.mjs process-runner.test.mjs filesystem-runner.test.mjs network-transport.test.mjs protected-e2e.test.mjs test/bootstrap.test.mjs test/development-release-workflow.test.mjs test/update.test.mjs
           node deploy/set-release-version.mjs "$(cat VERSION)" --check
       - name: Assign calendar version
         id: version

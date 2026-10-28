@@ -9,6 +9,7 @@ import { PROTOCOL_VERSION, normalizeTraceContext, operationIdFromRequest, reques
 import { runProcess } from './process-runner.mjs';
 import { runFilesystem } from './filesystem-runner.mjs';
 import { createGatewayTelemetry } from './otel-runtime.mjs';
+import { normalizePrivateTelemetryConfiguration } from './telemetry-configuration.mjs';
 import { collectHostMetadata } from './host-metadata.mjs';
 
 export class GatewayDaemon {
@@ -92,9 +93,14 @@ export class GatewayDaemon {
         throw new Error('protected_delivery_binding_invalid');
       }
     }
+    // The private owner is admitted only on the authenticated controller
+    // transport, never from an operator's local process.exec/FS request.
+    if (params.telemetryConfiguration != null && !this.secureTransportContext) throw new Error('telemetry_configuration_transport_required');
+    const telemetryConfiguration = normalizePrivateTelemetryConfiguration(params.telemetryConfiguration);
     const safeParams = { ...params };
     delete safeParams.protectedValues;
     delete safeParams.protectedDelivery;
+    delete safeParams.telemetryConfiguration;
     const traceContext = normalizeTraceContext(safeParams.traceContext);
     delete safeParams.traceContext;
     const operationRequest = { method, params: safeParams };
@@ -136,6 +142,7 @@ export class GatewayDaemon {
         targetId: this.secureTransportContext?.gatewayId || null,
         operationId,
         traceContext,
+        ...(telemetryConfiguration ? { telemetryConfiguration } : {}),
         operation: () => method === 'process.exec'
           ? runProcess(safeParams, { protectedEnv: protectedValues, signal: controller.signal, now: this.now, emitEvent: (event) => {
             if (event.type === 'process.terminal') terminalEvent = event;

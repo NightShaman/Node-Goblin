@@ -19,3 +19,12 @@ test('trace context never changes semantic operation ids or request digests', ()
   assert.equal(operationIdFromRequest(request), operationIdFromRequest(retry));
   assert.equal(requestDigestFromParams(request.params), requestDigestFromParams(retry.params));
 });
+
+test('private telemetry owner does not change semantic operation digests', async () => {
+  const { requestDigestFromParams, operationIdFromRequest } = await import('./lib/protocol.mjs');
+  const base = { executable: 'echo', args: ['ok'] };
+  const first = { ...base, telemetryConfiguration: { enabled: true, endpoint: 'https://one.example', headers: 'x-token=first' } };
+  const second = { ...base, telemetryConfiguration: { enabled: true, endpoint: 'https://two.example', headers: 'x-token=second' } };
+  assert.equal(requestDigestFromParams(first), requestDigestFromParams(second));
+  assert.equal(operationIdFromRequest({ method: 'process.exec', params: first }), operationIdFromRequest({ method: 'process.exec', params: base }));
+});

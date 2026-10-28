@@ -20,7 +20,7 @@ The daemon accepts one JSON request per line and emits JSON lines. Protocol vers
 | --- | --- | --- |
 | `hello` | None | Name, implementation version, protocol version, transport, current host metadata |
 | `health` | None | Status and active operation IDs |
-| `telemetry.configure` | `{enabled, endpoint, headers?}` | Validated in-memory telemetry configuration status |
+| `telemetry.configure` | `{enabled, endpoint?, headers?, destinations?}` | Validated in-memory telemetry configuration status |
 | `process.exec` | Operation ID and process options | Accepted envelope, stream/terminal events, terminal response |
 | `filesystem.execute` | Operation ID, tool, arguments | Accepted envelope and terminal filesystem result |
 | `cancel` | `operationId` | `{operationId, cancelling}`; cancellation request is not terminal evidence |
@@ -30,7 +30,11 @@ The daemon accepts one JSON request per line and emits JSON lines. Protocol vers
 
 Malformed JSON produces an `invalid_json` protocol error. Unsupported methods produce `unknown_method`. Network authentication messages are handled by the transport before daemon dispatch.
 
-After authentication, Core may send `telemetry.configure` with `{enabled, endpoint, headers?}`. The gateway validates it and applies it in memory to current and future remote execution spans. This is the normal centrally managed configuration path; host `OTEL_EXPORTER_OTLP_*` variables remain optional overrides and take precedence. Configuration is never journaled, and status reports only whether headers are configured—not their values.
+After authentication, Core may send `telemetry.configure` with a legacy scalar transport or a resolved `destinations` array. Each destination has a stable ID, enabled state, HTTP base or exact trace URL, private headers, `http/json` or `http/protobuf` protocol, trace enablement, and independent TLS verification/CA configuration. Gateways emit traces, not Core's metrics. Destinations have independent bounded queues, export failure/rejected-span counters and shutdown; a failed collector never changes remote operation outcomes. OTLP partial successes preserve numeric rejection counts without logging collector text or retrying accepted spans.
+
+Configuration applies to future admissions. Already-admitted operations finish through their original generation. Core also supplies a private `telemetryConfiguration` on authenticated process/filesystem envelopes so a new operation from an older run retains that run's original destinations after replacement or disable. This field is not public process input: it is stripped before execution, replay digests, journal/correlation storage, and result projections. Omitting it preserves older-controller behavior. A host environment endpoint remains authoritative independently of Core's master switch; credentials are not forwarded between distinct endpoint owners.
+
+Trusted environment-owned snapshots may contain per-signal resolved CA/client certificate/client key PEMs, never host file paths. Generic and trace-specific environment headers merge case-insensitively with trace-specific values winning. Missing selected TLS material disables that signal rather than falling back to an untrusted connection. Public status excludes endpoint/auth/PEM values. Both the controller mod and host gateway must be upgraded for the new private per-operation transport.
 
 Core may include a validated `traceContext` object containing W3C version-00 `traceparent` and optional `tracestate` on `process.exec` and `filesystem.execute`. The controller and gateway both validate it and forward it only as transport context. It is excluded from derived operation IDs, controller correlation, and gateway replay/idempotency digests, and it is removed before child-process or filesystem-runner invocation. When telemetry is enabled through Core Settings or an optional host override, Node Goblin emits one bounded remote server span joined to Core's tool span. The sampled flag and trace state are preserved; an unsampled remote parent executes normally without export. Only validated operation kind/tool/target/operation identifiers are attributes. Commands, arguments, working directories, environment/protected values, filesystem paths/content/queries/output, and raw errors are never exported. Collector failure never changes operation outcome.
 

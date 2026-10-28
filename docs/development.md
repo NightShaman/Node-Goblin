@@ -131,3 +131,14 @@ source:
 The 2026.10.19 public snapshot retains development-release tests even though its promotion excludes the development release workflow. Its bootstrap fixtures also expect the development release authority rather than the public installer authority. Consequently, the aggregate `npm test` command can fail on those packaging/fixture assumptions. Do not treat this as a passing full suite or change the public installer to satisfy a development-only fixture. Focused runtime checks remain useful, but are not a substitute for fixing and rerunning the aggregate suite.
 
 The reviewed public checkout also records deployment shell scripts without executable mode bits. Invoke the documented build script with `sh` as shown above; direct-execution deployment tests can fail before the script starts. This is a source-packaging issue, not evidence that a host installation was exercised.
+
+### Multi-destination telemetry contracts
+
+The gateway suite includes loopback JSON/protobuf fan-out, TLS/mTLS, partial-success accounting, and pre-upgrade operation-digest vectors. Core-integrated tests are opt-in and use an explicit source checkout:
+
+```sh
+BURROW_CORE_SOURCE_ROOT=/absolute/path/to/Burrow-Backend \
+  npm --prefix gateway test
+```
+
+Core dependencies must be installed. The integration installs the actual mod in a disposable directory, forks Core's mod-host, pairs a loopback TLS gateway, and checks private destination ownership and trace identity at real receivers. It does not deploy or contact hosted collectors. Without the explicit checkout those cross-repository cases are skipped.

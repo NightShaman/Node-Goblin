@@ -504,3 +504,112 @@ test('authenticated telemetry delivery failure logs host identity and safe reaso
   assert.equal(warnings.join('').includes('secret-token'), false);
   service.close();
 });
+
+test('trusted provider sends private telemetry only after correlation; public process route cannot select it', async () => {
+  const { createProcessController, createOperationCorrelationStore } = await import('./index.mjs');
+  const marker = 'fake-private-otel-token';
+  const privateConfig = { enabled: true, endpoint: 'https://collector.example', headers: `authorization=${marker}` };
+  const saved = new Map(); const sent = []; const correlations = [];
+  const settings = { async get(k, fallback) { return saved.get(k) ?? fallback; }, async set(k, v) { saved.set(k, structuredClone(v)); } };
+  const store = createOperationCorrelationStore(settings);
+  const operationStore = { async begin(r, kind, params) { correlations.push(structuredClone({ request: r, params })); return store.begin(r, kind, params); }, terminal: (...args) => store.terminal(...args) };
+  const service = { async dispatchProcessExec(_gateway, params) { sent.push(params); return { response: { ok: true, result: { operationId: params.operationId,
+    outcome: { type: 'process.result', exitCode: 0, stdout: 'ok', stderr: '' } } } }; },
+    async dispatchFilesystem(_gateway, params) { sent.push(params); return { response: { ok: true, result: { operationId: params.operationId,
+      outcome: { tool: 'files_inspect', ok: true } } } }; }, dispatchCancel() {} };
+  const controller = createProcessController(service, { operationStore });
+  const base = { targetId: 'gw', parentRunId: 'run', toolCallId: 'call', telemetryConfiguration: privateConfig };
+  const p = await controller.executeProcess({ ...base, operationId: 'p', process: { command: 'true' } });
+  const f = await controller.executeNativeFilesystem({ ...base, operationId: 'f', operation: { tool: 'files_inspect', arguments: { path: '/tmp' } } });
+  assert.deepEqual(sent.map(item => item.telemetryConfiguration), [privateConfig, privateConfig]);
+  assert.equal(JSON.stringify([p, f, correlations, [...saved]]).includes(marker), false);
+  assert.equal(correlations.every(value => value.request.telemetryConfiguration === undefined && value.params.telemetryConfiguration === undefined), true);
+  const publicCalls = [];
+  const publicService = { state: () => ({}), listLiveGateways: () => [], close() {},
+    dispatchProcessExec: async (_gateway, body) => (publicCalls.push(body), { ok: true }), dispatchCancel() {} };
+  const api = await readyHarness({ controllerService: publicService });
+  await api.routes.get('POST /gateways/:gatewayId/processes')({ params: { gatewayId: 'gw' },
+    body: { operationId: 'public', command: 'true', telemetryConfiguration: privateConfig } });
+  assert.equal(publicCalls[0].telemetryConfiguration, undefined);
+  assert.equal(JSON.stringify(publicCalls).includes(marker), false);
+});
+
+test('controller strips structured telemetry echoes and preserves ordinary gateway content', async () => {
+  const token = 'private_otel_secret';
+  const tlsKey = 'private_otel_key\nsecond_line';
+  const config = { enabled: true, endpoint: 'https://collector-private.example', headers: `authorization=Bearer%20${token},stream-name=on,sampling=true,x-stream=streamvalue`,
+    environmentTls: { traces: { clientKey: tlsKey } } };
+  const ordinary = `ordinary configuration true on streamvalue ${config.endpoint}`;
+  const command = `printf '${ordinary}'`;
+  const metadata = { on: 'configuration', true: 'true', streamvalue: 'streamvalue', endpoint: config.endpoint };
+  const traceContext = { traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01', tracestate: 'vendor=value' };
+  const { settings, values } = harness();
+  const store = createOperationCorrelationStore(settings);
+  const sent = []; const terminals = [];
+  const operationStore = { begin: (...args) => store.begin(...args), async terminal(id, dispatch) {
+    terminals.push(structuredClone(dispatch)); return store.terminal(id, dispatch);
+  } };
+  const service = {
+    async dispatchProcessExec(_gateway, params) {
+      sent.push(structuredClone(params));
+      const input = params.command;
+      if (input === 'throw') throw Object.assign(new Error(`raw error ${token}`), { code: token, context: params });
+      if (input === 'throw-known') throw Object.assign(new Error('gateway disconnected'), { code: 'gateway_disconnected' });
+      if (input === 'response-error') return { response: { ok: false, error: { code: 'operation_id_conflict', operationId: params.operationId, received: params } } };
+      if (input === 'response-private-error') return { response: { ok: false, error: { code: token, operationId: params.operationId, received: params } } };
+      const evidence = { type: 'process.result', exitCode: 0, stdout: 'safe process output', stderr: '',
+        metadata: { traceContext: params.traceContext, echoes: [{ telemetryConfiguration: params.telemetryConfiguration }] } };
+      if (input === command) { evidence.stdout = ordinary; evidence.stderr = ordinary; }
+      return { accepted: { operationId: params.operationId }, events: [{ type: 'process.terminal', operationId: params.operationId, evidence }],
+        response: { ok: true, result: { operationId: params.operationId, outcome: evidence, received: params } } };
+    },
+    async dispatchFilesystem(_gateway, params) {
+      sent.push(structuredClone(params));
+      const input = params.arguments.path;
+      if (input === '/throw') throw Object.assign(new Error(`raw error ${token}`), { code: token, context: params });
+      if (input === '/throw-known') throw Object.assign(new Error('gateway disconnected'), { code: 'gateway_disconnected' });
+      if (input === '/response-error') return { response: { ok: false, error: { code: 'operation_id_conflict', operationId: params.operationId, received: params } } };
+      if (input === '/response-private-error') return { response: { ok: false, error: { code: token, operationId: params.operationId, received: params } } };
+      const outcome = { tool: params.tool, ok: true, path: input, exists: true, warnings: ['safe warning'],
+        received: params, evidence: [{ traceContext: params.traceContext, telemetryConfiguration: params.telemetryConfiguration }] };
+      if (input === '/ordinary') { outcome.content = ordinary; outcome.metadata = metadata; }
+      return { accepted: { operationId: params.operationId }, response: { ok: true, result: { operationId: params.operationId, outcome } } };
+    },
+    dispatchCancel() {},
+  };
+  const controller = createProcessController(service, { operationStore });
+  const base = { targetId: 'host-1', parentRunId: 'run', toolCallId: 'call', telemetryConfiguration: config, traceContext };
+  const p = await controller.executeProcess({ ...base, operationId: 'p-safe', process: { command: 'safe' } });
+  const f = await controller.executeNativeFilesystem({ ...base, operationId: 'f-safe', operation: { tool: 'files_inspect', arguments: { path: '/safe' } } });
+  assert.deepEqual(sent.map(value => value.telemetryConfiguration), [config, config]);
+  assert.equal(p.stdout, 'safe process output'); assert.equal(p.exitCode, 0);
+  assert.equal(f.exists, true); assert.deepEqual(f.warnings, ['safe warning']);
+  assert.deepEqual(f.received.traceContext, traceContext); assert.deepEqual(f.evidence[0].traceContext, traceContext);
+  assert.equal(f.received.telemetryConfiguration, undefined); assert.equal(f.evidence[0].telemetryConfiguration, undefined);
+  assert.equal(JSON.stringify([p, f, terminals, [...values]]).includes(token), false);
+  assert.equal(JSON.stringify([p, f, terminals, [...values]]).includes('private_otel_key'), false);
+  const processContent = await controller.executeProcess({ ...base, operationId: 'p-ordinary', process: { command } });
+  assert.equal(processContent.command, command); assert.equal(processContent.stdout, ordinary); assert.equal(processContent.stderr, ordinary);
+  const fileContent = await controller.executeNativeFilesystem({ ...base, operationId: 'f-ordinary',
+    operation: { tool: 'files_read', arguments: { path: '/ordinary', note: ordinary } } });
+  assert.equal(fileContent.content, ordinary); assert.equal(fileContent.received.arguments.note, ordinary);
+  assert.deepEqual(fileContent.metadata, metadata); assert.equal(fileContent.received.telemetryConfiguration, undefined);
+  assert.equal(fileContent.evidence[0].telemetryConfiguration, undefined);
+  for (const [mode, code] of [['throw', 'gateway_dispatch_failed'], ['throw-known', 'gateway_disconnected']]) {
+    await assert.rejects(controller.executeNativeFilesystem({ ...base, operationId: `f-${mode}`,
+      operation: { tool: 'files_inspect', arguments: { path: `/${mode}` } } }),
+      error => error.code === code && error.message === code && !JSON.stringify(error).includes(token));
+    await assert.rejects(controller.executeProcess({ ...base, operationId: `p-${mode}`, process: { command: mode } }),
+      error => error.code === code && error.message === code && !JSON.stringify(error).includes(token));
+  }
+  for (const kind of ['process', 'filesystem']) {
+    for (const [mode, expected] of [['response-error', 'operation_id_conflict'], ['response-private-error', 'gateway_dispatch_failed']]) {
+      const request = kind === 'process' ? { process: { command: mode } } : { operation: { tool: 'files_inspect', arguments: { path: `/${mode}` } } };
+      await assert.rejects(controller[kind === 'process' ? 'executeProcess' : 'executeNativeFilesystem']({ ...base, operationId: `${kind}-${mode}`, ...request }),
+        error => error.code === expected && error.message === expected && error.envelope.error.code === expected
+          && error.envelope.error.received.telemetryConfiguration === undefined && !JSON.stringify(error).includes(token));
+    }
+  }
+  assert.equal(JSON.stringify([terminals, [...values]]).includes(token), false);
+  assert.equal(JSON.stringify([terminals, [...values]]).includes('private_otel_key'), false);
+});
