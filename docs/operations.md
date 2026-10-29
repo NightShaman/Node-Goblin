@@ -63,7 +63,7 @@ Node Goblin releases have their own calendar versions and packages. Use the sele
 
 ## Telemetry and execution evidence
 
-Core Settings can deliver OTLP/HTTP telemetry configuration to connected hosts. Host environment overrides take precedence; check [configuration](configuration.md#telemetry-overrides) if disabling or changing Core telemetry appears ineffective. Export is bounded and best-effort, so collector failures or dropped spans do not establish whether a host operation ran. Use operation results and journal evidence for recovery, not the presence or absence of a trace alone.
+Core Settings can deliver multiple OTLP/HTTP JSON or protobuf trace destinations to compatible connected hosts. Upgrade both the controller mod and gateway for the private per-operation configuration contract. Each destination has separate queues and safe export/rejected-span diagnostics; one failed collector does not block another. Already-admitted operations and later operations from an older run retain that run's original destination snapshot, even after settings are replaced or disabled. Host environment overrides take precedence; check [configuration](configuration.md#telemetry-overrides) if disabling or changing Core telemetry appears ineffective. Export is bounded and best-effort, so collector failures or dropped spans do not establish whether a host operation ran. Use operation results and journal evidence for recovery, not the presence or absence of a trace alone.
 
 ## Backup and restore
 
@@ -98,3 +98,4 @@ identity independently, and use the verified unpair/re-pair procedure in
 The controller cannot observe a host's saved pin or diagnose a remote pin mismatch
 from a disconnect; inspect the host's local `controller_tls_identity_mismatch`
 diagnostic. TLS metadata fingerprints use SHA-256 over DER, not PEM text.
+

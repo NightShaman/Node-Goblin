@@ -27,19 +27,28 @@ Installer/operator controls are separate: `BURROW_GATEWAY_ROOT` selects a stagin
 
 ## Telemetry overrides
 
-Core Settings normally delivers telemetry configuration through the provider. The host also supports these environment overrides:
+Core Settings normally delivers telemetry configuration through the provider. Current controller-delivered destinations support independent OTLP/HTTP JSON or protobuf trace export, trace enablement, private headers, and TLS verification/CA settings. Node Goblin exports traces, not Core's metrics. Upgrade both the controller mod and host gateway for this multi-destination and per-operation transport. The host also supports these environment overrides:
 
 | Variable | Default / precedence |
 | --- | --- |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Exact trace URL; takes precedence over the base endpoint and Core Settings |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Base URL; runtime appends `/v1/traces`; takes precedence over Core Settings |
-| `OTEL_EXPORTER_OTLP_TRACES_HEADERS` / `OTEL_EXPORTER_OTLP_HEADERS` | Trace-specific header string takes precedence; comma-separated, percent-decoded `key=value` pairs (values may contain `=` padding) |
-| `OTEL_BSP_MAX_QUEUE_SIZE` | 512 spans |
+| `OTEL_EXPORTER_OTLP_TRACES_HEADERS` / `OTEL_EXPORTER_OTLP_HEADERS` | Generic and trace-specific headers merge case-insensitively, with trace-specific values winning; comma-separated, percent-decoded `key=value` pairs (values may contain `=` padding) |
+| `OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE` / `OTEL_EXPORTER_OTLP_CERTIFICATE` | CA certificate file for a host-selected HTTPS endpoint; trace-specific path wins |
+| `OTEL_EXPORTER_OTLP_TRACES_CLIENT_CERTIFICATE` / `OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE` | Client certificate file; trace-specific path wins |
+| `OTEL_EXPORTER_OTLP_TRACES_CLIENT_KEY` / `OTEL_EXPORTER_OTLP_CLIENT_KEY` | Client key file; trace-specific path wins |
+| `OTEL_BSP_MAX_QUEUE_SIZE` | 512 spans per destination; maximum 4,096 |
 | `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` / `OTEL_EXPORTER_OTLP_TIMEOUT` / `OTEL_BSP_EXPORT_TIMEOUT` | First nonempty setting in the listed order; invalid/nonpositive values fall back to 3,000 ms |
 | `OTEL_BSP_SCHEDULE_DELAY` | 1,000 ms |
 | `OTEL_BSP_SHUTDOWN_TIMEOUT` | Shutdown override; otherwise trace/general timeout, then effective export timeout |
 
-A configured environment endpoint remains active even if Core disables telemetry. Nonempty parsed environment headers also override controller headers. Keep collector credentials in protected configuration, never in endpoint URLs or command arguments. Core-delivered endpoints accept HTTP(S) without credentials, query, or fragment. Exports use OTLP/HTTP JSON and are best-effort with bounded queues; failed batches can be dropped. Export warnings and status include only a fixed failure reason and, for HTTP failures, a numeric status code; collector response bodies, header values, and exception text are not logged. Telemetry configuration failures identify the gateway and a fixed safe reason without logging credentials or remote response text. An in-flight export keeps its original destination and does not delay new configuration delivery.
+A host environment endpoint remains active even if Core disables telemetry and selects one environment-owned JSON exporter rather than fan-out to saved destinations. Header-only host overrides also select one owner; they do not distribute host credentials to every saved collector. Controller credentials follow only their own exact trace URL, never a distinct host-selected endpoint. Keep credentials in protected configuration, never in endpoint URLs or command arguments.
+
+For a host-selected HTTPS endpoint, certificate variables above identify local files read when the telemetry runtime starts. Missing or unreadable selected TLS material disables trace export rather than weakening verification. Core-resolved private environment snapshots carry certificate content, not host file paths. Status excludes endpoint URLs, auth values and certificate material.
+
+Exports are best-effort with independent bounded queues and shutdown for each destination. Failed batches can be dropped; OTLP partial-success responses preserve numeric rejected-span counts without logging collector text or retrying accepted spans. Warnings use fixed safe reasons and numeric HTTP status where available, not response bodies, header values or exception text. Collector failure never changes remote operation outcomes.
+
+Configuration changes apply to future admissions. Already-admitted operations keep their original exporter generation. Compatible Core and controller versions also supply an authenticated private transport snapshot so later operations from an older run keep that run's destinations after settings replacement or disable. This is not a public process option and is excluded from execution arguments, operation identity/replay digests, journal/correlation records and result projections. Retiring exports do not block configuration delivery.
 
 ## Controller settings names
 
@@ -98,3 +107,4 @@ The checked-in unit runs as `burrow:burrow`, working directory `/opt/burrow-host
 - [`gateway/deploy/burrow-host-gateway.service`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/deploy/burrow-host-gateway.service)
 - [`server/index.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/server/index.mjs)
 - [`gateway/lib/journal.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/journal.mjs)
+
