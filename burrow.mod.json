@@ -1,7 +1,7 @@
 {
   "id": "node-goblin",
   "name": "Node Goblin",
-  "version": "2026.10.28",
+  "version": "2026.10.29",
   "system": true,
   "managedSkills": [
     {
