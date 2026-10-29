@@ -58,6 +58,29 @@ Pairing approval requires the current live pending transcript and its matching c
 
 Operation IDs match `[a-z0-9][a-z0-9._:-]{0,255}` case-insensitively. `limit` defaults 50 and is clamped to 1–256 when integral. Invalid nonintegral input selects 50. Gateway filters use gateway-ID validation.
 
+### Archive operation window
+
+`GET /operations/archive` is a read-only projection of all currently retained
+listener metadata, shown in **Archive → MODS → Node Goblin**. Send `timeZone` as an
+IANA browser timezone, and optional `date=YYYY-MM-DD` (omit for All dates),
+`gatewayId`, `q`, `limit` (1–200, default 50), and opaque `cursor`. Date filtering
+matches operation `startedAt` in that timezone, including DST transitions. Search
+matches safe gateway/operation IDs, kind, state and outcome metadata.
+
+Response: `{ok, operations, nextCursor, hasMore, history}`. Operations retain
+IDs, lifecycle state, timing, replay and reconnect hints, not commands, protected
+values or output. The `history` metadata reports `available`, `retainedEntries`,
+`maxEntries`, `matchedEntries`, `complete:false` and `volatile:true`. An unavailable
+buffer is not evidence that no work occurred. Paging is live, ordered by
+`startedAt`, gateway ID and operation ID descending; concurrent updates, eviction
+and revocation can change later pages. Keep filters unchanged with a cursor;
+activation/restart invalidates cursors. Invalid filters/cursors return 400.
+
+This does not change listener retention (default 256, existing maximum 1000),
+replay/correlation authority, cancellation or dispatch. Restart loses the window;
+oldest-updated entries are evicted at capacity; revocation clears the gateway's
+entries. The legacy latest-N `/operations` route remains compatible.
+
 The process route requires either a nonempty `command` or a nonempty `executable`, never both; `args` is an array of strings and cannot be nonempty with `command`. Remaining body fields are forwarded to the dispatch service. Only supply reviewed options documented in the [protocol](protocol.md).
 
 `dispatch` contains `accepted`, `response`, and `events`. A completed replay can have no new accepted envelope or stream events. Inspect nested success and process evidence. Disconnected/not-ready gateway dispatch errors map to HTTP 503; other dispatch exceptions map to 400 with a code such as `gateway_dispatch_failed`.

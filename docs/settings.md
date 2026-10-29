@@ -10,7 +10,6 @@ Node Goblin supplies declarative settings data and action handlers. BURROW rende
 | Pending pairings | Compare pairing transcript codes; approve/reject a host | Requires a current live challenge and host confirmation for first no-CA pairing |
 | Gateways | View trust and live metadata; provision HMAC credentials; revoke | Secret input is not returned by the settings API |
 | Agent assignments | Select local or gateway execution and workspace | Writes the Core agent API and applies to future turns |
-| Operation activity | Inspect bounded execution metadata | Omits prompts, parameters, protected values, and raw output |
 
 ## Controller and TLS
 
@@ -34,17 +33,18 @@ Choose a configured, approved gateway and an absolute workspace, then save. This
 
 Telemetry configuration belongs to Core Settings, not a separate Node Goblin collector form. Node Goblin forwards that configuration to authenticated hosts and newly connected gateways. A host's explicit `OTEL_*` endpoint takes precedence; see [telemetry overrides](configuration.md#telemetry-overrides). Telemetry failure does not replace process-result or journal evidence.
 
-## Activity
+## Operation history
 
-The UI shows up to 50 activity records. The default listener retains 256 metadata records in memory. The HTTP route bounds its requested limit to 1–256. Activity can show dispatching, running, terminal, or interrupted, plus replay and reconnect hints.
+Operation activity is in **Archive → MODS → Node Goblin**. Controller, pairing,
+gateway and assignment configuration remain here. Archive provides metadata
+search, gateway/date filtering, paging, selection and refresh through the mod's
+existing Archive contribution; it does not add a separate activity page.
 
-This display is distinct from:
-
-- The gateway's completed-operation replay journal
-- The controller's durable operation-correlation records
-- Host service logs and operating-system process state
-
-After a restart or disconnect, use all relevant evidence before concluding that an operation failed or never ran.
+The controller listener retains a volatile window (256 entries by default).
+Restart, capacity eviction and gateway revocation can remove entries. This is not
+complete durable execution history, the gateway replay journal, or an operating
+system process inventory. No commands, environment values or raw output are
+projected by the Archive endpoint.
 
 ## Troubleshooting an action
 

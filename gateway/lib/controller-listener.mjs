@@ -460,6 +460,12 @@ export class GatewayControllerListener extends EventEmitter {
     return this.activity.filter((entry) => !gatewayId || entry.gatewayId === gatewayId).slice(-bounded).reverse().map((entry) => ({ ...entry }));
   }
 
+  // Internal snapshot of the entire retained buffer; the legacy list remains
+  // bounded and keeps its existing order/default. This does not persist history.
+  snapshotOperationActivity() {
+    return { available: true, maxEntries: Math.floor(this.activityLimit), operations: this.activity.map((entry) => ({ ...entry })) };
+  }
+
   dispatchProcessExec(gatewayId, params = {}) {
     const connection = this.liveGateway(gatewayId);
     if (!connection) return Promise.reject(Object.assign(new Error('gateway_not_connected'), { code: 'gateway_not_connected' }));

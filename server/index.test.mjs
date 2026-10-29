@@ -17,7 +17,7 @@ const target = { id: 'aap-host', name: 'AAP Host', baseUrl: 'http://127.0.0.1:42
 
 test('retains legacy target registry API while adding controller operational routes', async () => {
   const value = await readyHarness({ controllerService: { state: () => ({ enabled: false, host: '127.0.0.1', port: 7443, running: false }), listLiveGateways: () => [], close() {} } });
-  assert.deepEqual([...value.routes.keys()], ['GET /targets', 'POST /targets', 'PUT /targets/:id', 'DELETE /targets/:id', 'GET /controller', 'PUT /controller', 'PUT /controller/tls', 'DELETE /controller/tls', 'GET /pairings', 'POST /pairings/:gatewayId/approve', 'POST /pairings/:gatewayId/reject', 'GET /gateway-trust', 'PUT /gateway-trust/:gatewayId', 'DELETE /gateway-trust/:gatewayId', 'GET /gateways', 'GET /operations', 'POST /gateways/:gatewayId/processes', 'POST /gateways/:gatewayId/operations/:operationId/cancel']);
+  assert.deepEqual([...value.routes.keys()], ['GET /targets', 'POST /targets', 'PUT /targets/:id', 'DELETE /targets/:id', 'GET /controller', 'PUT /controller', 'PUT /controller/tls', 'DELETE /controller/tls', 'GET /pairings', 'POST /pairings/:gatewayId/approve', 'POST /pairings/:gatewayId/reject', 'GET /gateway-trust', 'PUT /gateway-trust/:gatewayId', 'DELETE /gateway-trust/:gatewayId', 'GET /gateways', 'GET /operations', 'GET /operations/archive', 'POST /gateways/:gatewayId/processes', 'POST /gateways/:gatewayId/operations/:operationId/cancel']);
   const created = await value.routes.get('POST /targets')({ body: target });
   assert.equal(created.status, 201); assert.deepEqual(created.body, { ok: true, target }); assert.deepEqual(value.values.get('targets'), [target]);
   assert.deepEqual(await value.routes.get('GET /targets')({}), { ok: true, targets: [target] });
@@ -612,4 +612,180 @@ test('controller strips structured telemetry echoes and preserves ordinary gatew
   }
   assert.equal(JSON.stringify([terminals, [...values]]).includes(token), false);
   assert.equal(JSON.stringify([terminals, [...values]]).includes('private_otel_key'), false);
+});
+
+// Exercise the real listener buffer and service, with an inert transport.
+async function archiveFixture(activityLimit = 256) {
+  const value = harness();
+  value.values.set('controller', { enabled: true });
+  value.secretValues.set('controller.tls.key', 'not-a-real-key');
+  value.secretValues.set('controller.tls.cert', 'not-a-real-cert');
+  let listener;
+  const service = await createControllerService({ ...value, listenerFactory(options) {
+    listener = new GatewayControllerListener({ ...options, activityLimit, tlsServer: () => {
+      const server = new EventEmitter();
+      server.listen = () => server.emit('listening');
+      server.close = (callback) => callback?.();
+      return server;
+    } });
+    return listener;
+  } });
+  const lifecycle = await activate({ ...value, controllerService: service });
+  function dispatch(gatewayId, operationId, startedAt, extra = {}) {
+    const pending = { requestId: `request-${operationId}`, method: 'process.exec', operationId, startedAt, ...extra };
+    listener.recordDispatch(gatewayId, pending);
+    return pending;
+  }
+  return { ...value, service, listener, lifecycle, archive: value.routes.get('GET /operations/archive'), dispatch };
+}
+
+const archiveIds = (page) => page.operations.map((entry) => entry.operationId);
+const archiveError = (code) => (error) => error.message === code && error.statusCode === 400;
+
+test('archive pages all real retained activity with deterministic ties, filters, and safe projection', async () => {
+  const f = await archiveFixture(1000);
+  try {
+    let last;
+    for (let i = 0; i < 1005; i++) {
+      last = f.dispatch(i % 2 ? 'host-a' : 'host-b', `op-${String(i).padStart(4, '0')}`, '2025-07-04T12:00:00.000Z', {
+        command: 'private-command', env: { TOKEN: 'private-token' }, protectedValues: { VALUE: 'private-binding' },
+      });
+    }
+    f.listener.recordResponse('host-b', last, { ok: false, error: { code: 'private-token exception text' },
+      result: { outcome: { stdout: 'private-stdout', stderr: 'private-stderr' } } });
+    const before = f.listener.snapshotOperationActivity();
+    assert.equal(before.operations.length, 1000);
+    assert.equal(before.maxEntries, 1000);
+    assert.equal(f.listener.listOperationActivity().length, 50);
+    assert.equal(f.routes.get('GET /operations')({ query: { limit: '999' } }).operations.length, 256);
+    const base = { date: '2025-07-04', timeZone: 'UTC', limit: '200' };
+    const pages = []; let cursor;
+    do {
+      const page = f.archive({ query: { ...base, ...(cursor ? { cursor } : {}) } });
+      assert.deepEqual(page.history, { source: 'controller_listener_activity', available: true, complete: false, volatile: true,
+        retainedEntries: 1000, maxEntries: 1000, matchedEntries: 1000, lostOnRestart: true, evictsOldestUpdated: true, clearedOnGatewayRevocation: true });
+      assert.equal(page.hasMore, page.nextCursor !== null);
+      pages.push(page); cursor = page.nextCursor;
+    } while (cursor);
+    assert.equal(pages.length, 5);
+    const found = pages.flatMap((page) => page.operations);
+    const expected = before.operations.slice().sort((a, b) => {
+      for (const key of ['startedAt', 'gatewayId', 'operationId']) if (a[key] !== b[key]) return a[key] > b[key] ? -1 : 1;
+      return 0;
+    });
+    assert.deepEqual(found.map(({ gatewayId, operationId }) => [gatewayId, operationId]), expected.map(({ gatewayId, operationId }) => [gatewayId, operationId]));
+    assert.equal(new Set(found.map(({ gatewayId, operationId }) => `${gatewayId}/${operationId}`)).size, 1000);
+    assert.equal(found.some((entry) => entry.operationId === 'op-0004'), false);
+    assert.equal(found.find((entry) => entry.operationId === 'op-1004').terminalOutcome, 'failed');
+    for (const secret of ['private-command', 'private-token', 'private-binding', 'private-stdout', 'private-stderr']) assert.equal(JSON.stringify(pages).includes(secret), false);
+    assert.deepEqual(Object.keys(found[0]).sort(), ['durationMs', 'endedAt', 'gatewayId', 'kind', 'operationId', 'reconnectRequired', 'replay', 'startedAt', 'state', 'terminalOutcome'].sort());
+    const filtered = f.archive({ query: { ...base, gatewayId: 'host-a', q: 'OP-0999' } });
+    assert.deepEqual(archiveIds(filtered), ['op-0999']);
+    assert.equal(filtered.history.retainedEntries, 1000);
+    assert.equal(filtered.history.matchedEntries, 1);
+    assert.deepEqual(archiveIds(f.archive({ query: { ...base, gatewayId: 'host-b', q: 'op-0999' } })), []);
+    assert.deepEqual(archiveIds(f.archive({ query: { ...base, q: 'private-command' } })), []);
+    const searchBase = { ...base, gatewayId: 'host-a', q: 'PROCESS', limit: 1 };
+    const firstSearch = f.archive({ query: searchBase });
+    assert.equal(firstSearch.history.matchedEntries, 500);
+    assert.equal(firstSearch.hasMore, true);
+    assert.notEqual(archiveIds(firstSearch)[0], archiveIds(f.archive({ query: { ...searchBase, cursor: firstSearch.nextCursor } }))[0]);
+    assert.throws(() => f.archive({ query: { ...searchBase, gatewayId: 'host-b', cursor: firstSearch.nextCursor } }), archiveError('archive_cursor_invalid'));
+    assert.throws(() => f.archive({ query: { ...searchBase, q: 'filesystem', cursor: firstSearch.nextCursor } }), archiveError('archive_cursor_invalid'));
+    assert.deepEqual(f.listener.snapshotOperationActivity(), before);
+    found[0].operationId = 'changed-by-caller';
+    assert.deepEqual(f.listener.snapshotOperationActivity(), before);
+  } finally { await f.lifecycle.close(); }
+});
+
+test('archive selects local calendar dates across DST boundaries and fractional offsets', async () => {
+  const f = await archiveFixture();
+  try {
+    for (const [id, time] of [
+      ['spring-before', '2024-03-10T04:59:59.999Z'], ['spring-first', '2024-03-10T05:00:00.000Z'],
+      ['spring-pre-jump', '2024-03-10T06:59:59.999Z'], ['spring-post-jump', '2024-03-10T07:00:00.000Z'],
+      ['spring-last', '2024-03-11T03:59:59.999Z'], ['spring-after', '2024-03-11T04:00:00.000Z'],
+      ['fall-before', '2024-11-03T03:59:59.999Z'], ['fall-first', '2024-11-03T04:00:00.000Z'],
+      ['fall-repeat-one', '2024-11-03T05:30:00.000Z'], ['fall-repeat-two', '2024-11-03T06:30:00.000Z'],
+      ['fall-last', '2024-11-04T04:59:59.999Z'], ['fall-after', '2024-11-04T05:00:00.000Z'],
+      ['kathmandu-before', '2024-06-14T18:14:59.999Z'], ['kathmandu-first', '2024-06-14T18:15:00.000Z'],
+      ['kathmandu-last', '2024-06-15T18:14:59.999Z'], ['kathmandu-after', '2024-06-15T18:15:00.000Z'],
+    ]) f.dispatch('host', id, time);
+    const before = f.listener.snapshotOperationActivity();
+    assert.deepEqual(archiveIds(f.archive({ query: { date: '2024-03-10', timeZone: 'America/New_York' } })), ['spring-last', 'spring-post-jump', 'spring-pre-jump', 'spring-first']);
+    assert.deepEqual(archiveIds(f.archive({ query: { date: '2024-11-03', timeZone: 'America/New_York' } })), ['fall-last', 'fall-repeat-two', 'fall-repeat-one', 'fall-first']);
+    assert.deepEqual(archiveIds(f.archive({ query: { date: '2024-06-15', timeZone: 'Asia/Kathmandu' } })), ['kathmandu-last', 'kathmandu-first']);
+    assert.deepEqual(archiveIds(f.archive({ query: { date: '2024-06-15', timeZone: 'UTC' } })), ['kathmandu-after', 'kathmandu-last']);
+    assert.deepEqual(f.listener.snapshotOperationActivity(), before);
+  } finally { await f.lifecycle.close(); }
+});
+
+test('archive rejects malformed, changed-scope, forged, and stale cursor requests', async () => {
+  const f = await archiveFixture();
+  const base = { date: '2024-02-29', timeZone: 'UTC', limit: '1' };
+  try {
+    f.dispatch('host-a', 'one', '2024-02-29T03:00:00.000Z');
+    f.dispatch('host-a', 'two', '2024-02-29T04:00:00.000Z');
+    const first = f.archive({ query: base });
+    assert.deepEqual(archiveIds(first), ['two']);
+    assert.equal(first.hasMore, true);
+    for (const date of [undefined, '']) {
+      const all = f.archive({ query: { ...base, date } });
+      assert.deepEqual(archiveIds(all), ['two']);
+      assert.equal(all.hasMore, true);
+      assert.deepEqual(archiveIds(f.archive({ query: { ...base, date, cursor: all.nextCursor } })), ['one']);
+    }
+    for (const date of ['2023-02-29', '2024-04-31', '2024-2-01', '0000-01-01', '2024-13-01', '2024-02-29Z'])
+      assert.throws(() => f.archive({ query: { ...base, date } }), archiveError('archive_date_invalid'));
+    for (const timeZone of [undefined, '', 'Invalid/Zone', '+05:30', 'UTC ', 123])
+      assert.throws(() => f.archive({ query: { ...base, timeZone } }), archiveError('archive_time_zone_invalid'));
+    for (const limit of ['', '0', '-1', '201', '1.2', '1e2', '9007199254740992'])
+      assert.throws(() => f.archive({ query: { ...base, limit } }), archiveError('archive_limit_invalid'));
+    for (const q of [42, 'x'.repeat(201)]) assert.throws(() => f.archive({ query: { ...base, q } }), archiveError('archive_query_invalid'));
+    assert.throws(() => f.archive({ query: { ...base, gatewayId: 'bad/id' } }), archiveError('target_id_invalid'));
+    const tampered = first.nextCursor.slice(0, -1) + (first.nextCursor.endsWith('A') ? 'B' : 'A');
+    for (const cursor of ['', 'broken', 'e30.abc', tampered, 1])
+      assert.throws(() => f.archive({ query: { ...base, cursor } }), archiveError('archive_cursor_invalid'));
+    for (const changed of [{ date: '2024-02-28' }, { timeZone: 'America/New_York' }, { gatewayId: 'host-a' }, { q: 'one' }])
+      assert.throws(() => f.archive({ query: { ...base, ...changed, cursor: first.nextCursor } }), archiveError('archive_cursor_invalid'));
+    assert.deepEqual(archiveIds(f.archive({ query: { ...base, limit: '200', cursor: first.nextCursor } })), ['one']);
+    const eastern = { ...base, date: '2024-02-28', timeZone: 'US/Eastern' };
+    const easternFirst = f.archive({ query: eastern });
+    assert.equal(easternFirst.hasMore, true);
+    assert.deepEqual(archiveIds(f.archive({ query: { ...eastern, timeZone: 'America/New_York', cursor: easternFirst.nextCursor } })), ['one']);
+    await activate({ ...f, controllerService: f.service });
+    assert.throws(() => f.routes.get('GET /operations/archive')({ query: { ...base, cursor: first.nextCursor } }), archiveError('archive_cursor_invalid'));
+  } finally { await f.lifecycle.close(); }
+});
+
+test('keyset continues after its anchor is evicted and excludes newer rows from later pages', async () => {
+  const f = await archiveFixture(3);
+  try {
+    const a = f.dispatch('host', 'a', '2025-01-01T01:00:00.000Z');
+    f.dispatch('host', 'b', '2025-01-01T02:00:00.000Z');
+    f.dispatch('host', 'c', '2025-01-01T03:00:00.000Z');
+    const base = { date: '2025-01-01', timeZone: 'UTC', limit: 2 };
+    const first = f.archive({ query: base });
+    assert.deepEqual(archiveIds(first), ['c', 'b']);
+    f.listener.recordResponse('host', a, { ok: true, result: { outcome: { exitCode: 0 } } });
+    f.dispatch('host', 'd', '2025-01-01T04:00:00.000Z'); // Evict b, the cursor anchor.
+    const next = f.archive({ query: { ...base, cursor: first.nextCursor } });
+    assert.deepEqual(archiveIds(next), ['a']);
+    assert.equal(next.hasMore, false); assert.equal(next.nextCursor, null);
+    f.listener.revokeGateway('host');
+    const revoked = f.archive({ query: base });
+    assert.deepEqual(revoked.operations, []);
+    assert.equal(revoked.history.retainedEntries, 0);
+    assert.equal(revoked.history.clearedOnGatewayRevocation, true);
+  } finally { await f.lifecycle.close(); }
+});
+
+test('archive reports an unavailable listener without consulting durable correlations', async () => {
+  const f = await readyHarness();
+  f.values.set('controllerOperations', [{ operationId: 'durable-is-not-history', state: 'terminal' }]);
+  assert.deepEqual(f.routes.get('GET /operations/archive')({ query: { date: '2025-01-01', timeZone: 'UTC' } }), {
+    ok: true, operations: [], nextCursor: null, hasMore: false,
+    history: { source: 'controller_listener_activity', available: false, complete: false, volatile: true,
+      retainedEntries: 0, maxEntries: null, matchedEntries: 0, lostOnRestart: true, evictsOldestUpdated: true, clearedOnGatewayRevocation: true },
+  });
 });

@@ -9,7 +9,6 @@ export const settingsSections = Object.freeze([
   { id: 'pairings', label: 'Pending pairings' },
   { id: 'gateways', label: 'Gateways' },
   { id: 'assignments', label: 'Agent assignments' },
-  { id: 'operations', label: 'Operation activity' },
 ]);
 
 // Node Goblin owns settings data and actions; the host owns their presentation.
@@ -50,23 +49,15 @@ export const settingsContribution = Object.freeze({
       layout: 'form-inventory',
       items: Object.freeze([]),
     },
-    {
-      id: 'operations',
-      label: 'Operation activity',
-      description: 'Inspect bounded, UI-safe execution provenance without prompts, parameters, secrets, or raw output.',
-      layout: 'activity',
-      items: Object.freeze([]),
-    },
   ]),
 });
 
 export async function createSettingsContribution(context) {
-  const [controllerResult, pairingResult, trustResult, gatewayResult, operationResult] = await Promise.all([
+  const [controllerResult, pairingResult, trustResult, gatewayResult] = await Promise.all([
     context.api('/controller'),
     context.api('/pairings?limit=50'),
     context.api('/gateway-trust'),
     context.api('/gateways'),
-    context.api('/operations?limit=50'),
   ]);
   const pairings = Array.isArray(pairingResult?.pairings) ? pairingResult.pairings : [];
   const items = pairings.map((pairing) => {
@@ -112,13 +103,6 @@ export async function createSettingsContribution(context) {
       actions: [{ id: `save-assignment:${agent.id}`, label: 'Save assignment', tone: 'primary' }],
     };
   });
-  const operations = (Array.isArray(operationResult?.operations) ? operationResult.operations : []).slice(0, 50).map((operation) => ({
-    id: String(operation.operationId || operation.id || `${operation.gatewayId || 'gateway'}-${operation.startedAt || 'operation'}`),
-    label: String(operation.kind || 'operation'),
-    description: 'Bounded controller activity. Prompts, parameters, protected values, and raw output are omitted.',
-    meta: `${String(operation.state || 'unknown')} · Gateway ${String(operation.gatewayId || 'unknown')} · Operation ${String(operation.operationId || operation.id || 'unknown')}`,
-    detail: `${operation.terminalOutcome ? `Outcome: ${String(operation.terminalOutcome)}` : operation.reconnectRequired ? 'Reconnect required' : operation.replay ? 'Replayed from gateway journal' : 'Controller dispatch tracked'} · Started ${operation.startedAt ? new Date(operation.startedAt).toLocaleString() : '—'} · Ended ${operation.endedAt ? new Date(operation.endedAt).toLocaleString() : '—'} · Duration ${operation.durationMs == null ? '—' : `${operation.durationMs} ms`}`,
-  }));
   const controller = controllerResult?.controller || {};
   const tls = controller.tls || {};
   const controllerSection = {
@@ -183,7 +167,7 @@ export async function createSettingsContribution(context) {
       { id: 'enroll-gateway-id', label: 'Gateway ID', control: 'text', description: 'For a legacy HMAC gateway. Ed25519 gateways use key pairing instead.' },
       { id: 'enroll-controller-id', label: 'Controller ID', control: 'text', value: 'controller' },
       { id: 'enroll-secret', label: 'Legacy HMAC enrollment secret', control: 'password', description: 'Legacy HMAC only; one-time input that is never displayed after submission.' },
-    ], actions: [{ id: 'enroll-gateway', label: 'Enroll legacy HMAC gateway', tone: 'primary', confirm: 'Enroll this legacy HMAC gateway? Update the gateway to match and restart Burrow.' }], items: gatewayItems } : section.id === 'assignments' ? { ...section, items: assignmentItems } : section.id === 'operations' ? { ...section, items: operations } : section),
+    ], actions: [{ id: 'enroll-gateway', label: 'Enroll legacy HMAC gateway', tone: 'primary', confirm: 'Enroll this legacy HMAC gateway? Update the gateway to match and restart Burrow.' }], items: gatewayItems } : section.id === 'assignments' ? { ...section, items: assignmentItems } : section),
   };
 }
 

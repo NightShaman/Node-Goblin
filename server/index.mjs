@@ -8,6 +8,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { controllerIdentity } from '../gateway/index.mjs';
 import { GatewayControllerListener, canonicalize, canonicalProcessRequest, normalizeTraceContext } from '../gateway/index.mjs';
+import { createOperationArchive } from './operation-archive.mjs';
 
 const SETTINGS_NAME = 'targets';
 const CONTROLLER_SETTINGS_NAME = 'controller';
@@ -580,6 +581,7 @@ export async function createControllerService({ settings, secrets, listenerFacto
       ? (listener.listGateways?.() ?? listener.listLiveGateways())
       : records.map(({ gatewayId }) => ({ gatewayId, status: 'disconnected', connected: false, connectedAt: null, lastSeenAt: null, activeOperations: [], name: null, version: null, protocolVersion: null })),
     listOperationActivity: (options) => listener?.listOperationActivity?.(options) ?? [],
+    snapshotOperationActivity: () => listener?.snapshotOperationActivity?.() ?? { available: false, maxEntries: null, operations: [] },
     async dispatchProcessExec(gatewayId, params) {
       if (!listening) throw Object.assign(new Error(startError || 'controller_not_running'), { code: startError || 'controller_not_running' });
       return redact(await listener.dispatchProcessExec(gatewayId, params), [...secretValues]);
@@ -682,6 +684,7 @@ export async function activate({ api, settings, secrets, logger, processExecutio
     const gatewayId = query.gatewayId == null || query.gatewayId === '' ? null : cleanId(query.gatewayId);
     return { ok: true, operations: service.listOperationActivity?.({ gatewayId, limit }) ?? [], limit };
   });
+  api.get('/operations/archive', createOperationArchive(service, cleanId));
   api.post('/gateways/:gatewayId/processes', async ({ params, body = {} }) => {
     const operationId = String(body.operationId ?? '').trim();
     if (!OPERATION_ID.test(operationId)) throw problem('operation_id_invalid');
