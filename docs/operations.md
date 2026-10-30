@@ -37,6 +37,14 @@ Protect logs before sharing them. Pairing logs contain pairing codes; process re
 | Empty/incomplete filesystem results | Bounds, skipped entries, warnings, permissions | Report the searched scope; enlarge only the necessary bounds |
 | Version in UI differs from release file | Runtime `hello` identity vs manifest/VERSION | Verify installed files and release SHA separately |
 
+## Find retained operation metadata
+
+Open **Archive → MODS → Node Goblin** for the controller's retained operation window. Use the Archive date selector (or All dates), a gateway ID, and metadata search; select a record for timing, lifecycle, replay and reconnect hints. The date matches the operation start in your browser's IANA timezone. **Load more** pages through currently retained matches; **Refresh** starts the view again. Controller, pairing and assignment configuration stays in Settings.
+
+This is a volatile metadata window, not complete execution history. It retains 256 entries by default, loses entries on controller restart, evicts the oldest-updated entries at capacity, and clears a gateway's entries on revocation. The view contains no commands, paths, output or secrets. An unavailable buffer or no matching retained records does not prove that no operation ran. Use the host journal, process result and current host state when recovering uncertain work.
+
+API clients should keep filters unchanged while following a cursor. Concurrent activity or eviction can change later pages, and mod reactivation invalidates old cursors. Start a fresh query after a cursor error; do not retry execution to recreate a missing history row. See the [Archive API contract](api.md#archive-operation-window).
+
 ## Disconnect and cancellation
 
 A TCP/TLS disconnect rejects the controller's pending request, but does not automatically cancel host-side work. The gateway can continue executing and journal a completed result. Reconnection alone does not prove it is safe to repeat side effects.
@@ -98,4 +106,5 @@ identity independently, and use the verified unpair/re-pair procedure in
 The controller cannot observe a host's saved pin or diagnose a remote pin mismatch
 from a disconnect; inspect the host's local `controller_tls_identity_mismatch`
 diagnostic. TLS metadata fingerprints use SHA-256 over DER, not PEM text.
+
 

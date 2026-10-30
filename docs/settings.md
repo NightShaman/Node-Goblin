@@ -54,6 +54,9 @@ Save errors include the HTTP response text or a fallback status-based message. F
 
 ## Source references
 
+- [`ui/archive.js`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/ui/archive.js)
+- [`server/operation-archive.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/server/operation-archive.mjs)
+
 - [`ui/settings.js`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/ui/settings.js)
 - [`server/index.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/server/index.mjs)
 - [`gateway/lib/controller-listener.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/controller-listener.mjs)

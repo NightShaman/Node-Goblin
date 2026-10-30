@@ -53,6 +53,7 @@ Pairing approval requires the current live pending transcript and its matching c
 | --- | --- | --- |
 | `GET /gateways` | None | `{ok, gateways}` with connection/implementation/operation metadata |
 | `GET /operations` | Optional `gatewayId`, `limit` query | `{ok, operations, limit}` |
+| `GET /operations/archive` | Required `timeZone`; optional `date`, `gatewayId`, `q`, `limit`, `cursor` | `{ok, operations, nextCursor, hasMore, history}` |
 | `POST /gateways/:gatewayId/processes` | Operation ID and process request | `{ok, operationId, dispatch}` |
 | `POST /gateways/:gatewayId/operations/:operationId/cancel` | Path IDs | `{ok, operationId, dispatch}` |
 
@@ -63,7 +64,8 @@ Operation IDs match `[a-z0-9][a-z0-9._:-]{0,255}` case-insensitively. `limit` de
 `GET /operations/archive` is a read-only projection of all currently retained
 listener metadata, shown in **Archive → MODS → Node Goblin**. Send `timeZone` as an
 IANA browser timezone, and optional `date=YYYY-MM-DD` (omit for All dates),
-`gatewayId`, `q`, `limit` (1–200, default 50), and opaque `cursor`. Date filtering
+`gatewayId`, `q`, `limit` (1–200, default 50), and opaque `cursor`. `q` is limited to 200 characters; page limits must be integers
+from 1 through 200 rather than being silently clamped. Date filtering
 matches operation `startedAt` in that timezone, including DST transitions. Search
 matches safe gateway/operation IDs, kind, state and outcome metadata.
 
@@ -102,6 +104,9 @@ The UI requires an absolute workspace root and a gateway for remote assignments.
 Use a current authenticated Burrow session and the normal administrative UI for credential changes. Never put TLS keys, HMAC secrets, protected values, or process output into logs or URLs. Do not automatically retry a mutating process with a new ID after a timeout. [Replay and recovery](protocol.md#replay-guarantees-and-limits) explains the evidence required.
 
 ## Source references
+
+- [`server/operation-archive.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/server/operation-archive.mjs)
+- [`ui/archive.js`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/ui/archive.js)
 
 - [`server/index.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/server/index.mjs)
 - [`ui/settings.js`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/ui/settings.js)

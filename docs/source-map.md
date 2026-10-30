@@ -1,10 +1,14 @@
 # Source and coverage
 
-## Current implementation baseline — 29 October 2026
+## Current implementation baseline — 30 October 2026
+
+This ordinary delta pass uses implementation **2026.10.29**, commit `1fa350d02469f3b9ab126afe3d1bb1606cde0599`. It reconciles the move of operation metadata from Settings to **Archive → MODS → Node Goblin**, the read-only Archive API, timezone/date and metadata filters, cursor paging, and explicit volatile-retention limits. Evidence: `burrow.mod.json`, `ui/settings.js`, `ui/archive.js`, `server/index.mjs`, `server/operation-archive.mjs`, and `gateway/lib/controller-listener.mjs`; relevant server/UI test declarations were inspected without execution. Unchanged guides retain their previous dated evidence. No application tests or external service calls were run. Public synchronization and installed capabilities remain separate checks.
+
+## Previous delta checkpoint — 29 October 2026
 
 This ordinary delta pass uses implementation **2026.10.28**, commit `34fa8ced949c9133d95b5e4f46bf93dae1a9d180`, and reconciles multi-destination JSON/protobuf traces, per-operation exporter ownership, environment/TLS precedence and safe export diagnostics. Unchanged pages retain the prior dated review below. No application tests or provider calls were run. Source review is not runtime certification or a security audit; public package synchronization and installed capabilities remain separate checks.
 
-This guide covers the public **2026.10.19** release of [GoblinKing-Burrow/Node-Goblin](https://github.com/GoblinKing-Burrow/Node-Goblin/tree/0ff5f7ee03624aa8a2e7d19a492fdb871f4e698d), reviewed on 19 October 2026. Documentation-only updates do not change that runtime baseline.
+The original guide covered the public **2026.10.19** release of [GoblinKing-Burrow/Node-Goblin](https://github.com/GoblinKing-Burrow/Node-Goblin/tree/0ff5f7ee03624aa8a2e7d19a492fdb871f4e698d), reviewed on 19 October 2026. That historical package remains distinct from the current implementation baseline above.
 
 ## What was checked
 
@@ -14,6 +18,7 @@ The installation, pairing, settings, configuration, command, and recovery instru
 | --- | --- |
 | `install.sh`, `gateway/deploy/` | [Installation](installation.md), [commands](cli.md), [operations](operations.md) |
 | `burrow.mod.json`, `ui/settings.js` | [Settings](settings.md), [pairing and assignments](pairing.md) |
+| `ui/archive.js`, `server/operation-archive.mjs` | [Operation history](settings.md#operation-history), [Archive API](api.md#archive-operation-window), [recovery](operations.md#find-retained-operation-metadata) |
 | `server/index.mjs` | [HTTP API](api.md), [configuration](configuration.md), [architecture](architecture.md) |
 | `gateway/cli.mjs` and `gateway/lib/network-transport.mjs` | [Configuration](configuration.md), [pairing](pairing.md), [security](security.md) |
 | `gateway/lib/controller-listener.mjs` and `pairing.mjs` | [Pairing](pairing.md), [architecture](architecture.md), [operations](operations.md) |
@@ -44,4 +49,5 @@ pending normalization, DER TLS metadata and dynamically saved credential redacti
 `gateway/test/lifecycle.test.mjs` covers atomic pairing-confirmation replacement.
 See [pairing compatibility](pairing.md#upgrade-compatibility) and
 [controller TLS replacement](operations.md#controller-tls-replacement).
+
 
