@@ -21,7 +21,7 @@ Public-release guide · **2026.10.19**
 
     Backdoor is a recommended companion, not a Node Goblin dependency. Its Core-owned grants and agent access settings still apply; it does not grant arbitrary access to the home filesystem or root privileges.
 
-    [Install and enable Burrow Backdoor](https://burrow-docs.blissful-psychosis.com/burrow-backdoor/installation/).
+    [Install and enable Burrow Backdoor](https://docs.goblin-kingdom.com/burrow-backdoor/installation/).
 
 ## Two pieces. One connection.
 
@@ -60,7 +60,7 @@ The packaged host installer supports **Linux with systemd**, **Node.js 24.x**, a
 
 ## Before you start
 
-You need a working [Burrow installation](https://burrow-docs.blissful-psychosis.com/), permission to install a host service, and a controller address reachable from that host. The listener starts **disabled** and defaults to **127.0.0.1:7443**. Remote hosts need a reachable interface and an appropriately restricted firewall rule.
+You need a working [Burrow installation](https://docs.goblin-kingdom.com/), permission to install a host service, and a controller address reachable from that host. The listener starts **disabled** and defaults to **127.0.0.1:7443**. Remote hosts need a reachable interface and an appropriately restricted firewall rule.
 
 Installing an API target is separate from pairing an execution host. For agent execution, use an approved gateway in **Agent assignments**. The [settings guide](settings.md) explains each section.
 
