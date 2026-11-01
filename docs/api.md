@@ -83,7 +83,7 @@ replay/correlation authority, cancellation or dispatch. Restart loses the window
 oldest-updated entries are evicted at capacity; revocation clears the gateway's
 entries. The legacy latest-N `/operations` route remains compatible.
 
-The process route requires either a nonempty `command` or a nonempty `executable`, never both; `args` is an array of strings and cannot be nonempty with `command`. Remaining body fields are forwarded to the dispatch service. Only supply reviewed options documented in the [protocol](protocol.md).
+The process route requires either a nonempty `command` or a nonempty `executable`, never both; `args` is an array of strings and cannot be nonempty with `command`. Remaining body fields are forwarded to the dispatch service, except `telemetryConfiguration`: the public route removes that private Core transport field. Operator API callers cannot select a run's private telemetry destination snapshot. Only supply reviewed options documented in the [protocol](protocol.md).
 
 `dispatch` contains `accepted`, `response`, and `events`. A completed replay can have no new accepted envelope or stream events. Inspect nested success and process evidence. Disconnected/not-ready gateway dispatch errors map to HTTP 503; other dispatch exceptions map to 400 with a code such as `gateway_dispatch_failed`.
 

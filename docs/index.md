@@ -9,7 +9,7 @@ Node Goblin connects Burrow to remote execution hosts. Pair a host, choose an ag
 [Install Node Goblin](installation.md){ .md-button .md-button--primary }
 [Pair your first host](pairing.md){ .md-button }
 
-Public-release guide · **2026.10.19**
+Current implementation guide · **2026.11.01** · [reviewed scope](source-map.md)
 
 </div>
 

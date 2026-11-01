@@ -16,7 +16,7 @@ node --version
 node --test ui/settings.test.mjs
 ```
 
-The gateway package test script runs gateway top-level tests, deployment/release tests under `gateway/test`, server tests, and UI settings tests. The separate UI command is useful for a focused check.
+The gateway package test script runs gateway top-level tests, deployment/release tests under `gateway/test`, server tests, and UI settings/Archive tests. The separate UI command is useful for a focused check.
 
 Read tests before changing behavior. Test doubles cover socket/controller flows, while temporary roots keep deployment tests away from real accounts and services. Passing them does not prove a real network, systemd deployment, or Burrow-host integration works.
 
@@ -60,7 +60,7 @@ python3 -m venv .venv-docs
 python -m pip install -r requirements-docs.txt -r requirements-docs-test.txt
 python -m playwright install chromium
 python -m mkdocs build --strict
-python scripts/docs/check_site.py site
+python scripts/docs/check_site.py site --base-path /node-goblin/
 python scripts/docs/check_mermaid.py site --artifacts docs-browser-artifacts
 ```
 

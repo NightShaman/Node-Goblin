@@ -1,6 +1,10 @@
 # Source and coverage
 
-## Current implementation baseline — 30 October 2026
+## Full reconciliation checkpoint — 1 November 2026
+
+All 14 guides in this section were reviewed against implementation **2026.11.01**, source commit `120d19f576c4b3c496bc7b91e0e485f7634df73c`. Installer and update lifecycle, configuration, pairing and TLS replacement, execution routing, filesystem and process contracts, replay limits, telemetry, Archive, APIs, troubleshooting, and documentation checks were compared with the current implementation. The standalone link-check command now includes the configured site mount; pairing upgrade and TLS recovery details are included in the consolidated guide. This was a static documentation reconciliation, not application-test execution, a security audit, or verification of an installed runtime. Public package availability and installed Core/mod capabilities must still be checked separately.
+
+## Previous implementation checkpoint — 30 October 2026
 
 This ordinary delta pass uses implementation **2026.10.29**, commit `1fa350d02469f3b9ab126afe3d1bb1606cde0599`. It reconciles the move of operation metadata from Settings to **Archive → MODS → Node Goblin**, the read-only Archive API, timezone/date and metadata filters, cursor paging, and explicit volatile-retention limits. Evidence: `burrow.mod.json`, `ui/settings.js`, `ui/archive.js`, `server/index.mjs`, `server/operation-archive.mjs`, and `gateway/lib/controller-listener.mjs`; relevant server/UI test declarations were inspected without execution. Unchanged guides retain their previous dated evidence. No application tests or external service calls were run. Public synchronization and installed capabilities remain separate checks.
 
