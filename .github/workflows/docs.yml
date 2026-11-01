@@ -41,8 +41,9 @@ jobs:
         run: python -m pip install -r requirements-docs.txt -r requirements-docs-test.txt
       - name: Fast documentation gate
         run: |
+          python -m unittest discover -s scripts/docs -p 'test_*.py'
           python -m mkdocs build --strict
-          python scripts/docs/check_site.py site
+          python scripts/docs/check_site.py site --base-path /node-goblin/
       - name: Upload static documentation
         if: github.repository == 'GoblinKing-Burrow/Node-Goblin' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v4
