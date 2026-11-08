@@ -1,6 +1,12 @@
 # Source and coverage
 
-## Full reconciliation checkpoint — 1 November 2026
+## Full reconciliation checkpoint — 8 November 2026
+
+All 14 published guides, the README entry points, and the two excluded historical repair notes were reviewed against current development implementation **2026.11.01**, source commit `c8181bf1adcf5f7b445b8a59383f4690cd92c7b7`. The source version remains unchanged; a new review date is not a runtime release. The review covered setup and package lifecycle, configuration and telemetry precedence, pairing/trust and TLS recovery, Core routing, HTTP/protocol contracts, filesystem bounds and mutation semantics, Archive retention, operations, troubleshooting, navigation and cross-links.
+
+This pass makes the public package authority explicit in installation/update examples, reconciles the Archive architecture, clarifies filesystem depth/search limitations and service-stop behavior, and separates historical packaging caveats from current-source evidence. Public release availability and installed Core/mod capabilities remain separate checks. This is a static documentation reconciliation, not application-test execution, live host verification, or a security audit. Historical repair notes remain excluded from the published navigation and search.
+
+## Previous full reconciliation checkpoint — 1 November 2026
 
 All 14 guides in this section were reviewed against implementation **2026.11.01**, source commit `120d19f576c4b3c496bc7b91e0e485f7634df73c`. Installer and update lifecycle, configuration, pairing and TLS replacement, execution routing, filesystem and process contracts, replay limits, telemetry, Archive, APIs, troubleshooting, and documentation checks were compared with the current implementation. The standalone link-check command now includes the configured site mount; pairing upgrade and TLS recovery details are included in the consolidated guide. This was a static documentation reconciliation, not application-test execution, a security audit, or verification of an installed runtime. Public package availability and installed Core/mod capabilities must still be checked separately.
 
@@ -16,7 +22,7 @@ The original guide covered the public **2026.10.19** release of [GoblinKing-Burr
 
 ## What was checked
 
-The installation, pairing, settings, configuration, command, and recovery instructions were checked against the published installer, service unit, host wrapper, gateway runtime, controller server, and settings contribution. Source links in individual reference pages point to the public repository's current files; use the [reviewed release snapshot](https://github.com/GoblinKing-Burrow/Node-Goblin/tree/0ff5f7ee03624aa8a2e7d19a492fdb871f4e698d) when comparing exact behavior.
+The installation, pairing, settings, configuration, command, and recovery instructions were checked against the published installer, service unit, host wrapper, gateway runtime, controller server, and settings contribution. Source links in individual reference pages point to the public repository's current files; use the current checkpoint’s source commit above for exact implementation comparison. The linked October release snapshot is historical and must not be used as the baseline for newer contracts. Public source links may lag the reviewed development implementation.
 
 | Source | Guide |
 | --- | --- |

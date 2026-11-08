@@ -44,7 +44,7 @@ The repository-root `install.sh` downloads and verifies a Node Goblin release, t
 install.sh [--version YYYY.MM.DD[.N]] [--controller HOST:PORT] [--node-id ID] [--update]
 ```
 
-It requires root, `curl`, `tar`, and `sha256sum`. Version defaults to `latest`; controller and node ID must be supplied together and trigger configure/connect after installation. `NODE_GOBLIN_VERSION` selects a default version and `NODE_GOBLIN_REPOSITORY` overrides the release repository. Use the official public repository unless you have explicitly reviewed another publisher. See [installation](installation.md#install-mini-node-goblin).
+It requires root, `curl`, `tar`, and `sha256sum`. Version defaults to `latest`; controller and node ID must be supplied together and trigger configure/connect after installation. `NODE_GOBLIN_VERSION` selects a default version and `NODE_GOBLIN_REPOSITORY` overrides the release repository. Bootstrap snapshots can default to a different release authority. For public packages, pass `NODE_GOBLIN_REPOSITORY=GoblinKing-Burrow/Node-Goblin` to the root installer itself, for example `sudo env NODE_GOBLIN_REPOSITORY=GoblinKing-Burrow/Node-Goblin sh install.sh --update`. Setting it only on `curl` does not configure the installer. Use the official public repository unless you have explicitly reviewed another publisher. See [installation](installation.md#install-mini-node-goblin).
 
 `--update` invokes the downloaded package's `deploy/update.sh`: an existing configured host is upgraded and its service restarted. It cannot be combined with `--controller` or `--node-id`, because updates preserve configuration. Drain work first and run from a local/SSH terminal, not through the service being replaced.
 

@@ -49,6 +49,8 @@ API clients should keep filters unchanged while following a cursor. Concurrent a
 
 A TCP/TLS disconnect rejects the controller's pending request, but does not automatically cancel host-side work. The gateway can continue executing and journal a completed result. Reconnection alone does not prove it is safe to repeat side effects.
 
+Service stop/restart is different from a network disconnect. The CLI handles SIGINT/SIGTERM by marking the daemon stopping and requesting cancellation of active operations before stopping transport/telemetry; systemd also owns service-process cleanup. Drain work before applying configuration, updating, or unpairing. Neither a stop request nor an interrupted connection proves a side effect was undone.
+
 A cancel response only says whether an active operation was asked to abort. Wait for terminal evidence and inspect any side effects. For destructive work, use application-level idempotency and independent completion checks.
 
 ## Upgrade procedure
@@ -56,16 +58,16 @@ A cancel response only says whether an active operation was asked to abort. Wait
 1. Record the currently installed release and controller assignment/trust state.
 2. Drain work. Use a local terminal or SSH session independent of Node Goblin; the update stops its service and service-owned child processes.
 3. Make protected backups of configuration and state. Preserve ownership and permissions.
-4. Review and run the bootstrap with `sudo sh install.sh --update` (latest) or `sudo sh install.sh --update --version YYYY.MM.DD[.N]` using an actual published version. Alternatively extract the selected verified archive and run `sudo sh deploy/update.sh`. The update validates/stages the replacement, stops the service, installs it, reloads systemd, restarts, and checks active state as one operation. It preserves configuration, identity, trust, and operation journal. First-time `install.sh` behavior is unchanged.
+4. Review and run the bootstrap with `sudo env NODE_GOBLIN_REPOSITORY=GoblinKing-Burrow/Node-Goblin sh install.sh --update` (latest) or `sudo env NODE_GOBLIN_REPOSITORY=GoblinKing-Burrow/Node-Goblin sh install.sh --update --version YYYY.MM.DD[.N]` using an actual published version. Alternatively extract the selected verified archive and run `sudo sh deploy/update.sh`. The update validates/stages the replacement, stops the service, installs it, reloads systemd, restarts, and checks active state as one operation. It preserves configuration, identity, trust, and operation journal. First-time `install.sh` behavior is unchanged.
 5. If installation/restart fails, the updater restores the previous package/deployment assets and attempts to restart the old service; it exits nonzero. If stopping the candidate or restoring assets fails, recovery assets are retained at the path reported in the error. Do not treat a failed update as success. Restart BURROW only if separate mod/controller changes require it.
 6. Verify authentication, target selection, a harmless process, and a filesystem read in the intended workspace.
 7. Keep the prior program package until the new version is verified. A code rollback does not automatically roll back external process side effects or storage format changes.
 
-The public bootstrap downloads from `GoblinKing-Burrow/Node-Goblin`. Development
-packages from `NightShaman/Node-Goblin` are separate; use the README's explicit
-repository override only when intentionally testing them. The immutable public
-`2026.10.23` release predates `--update`; public updater availability requires a
-later promoted release containing it.
+The explicit repository override selects public packages from
+`GoblinKing-Burrow/Node-Goblin`, independently of the bootstrap snapshot's default.
+Development packages and public releases are separate. Confirm that the selected
+public release contains `deploy/update.sh`; current source support alone does not
+prove that a matching public package has been published.
 
 Node Goblin releases have their own calendar versions and packages. Use the selected Node Goblin release and checksum when upgrading the host; a BURROW upgrade is not evidence that the host runtime changed.
 

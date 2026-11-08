@@ -130,7 +130,7 @@ source:
 
 The 2026.10.19 public snapshot retains development-release tests even though its promotion excludes the development release workflow. Its bootstrap fixtures also expect the development release authority rather than the public installer authority. Consequently, the aggregate `npm test` command can fail on those packaging/fixture assumptions. Do not treat this as a passing full suite or change the public installer to satisfy a development-only fixture. Focused runtime checks remain useful, but are not a substitute for fixing and rerunning the aggregate suite.
 
-The reviewed public checkout also records deployment shell scripts without executable mode bits. Invoke the documented build script with `sh` as shown above; direct-execution deployment tests can fail before the script starts. This is a source-packaging issue, not evidence that a host installation was exercised.
+Some historical public checkouts also record deployment shell scripts without executable mode bits. Invoke the documented build script with `sh` as shown above; direct-execution deployment tests can fail before the script starts. When encountered, this is a source-packaging issue, not evidence that a host installation was exercised. This historical note is not a claim about mode bits in every current checkout.
 
 ### Multi-destination telemetry contracts
 

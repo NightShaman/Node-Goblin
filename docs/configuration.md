@@ -38,9 +38,9 @@ Core Settings normally delivers telemetry configuration through the provider. Cu
 | `OTEL_EXPORTER_OTLP_TRACES_CLIENT_CERTIFICATE` / `OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE` | Client certificate file; trace-specific path wins |
 | `OTEL_EXPORTER_OTLP_TRACES_CLIENT_KEY` / `OTEL_EXPORTER_OTLP_CLIENT_KEY` | Client key file; trace-specific path wins |
 | `OTEL_BSP_MAX_QUEUE_SIZE` | 512 spans per destination; maximum 4,096 |
-| `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` / `OTEL_EXPORTER_OTLP_TIMEOUT` / `OTEL_BSP_EXPORT_TIMEOUT` | First nonempty setting in the listed order; invalid/nonpositive values fall back to 3,000 ms |
-| `OTEL_BSP_SCHEDULE_DELAY` | 1,000 ms |
-| `OTEL_BSP_SHUTDOWN_TIMEOUT` | Shutdown override; otherwise trace/general timeout, then effective export timeout |
+| `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` / `OTEL_EXPORTER_OTLP_TIMEOUT` / `OTEL_BSP_EXPORT_TIMEOUT` | First nonempty setting in the listed order; invalid/nonpositive values fall back to 3,000 ms; capped at 30,000 ms |
+| `OTEL_BSP_SCHEDULE_DELAY` | 1,000 ms; capped at 30,000 ms |
+| `OTEL_BSP_SHUTDOWN_TIMEOUT` | Shutdown override; otherwise trace/general timeout, then effective export timeout; capped at 30,000 ms |
 
 A host environment endpoint remains active even if Core disables telemetry and selects one environment-owned JSON exporter rather than fan-out to saved destinations. Header-only host overrides also select one owner; they do not distribute host credentials to every saved collector. Controller credentials follow only their own exact trace URL, never a distinct host-selected endpoint. Keep credentials in protected configuration, never in endpoint URLs or command arguments.
 

@@ -27,7 +27,7 @@ A process list in gateway health is the controller's view of accepted operations
 
 ## Agent assignments and access
 
-Choose a configured, approved gateway and an absolute workspace, then save. This updates the Core agent execution environment for future turns. There is no additional per-agent Node Goblin capability approval. An assignment does not create a workspace, grant host filesystem permissions, or sandbox the agent; the `burrow` service account needs access and defines the operating-system authority available to execution.
+Choose a configured, approved gateway and an absolute workspace, then save. The selector is populated from configured trust records and is not itself a proof of current approval or connectivity; check the gateway’s trust and live status separately. This updates the Core agent execution environment for future turns. There is no additional per-agent Node Goblin capability approval. An assignment does not create a workspace, grant host filesystem permissions, or sandbox the agent; the `burrow` service account needs access and defines the operating-system authority available to execution.
 
 ## Telemetry
 

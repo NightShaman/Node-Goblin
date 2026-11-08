@@ -2,7 +2,7 @@
 
 *On narrow screens, swipe tables horizontally to see every column.*
 
-The repository has three runtime components: a Burrow mod server, a settings contribution, and a standalone gateway package. Node Goblin remains an independent mod. Core owns the generic execution-provider contract, agent assignment, host admission, and permission decisions.
+The repository has three runtime components: a Burrow mod server, settings and Archive UI contributions, and a standalone gateway package. Node Goblin remains an independent mod. Core owns the generic execution-provider contract, agent assignment, host admission, and permission decisions.
 
 ## Component map
 
@@ -35,7 +35,7 @@ flowchart TB
 
 ## Manifest and activation
 
-`burrow.mod.json` declares ID `node-goblin`, `system: true`, `server/index.mjs`, `ui/settings.js`, the API-target contribution, and the privileged `execution-provider-v1` capability. The version appears in the manifest and gateway package/release files.
+`burrow.mod.json` declares ID `node-goblin`, `system: true`, `server/index.mjs`, `ui/settings.js`, `ui/archive.js`, the API-target contribution, and the privileged `execution-provider-v1` capability. The version appears in the manifest and gateway package/release files.
 
 A system mod uses the same install, update, enable, disable, and uninstall lifecycle as any other mod. `system: true` is a trust classification: it permits the manifest to request explicitly named privileged Core capabilities that regular mods cannot request. It does not grant every privileged interface, change installation mechanics, imply that the mod is bundled, or make it non-removable. Core exposes only the declared capabilities it supports and rejects undeclared or unsupported requests.
 
@@ -71,6 +71,8 @@ stateDiagram-v2
 </div>
 
 *On narrow screens, scroll the diagram horizontally to read all labels.*
+
+Archive uses `ui/archive.js` and `server/operation-archive.mjs` to project the listener’s volatile operation metadata. It does not expose process output or replace the host replay journal; see the [Archive API](api.md#archive-operation-window).
 
 The host transport reconnects with exponential backoff from 100 ms to a maximum 5 seconds. Authentication success resets the attempt counter. A disconnected controller rejects pending dispatch promises with `gateway_disconnected`; that is uncertainty about execution completion, not a rollback.
 

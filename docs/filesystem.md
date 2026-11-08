@@ -46,7 +46,7 @@ Mutations stage a sibling file and atomically rename it after rechecking the ori
 | Read returned bytes | 512,000 |
 | Search line excerpt | 1,000 characters |
 
-Valid explicit positive bounds override the traversal/result defaults. Null, omitted, empty, invalid, or nonpositive traversal bounds select defaults. `BURROW_FILESYSTEM_TRAVERSAL_ENTRIES` sets the host default traversal budget for find/search; per-request `maxTraversalEntries` takes precedence.
+Valid explicit positive bounds override the traversal/result defaults. Null, omitted, empty, invalid, or nonpositive traversal bounds select defaults. In particular, `maxDepth: 0` does not request a nonrecursive listing: it selects the default. Traversal starts at depth zero and visits child directories while the current depth is below `maxDepth`, so entries inside the deepest visited directory are also returned. `BURROW_FILESYSTEM_TRAVERSAL_ENTRIES` sets the host default traversal budget for find/search; per-request `maxTraversalEntries` takes precedence.
 
 Traversal sorts names, skips dot-prefixed entries and `node_modules`, and does not recursively follow symlink directories. Listing a symlink is different from reading a supplied path that the operating system resolves through a symlink.
 
@@ -59,6 +59,8 @@ Traversal sorts names, skips dot-prefixed entries and `node_modules`, and does n
 - `warnings`: unreadable directories/files and bound-related explanations
 
 An empty match set does not prove no matching file exists outside the visited subset. Hidden entries and `node_modules` are intentionally excluded. Use the returned metadata when reporting search results to a user or model.
+
+`files_search` is a case-sensitive literal substring search, not a regular-expression search. It returns one match per matching line and the first 1,000 characters of that line, so a match occurring later in a long line may not be visible in its excerpt.
 
 Read ranges are byte offsets, not character offsets; a range can split a multibyte character. `contentHash` normally hashes the selected source bytes, while transport-shortened reads recompute it from the delivered content. A transport-shortened read is incomplete and cannot supply a whole-file version hash. See [encoded output limits](protocol.md#encoded-output-and-reconnect-limits).
 

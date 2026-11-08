@@ -37,10 +37,10 @@ For a reproducible deployment, review and select a public release tag or commit 
 Node Goblin owns the Mini Node Goblin bootstrap installer, calendar version, release archives, and checksums. BURROW does not rebuild or republish the host runtime under a BURROW version. Review the [public bootstrap installer](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/install.sh) before running it as root:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/GoblinKing-Burrow/Node-Goblin/main/install.sh | sudo sh
+curl -fsSL https://raw.githubusercontent.com/GoblinKing-Burrow/Node-Goblin/main/install.sh | sudo env NODE_GOBLIN_REPOSITORY=GoblinKing-Burrow/Node-Goblin sh
 ```
 
-By default, it resolves the latest Node Goblin release, downloads the archive and checksum, verifies the checksum, and runs the package installer. To select a version, download and review the bootstrap first, then run `sudo sh install.sh --version YYYY.MM.DD` with an actual published version. Optional `--controller HOST:PORT --node-id ID` values must be supplied together; they configure and connect after installation. Keep secrets out of these arguments.
+The command explicitly selects the public release repository rather than relying on the downloaded script’s default. It resolves that repository’s latest Node Goblin release, downloads the archive and checksum, verifies the checksum, and runs the package installer. To select a version, download and review the bootstrap first, then run `sudo env NODE_GOBLIN_REPOSITORY=GoblinKing-Burrow/Node-Goblin sh install.sh --version YYYY.MM.DD` with an actual published version. Optional `--controller HOST:PORT --node-id ID` values must be supplied together; they configure and connect after installation. Keep secrets out of these arguments.
 
 For a fully reviewable selected-release installation, download the matching archive and `.sha256` from [Releases](https://github.com/GoblinKing-Burrow/Node-Goblin/releases), verify them, inspect the extracted package, and run its installer:
 
@@ -98,7 +98,7 @@ Staging intentionally avoids account ownership changes. `connect`/`apply` refuse
 
 ## Update or uninstall
 
-For the mod, `git pull --ff-only` updates a clean checkout; then restart BURROW. Review the incoming revision first. For the host package, drain work and preserve a protected backup, then run `sudo sh install.sh --update` with the reviewed bootstrap, or `sudo sh deploy/update.sh` from the selected verified release archive. Both install and restart together; verify controller connection and an operation afterward. Run locally or over SSH, not through the service being updated. See [operations](operations.md).
+For the mod, `git pull --ff-only` updates a clean checkout; then restart BURROW. Review the incoming revision first. For the host package, drain work and preserve a protected backup, then run `sudo env NODE_GOBLIN_REPOSITORY=GoblinKing-Burrow/Node-Goblin sh install.sh --update` with the reviewed bootstrap, or `sudo sh deploy/update.sh` from the selected verified release archive. Both install and restart together; verify controller connection and an operation afterward. Run locally or over SSH, not through the service being updated. See [operations](operations.md).
 
 `sudo node-goblin uninstall` removes runtime files, command links, and the unit. It preserves the account, configuration, identity/trust, and journal for reinstall. It is not a credential purge.
 
