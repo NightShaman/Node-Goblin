@@ -149,6 +149,13 @@ The override must reach the root installer, not just `curl`. Development package
 and public releases are separate. Confirm the selected public release contains
 `deploy/update.sh`; a newer source checkout does not prove a public package exists.
 
+For an intentionally selected **development** update instead:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NightShaman/Node-Goblin/main/install.sh \
+  | sudo env NODE_GOBLIN_REPOSITORY=NightShaman/Node-Goblin sh -s -- --update
+```
+
 This verifies the latest release package, preserves configuration/identity/trust, installs it, and restarts the service. No separate `apply --restart` is needed. Service-owned child processes stop during the update; do not launch this through the Node Goblin service being updated. To select a version, download/review the bootstrap and use `sudo env NODE_GOBLIN_REPOSITORY=GoblinKing-Burrow/Node-Goblin sh install.sh --update --version YYYY.MM.DD[.N]` with an actual published version. An extracted package also contains `deploy/update.sh`. See the [upgrade procedure](docs/operations.md#upgrade-procedure) for backup and verification.
 
 **Uninstall the host runtime:**

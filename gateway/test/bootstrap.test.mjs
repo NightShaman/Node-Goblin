@@ -76,6 +76,6 @@ esac
 
 test('README public updater and explicit development override remain separate', () => {
   const readme = fs.readFileSync(path.resolve('..', 'README.md'), 'utf8');
-  assert.ok(readme.includes('https://raw.githubusercontent.com/GoblinKing-Burrow/Node-Goblin/main/install.sh | sudo sh -s -- --update'));
+  assert.ok(readme.includes('https://raw.githubusercontent.com/GoblinKing-Burrow/Node-Goblin/main/install.sh | sudo env NODE_GOBLIN_REPOSITORY=GoblinKing-Burrow/Node-Goblin sh -s -- --update'));
   assert.ok(readme.includes('sudo env NODE_GOBLIN_REPOSITORY=NightShaman/Node-Goblin'));
 });
