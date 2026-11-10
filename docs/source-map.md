@@ -1,5 +1,9 @@
 # Source and coverage
 
+## Ordinary delta checkpoint — 10 November 2026
+
+Source **2026.11.09**, commit `913af49152570235a28001965227bc43997f0cef`, was compared with the previous source baseline `c2a12e4e8a2ed141156f08cdfc8d62ebe1ae881f`. Changes are release metadata, README examples and a bootstrap-test assertion; no runtime implementation changed. Public installation/update examples already pass `NODE_GOBLIN_REPOSITORY=GoblinKing-Burrow/Node-Goblin` to the root installer and remain valid. Development-publisher examples are not part of this public guide. Unchanged contracts inherit the 8 November full review. No application tests or service updates were run; source version does not prove public package availability.
+
 ## Full reconciliation checkpoint — 8 November 2026
 
 All 14 published guides, the README entry points, and the two excluded historical repair notes were reviewed against current development implementation **2026.11.01**, source commit `c8181bf1adcf5f7b445b8a59383f4690cd92c7b7`. The source version remains unchanged; a new review date is not a runtime release. The review covered setup and package lifecycle, configuration and telemetry precedence, pairing/trust and TLS recovery, Core routing, HTTP/protocol contracts, filesystem bounds and mutation semantics, Archive retention, operations, troubleshooting, navigation and cross-links.

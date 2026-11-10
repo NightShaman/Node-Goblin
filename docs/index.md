@@ -9,7 +9,7 @@ Node Goblin connects Burrow to remote execution hosts. Pair a host, choose an ag
 [Install Node Goblin](installation.md){ .md-button .md-button--primary }
 [Pair your first host](pairing.md){ .md-button }
 
-Current implementation guide · **2026.11.01** · [reviewed scope](source-map.md)
+Current implementation guide · **2026.11.09** · [reviewed scope](source-map.md)
 
 </div>
 
@@ -72,3 +72,4 @@ Installing an API target is separate from pairing an execution host. For agent e
 - [Public repository](https://github.com/GoblinKing-Burrow/Node-Goblin), [releases](https://github.com/GoblinKing-Burrow/Node-Goblin/releases), and [issues](https://github.com/GoblinKing-Burrow/Node-Goblin/issues)
 
 Node Goblin is distributed under its [Sustainable Use License](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/LICENSE).
+
