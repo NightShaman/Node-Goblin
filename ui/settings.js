@@ -194,7 +194,7 @@ export async function handleSettingsAction(actionId, values) {
   }
   if (actionId.startsWith('approve-pairing:') || actionId.startsWith('reject-pairing:')) {
     const [operation, gatewayId] = actionId.split(':');
-    await fetch(`/api/mods/node-goblin/pairings/${encodeURIComponent(gatewayId)}/${operation === 'approve-pairing' ? 'approve' : 'reject'}`, { method: 'POST' }).then(async (response) => {
+    await fetch(`/api/mods/node-goblin/pairings/${encodeURIComponent(gatewayId)}/${operation === 'approve-pairing' ? 'approve' : 'reject'}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(async (response) => {
       if (!response.ok) throw new Error((await response.text()) || `Pairing action failed (${response.status}).`);
     });
     return;

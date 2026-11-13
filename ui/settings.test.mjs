@@ -147,3 +147,30 @@ test('controller and TLS save/clear actions preserve their request contracts and
     assert.equal(calls.length, 5, 'invalid values do not send a request');
   } finally { globalThis.fetch = original; }
 });
+
+for (const operation of ['approve', 'reject']) {
+  test(`${operation} pairing sends JSON accepted by the browser request contract`, async () => {
+    const original = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (url, options) => {
+      const request = new Request(new URL(url, 'https://burrow.test'), options);
+      assert.equal(request.method, 'POST');
+      assert.equal(request.headers.get('content-type'), 'application/json');
+      assert.deepEqual(await request.json(), {});
+      calls.push(request.url);
+      return new Response('{}', { status: 200 });
+    };
+    try {
+      await handleSettingsAction(`${operation}-pairing:gateway /?#`, {});
+      assert.deepEqual(calls, [`https://burrow.test/api/mods/node-goblin/pairings/gateway%20%2F%3F%23/${operation}`]);
+    } finally { globalThis.fetch = original; }
+  });
+
+  test(`${operation} pairing preserves server failures`, async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = async () => new Response('pairing_expired', { status: 409 });
+    try {
+      await assert.rejects(handleSettingsAction(`${operation}-pairing:expired`, {}), /pairing_expired/);
+    } finally { globalThis.fetch = original; }
+  });
+}
