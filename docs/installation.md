@@ -84,6 +84,32 @@ The newly created `burrow` account does not automatically gain access to your wo
 
 Continue with [pairing and assignment](pairing.md). `connect` reporting an active systemd service proves the daemon is running, not that pairing or remote execution succeeded.
 
+## Burrow in Docker: run Node Goblin on the host
+
+For agents that need to work on the Docker host, we recommend installing the Node Goblin host runtime **natively on that host**, while keeping Burrow in its container. This provides an explicit host execution target instead of bind-mounting the host root into Burrow or making the Burrow container privileged merely to reach host files.
+
+When the native host runtime and the Burrow container are on the **same machine**, configure Node Goblin to connect to **`localhost:7443`**:
+
+```bash
+sudo node-goblin configure localhost:7443 docker-host
+sudo node-goblin connect
+sudo node-goblin pairing-code
+```
+
+Here `docker-host` is an example stable gateway ID. Run these commands on the host, not inside the Burrow container. For an already-running daemon, apply changed configuration with `sudo node-goblin apply --restart` after draining active work.
+
+Make the controller reachable from that host:
+
+- **Ordinary Docker bridge networking:** enable the Host Gateway controller, bind its listener to `0.0.0.0:7443` **inside the container**, and publish container port 7443 to the host. For same-host-only nodes, add `"127.0.0.1:7443:7443"` beside the existing web-port entry under `ports`. Recreate the container after changing Compose port mappings. A controller bound only to container `127.0.0.1` is not reachable through a bridge port mapping.
+- **Linux host networking:** the container shares the host network namespace, so a controller bound to `127.0.0.1:7443` can accept the native host runtime directly; Docker `ports` mappings are not used in this mode.
+- **Other machines:** `localhost` refers to each node's own machine. Remote nodes need a reachable controller hostname/address and deliberate network access, not `localhost`. A loopback-only published port does not serve remote nodes.
+
+The Host Gateway controller port is separate from Burrow's web interface. If `localhost` resolves to an unavailable IPv6 loopback listener, use `127.0.0.1:7443` for the IPv4 mapping above.
+
+Compare the current pairing code independently, confirm it on the host with `sudo node-goblin confirm-pairing CODE` when using first no-CA trust, and approve the matching live request in Burrow. Then assign the agent's **Configured gateway** execution target to this gateway and choose a workspace path on the host. Leaving the agent on **Local controller** still executes inside Burrow's container. See [pairing and assignment](pairing.md).
+
+Host execution uses the native service account's permissions; a workspace path is not a sandbox. Grant only the host files and commands needed. This arrangement does not require a host-root mount or Docker socket mount in Burrow. Giving the host runtime access to Docker itself is a separate, powerful permission decision. Restarting Burrow interrupts its controller connection, so keep a local or SSH recovery route for maintenance.
+
 ## Non-privileged staging test
 
 Use a fresh temporary root to inspect installation output without touching the host's real service or accounts:
