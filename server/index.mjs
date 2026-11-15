@@ -320,6 +320,11 @@ export function createProcessController(service, { logger = console, operationSt
   if (!service || typeof service.dispatchProcessExec !== 'function' || typeof service.dispatchCancel !== 'function') throw new Error('controller_service_invalid');
   return Object.freeze({
     describeHost: targetId => service.describeHost?.(targetId) ?? null,
+    async codexRpc({ targetId, method, params }) {
+      const dispatch = await service.dispatchCodex(targetId, method, params);
+      if (!dispatch?.response?.ok) throw new Error('codex_transport_failed');
+      return dispatch.response.result;
+    },
     async executeProcess(request = {}, { abortSignal = null } = {}) {
       const operationId = String(request.operationId ?? '').trim();
       const targetId = String(request.targetId ?? '').trim();
@@ -582,6 +587,10 @@ export async function createControllerService({ settings, secrets, listenerFacto
       : records.map(({ gatewayId }) => ({ gatewayId, status: 'disconnected', connected: false, connectedAt: null, lastSeenAt: null, activeOperations: [], name: null, version: null, protocolVersion: null })),
     listOperationActivity: (options) => listener?.listOperationActivity?.(options) ?? [],
     snapshotOperationActivity: () => listener?.snapshotOperationActivity?.() ?? { available: false, maxEntries: null, operations: [] },
+    async dispatchCodex(gatewayId, method, params) {
+      if (!listening) throw new Error('controller_not_running');
+      return listener.dispatchCodex(gatewayId, method, params);
+    },
     async dispatchProcessExec(gatewayId, params) {
       if (!listening) throw Object.assign(new Error(startError || 'controller_not_running'), { code: startError || 'controller_not_running' });
       return redact(await listener.dispatchProcessExec(gatewayId, params), [...secretValues]);

@@ -10,11 +10,12 @@ SOURCE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 NO_SYSTEMD=false
 SKIP_ACCOUNT=false
 RESTART=false
+WITH_CODEX=false
 SERVICE=burrow-host-gateway.service
 SYSTEMCTL_OVERRIDE=${SYSTEMCTL:-}
 SYSTEMCTL=${SYSTEMCTL:-systemctl}
 
-usage() { echo "usage: $0 [--root DIRECTORY] [--source DIRECTORY] [--no-systemd] [--skip-account] [--restart]" >&2; }
+usage() { echo "usage: $0 [--root DIRECTORY] [--source DIRECTORY] [--no-systemd] [--skip-account] [--restart] [--with-codex]" >&2; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --root) ROOT=$2; shift 2 ;;
@@ -22,6 +23,7 @@ while [ "$#" -gt 0 ]; do
     --no-systemd) NO_SYSTEMD=true; shift ;;
     --skip-account) SKIP_ACCOUNT=true; shift ;;
     --restart) RESTART=true; shift ;;
+    --with-codex) WITH_CODEX=true; shift ;;
     *) usage; exit 2 ;;
   esac
 done
@@ -45,6 +47,7 @@ if [ "$NO_SYSTEMD" = false ] && [ "$ROOT" = / ]; then
   command -v "${SYSTEMCTL:-systemctl}" >/dev/null || exit 1
 fi
 validate_package "$SOURCE"
+if [ "$WITH_CODEX" = true ]; then command -v npm >/dev/null || { echo "npm required for --with-codex" >&2; exit 1; }; fi
 . "$SOURCE/deploy/service-common.sh"
 if [ "$RESTART" = true ]; then
   [ "$NO_SYSTEMD" = false ] && { [ "$ROOT" = / ] || [ -n "$SYSTEMCTL_OVERRIDE" ]; } || {
@@ -82,6 +85,12 @@ if [ "$SKIP_ACCOUNT" = false ]; then
   fi
 fi
 
+# Latest on every explicit opt-in install/update; no CLI version pin or lock.
+if [ "$WITH_CODEX" = true ]; then
+  CODEX_PREFIX=$(root_path /usr/local)
+  mkdir -p "$CODEX_PREFIX"
+  npm install --global --prefix "$CODEX_PREFIX" --no-audit --no-fund @openai/codex@latest
+fi
 INSTALL_DIR=$(root_path /opt/burrow-host-gateway)
 CONFIG_DIR=$(root_path /etc/burrow-host-gateway)
 STATE_DIR=$(root_path /var/lib/burrow-host-gateway)

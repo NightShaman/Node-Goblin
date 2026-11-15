@@ -1,3 +1,4 @@
+import { CodexProcesses, codexExecutable } from './codex-process.mjs';
 import { boundOutputFrame, boundCompletedOutcome } from './output-frame.mjs';
 import readline from 'node:readline';
 import { readFileSync } from 'node:fs';
@@ -28,6 +29,7 @@ export class GatewayDaemon {
     };
     this.telemetry = telemetry || createGatewayTelemetry({ version: RELEASE_VERSION });
     this.controllers = new Map();
+    this.codex = new CodexProcesses();
     this.rl = null;
     this.stopping = false;
   }
@@ -44,8 +46,15 @@ export class GatewayDaemon {
     if (!message || typeof message !== 'object') throw new Error('invalid_message');
     const method = String(message.method ?? '');
     const params = message.params && typeof message.params === 'object' ? message.params : {};
+    if (method.startsWith('codex.')) {
+      try {
+        const result = await this.codex.handle(method, params, this.secureTransportContext);
+        send({ type: 'response', requestId: message.id ?? null, ok: true, result });
+      } catch { this.sendProtocolError(message.id ?? null, 'codex_transport_failed', {}, send); }
+      return;
+    }
     if (method === 'hello') {
-      send({ type: 'response', requestId: message.id ?? null, ok: true, result: { ...this.identity, host: collectHostMetadata() } });
+      send({ type: 'response', requestId: message.id ?? null, ok: true, result: { ...this.identity, host: { ...collectHostMetadata(), codex: { available: Boolean(codexExecutable()), protocol: 1 } } } });
       return;
     }
     if (method === 'health') {
@@ -186,6 +195,7 @@ export class GatewayDaemon {
   }
 
   async stop() {
+    this.codex.closeAll();
     if (this.rl) this.rl.close();
     if (this.output !== process.stdout && typeof this.output.end === 'function') this.output.end();
     await this.telemetry.shutdown();

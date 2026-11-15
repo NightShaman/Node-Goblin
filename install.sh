@@ -8,10 +8,11 @@ CONTROLLER=
 NODE_ID=
 TMP=
 UPDATE=false
+WITH_CODEX=false
 
 usage() {
   cat >&2 <<'EOF'
-usage: install.sh [--version YYYY.MM.DD[.N]] [--controller HOST:PORT] [--node-id ID] [--update]
+usage: install.sh [--version YYYY.MM.DD[.N]] [--controller HOST:PORT] [--node-id ID] [--update] [--with-codex]
 
 Installs the latest calendar-versioned Mini Node Goblin release by default.
 Controller address and node ID are non-secret and may be supplied now or
@@ -24,6 +25,7 @@ EOF
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --update) UPDATE=true; shift ;;
+    --with-codex) WITH_CODEX=true; shift ;;
     --version) VERSION=$2; shift 2 ;;
     --controller) CONTROLLER=$2; shift 2 ;;
     --node-id) NODE_ID=$2; shift 2 ;;
@@ -64,11 +66,13 @@ curl -fsSL "$BASE/$NAME.tar.gz" -o "$TMP/$NAME.tar.gz"
 curl -fsSL "$BASE/$NAME.tar.gz.sha256" -o "$TMP/$NAME.tar.gz.sha256"
 ( cd "$TMP" && sha256sum -c "$NAME.tar.gz.sha256" )
 tar -xzf "$TMP/$NAME.tar.gz" -C "$TMP"
+set --
+[ "$WITH_CODEX" = false ] || set -- --with-codex
 if [ "$UPDATE" = true ]; then
-  "$TMP/$NAME/deploy/update.sh" --source "$TMP/$NAME"
+  "$TMP/$NAME/deploy/update.sh" --source "$TMP/$NAME" "$@"
   exit 0
 fi
-"$TMP/$NAME/deploy/install.sh" --source "$TMP/$NAME"
+"$TMP/$NAME/deploy/install.sh" --source "$TMP/$NAME" "$@"
 
 if [ -n "$CONTROLLER" ]; then
   /usr/local/bin/node-goblin configure "$CONTROLLER" "$NODE_ID"

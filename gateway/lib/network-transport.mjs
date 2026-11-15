@@ -175,6 +175,7 @@ export class OutboundGatewayTransport extends EventEmitter {
       this.daemon.output = CLOSED_OUTPUT;
       this.authenticated = false;
       this.connectionId = null;
+      this.daemon.codex?.closeAll();
       this.daemon.secureTransportContext = null;
       this.emit('disconnected');
       this.scheduleReconnect();

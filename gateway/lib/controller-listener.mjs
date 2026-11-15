@@ -198,6 +198,7 @@ class GatewayConnection extends EventEmitter {
     }
     if (message.type === 'response' && message.requestId != null) {
       const pending = this.pendingRequests.get(message.requestId);
+      const privateCodex = pending?.method.startsWith('codex.');
       if (pending) {
         this.pendingRequests.delete(message.requestId);
         const operationId = pending.operationId;
@@ -207,17 +208,18 @@ class GatewayConnection extends EventEmitter {
         pending.resolve({ accepted: pending.accepted ?? null, response: message, events: [...pending.events] });
       }
       if (message?.result?.activeOperations) this.health = message.result;
-      this.listener.emit('gatewayResponse', { gatewayId: this.gatewayId, message });
+      if (!privateCodex) this.listener.emit('gatewayResponse', { gatewayId: this.gatewayId, message });
       return;
     }
     if (message.type === 'error' && message.requestId != null) {
       const pending = this.pendingRequests.get(message.requestId);
+      const privateCodex = pending?.method.startsWith('codex.');
       if (pending) {
         this.pendingRequests.delete(message.requestId);
         this.listener.recordResponse(this.gatewayId, pending, message);
         pending.reject(Object.assign(new Error(message?.error?.code || 'gateway_error'), { code: message?.error?.code || 'gateway_error', envelope: message }));
       }
-      this.listener.emit('gatewayProtocolError', { gatewayId: this.gatewayId, message });
+      if (!privateCodex) this.listener.emit('gatewayProtocolError', { gatewayId: this.gatewayId, message });
       return;
     }
     if (typeof message.operationId === 'string') {
@@ -432,7 +434,7 @@ export class GatewayControllerListener extends EventEmitter {
   }
 
   recordDispatch(gatewayId, pending) {
-    if (!pending.operationId || pending.method === 'cancel' || this.liveGateway(gatewayId)?.activeOperationRequests.has(pending.operationId)) return;
+    if (pending.method.startsWith('codex.') || !pending.operationId || pending.method === 'cancel' || this.liveGateway(gatewayId)?.activeOperationRequests.has(pending.operationId)) return;
     this.putActivity({ gatewayId, operationId: pending.operationId, kind: pending.method === 'filesystem.execute' ? 'filesystem' : 'process', state: 'dispatching', replay: false, reconnectRequired: false, terminalOutcome: null, startedAt: pending.startedAt, endedAt: null, durationMs: null });
   }
 
@@ -442,7 +444,7 @@ export class GatewayControllerListener extends EventEmitter {
   }
 
   recordResponse(gatewayId, pending, message) {
-    if (!pending?.operationId || pending.method === 'cancel'
+    if (pending?.method.startsWith('codex.') || !pending?.operationId || pending.method === 'cancel'
       || (this.liveGateway(gatewayId)?.activeOperationRequests.has(pending.operationId) && this.liveGateway(gatewayId)?.activeOperationRequests.get(pending.operationId) !== pending.requestId)) return;
     const endedAt = new Date().toISOString();
     const outcome = operationOutcome(message);
@@ -450,7 +452,7 @@ export class GatewayControllerListener extends EventEmitter {
   }
 
   recordDisconnected(gatewayId, pending) {
-    if (!pending?.operationId || pending.method === 'cancel'
+    if (pending?.method.startsWith('codex.') || !pending?.operationId || pending.method === 'cancel'
       || (this.liveGateway(gatewayId)?.activeOperationRequests.has(pending.operationId) && this.liveGateway(gatewayId)?.activeOperationRequests.get(pending.operationId) !== pending.requestId)) return;
     this.putActivity({ ...(this.activity.find((entry) => entry.gatewayId === gatewayId && entry.operationId === pending.operationId) || {}), gatewayId, operationId: pending.operationId, kind: pending.method === 'filesystem.execute' ? 'filesystem' : 'process', state: 'interrupted', replay: false, reconnectRequired: true, terminalOutcome: null, startedAt: pending.startedAt, endedAt: null, durationMs: null });
   }
@@ -464,6 +466,13 @@ export class GatewayControllerListener extends EventEmitter {
   // bounded and keeps its existing order/default. This does not persist history.
   snapshotOperationActivity() {
     return { available: true, maxEntries: Math.floor(this.activityLimit), operations: this.activity.map((entry) => ({ ...entry })) };
+  }
+
+  dispatchCodex(gatewayId, method, params = {}) {
+    if (!['codex.open', 'codex.write', 'codex.read', 'codex.close'].includes(method)) throw new Error('codex_method_invalid');
+    const connection = this.liveGateway(gatewayId);
+    if (!connection) throw new Error('gateway_not_connected');
+    return connection.dispatch(method, params);
   }
 
   dispatchProcessExec(gatewayId, params = {}) {

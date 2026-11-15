@@ -60,5 +60,5 @@ export function normalizeHostMetadata(value) {
     && !(entry.family === 'IPv6' && /^(?:::1$|::ffff:127\.)/i.test(entry.address))
   ).map((entry) => ({ interface: entry.interface, interfaceKind: interfaceKind(entry.interface), family: entry.family, address: entry.address }));
   addresses.sort((a, b) => ['lan-candidate','unknown','vpn','container'].indexOf(a.interfaceKind) - ['lan-candidate','unknown','vpn','container'].indexOf(b.interfaceKind));
-  return { hostname, platform, addresses };
+  return { hostname, platform, addresses, ...(value.codex?.protocol === 1 ? { codex: { available: value.codex.available === true, protocol: 1 } } : {}) };
 }
