@@ -167,6 +167,22 @@ Neither CLI is installed by default. These options require npm and install
 `/usr/local`, without version pins. Successful opt-ins are remembered in the
 installed package; subsequent updates fetch latest again without repeating flags.
 Existing installations made before opt-in tracking should pass the flags once.
+
+Claude provisioning works with both current npm (which can block lifecycle scripts
+by default) and older supported npm: it disables all npm lifecycle scripts with
+`--ignore-scripts`, includes native optional dependencies, and explicitly runs
+only the installed `@anthropic-ai/claude-code/install.cjs` vendor installer.
+It does not enable arbitrary dependency scripts or change npm's global approval
+configuration. The installer then runs `/usr/local/bin/claude --version` (or the
+same absolute path under a staging root), not a different Claude found on PATH.
+Missing vendor installer, vendor failure, or a failing launcher aborts installation
+before a new opt-in marker or package success is recorded. A vendor installer
+returning zero alone is insufficient: it can leave a non-working native stub.
+If a future latest package changes that entrypoint, provisioning fails closed
+rather than falling back to unrestricted scripts. Existing opt-in markers remain
+part of the previous package on a failed update; they are not proof that a failed
+CLI upgrade was rolled back.
+
 CLI provisioning is external to package rollback: a failed package update can
 restore Node Goblin but does not downgrade an already upgraded provider CLI.
 

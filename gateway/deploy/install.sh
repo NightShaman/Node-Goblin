@@ -101,7 +101,16 @@ fi
 if [ "$WITH_CLAUDE" = true ]; then
   CLAUDE_PREFIX=$(root_path /usr/local)
   mkdir -p "$CLAUDE_PREFIX"
-  npm install --global --prefix "$CLAUDE_PREFIX" --no-audit --no-fund @anthropic-ai/claude-code@latest
+  # Suppress ALL npm lifecycle scripts (also on older npm). Run only Claude's
+  # installed vendor entrypoint explicitly, rather than approving dependencies
+  # or relying on npm's version-dependent default script policy.
+  npm install --global --prefix "$CLAUDE_PREFIX" --no-audit --no-fund --ignore-scripts --include=optional @anthropic-ai/claude-code@latest
+  CLAUDE_PACKAGE="$CLAUDE_PREFIX/lib/node_modules/@anthropic-ai/claude-code"
+  [ -f "$CLAUDE_PACKAGE/install.cjs" ] || { echo "Claude vendor installer missing: $CLAUDE_PACKAGE/install.cjs" >&2; exit 1; }
+  ( cd "$CLAUDE_PACKAGE" && node ./install.cjs ) || { echo "Claude vendor installation failed" >&2; exit 1; }
+  # The vendor installer can return zero while leaving a placeholder launcher
+  # (e.g. missing native optional dependency). Verify this prefix, never PATH.
+  "$CLAUDE_PREFIX/bin/claude" --version || { echo "Installed Claude launcher verification failed" >&2; exit 1; }
 fi
 INSTALL_DIR=$(root_path /opt/burrow-host-gateway)
 CONFIG_DIR=$(root_path /etc/burrow-host-gateway)
