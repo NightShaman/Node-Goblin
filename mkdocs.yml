@@ -69,6 +69,7 @@ extra_css:
 # Internal historical repair notes are not part of the user documentation or search index.
 exclude_docs: |
   audit-repair-pass-5.md
+  remote-codex-acceptance-brief.md
   repairs/
 
 nav:
@@ -86,6 +87,7 @@ nav:
       - Native filesystem: filesystem.md
       - HTTP API: api.md
       - Wire protocol: protocol.md
+      - Remote Codex app-server contract: remote-codex-contract.md
   - About this release:
       - Source and coverage: source-map.md
       - Development and documentation: development.md
