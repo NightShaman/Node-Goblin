@@ -1,4 +1,4 @@
-import { CodexProcesses, codexExecutable } from './codex-process.mjs';
+import { CodexProcesses, codexExecutable, claudeExecutable } from './codex-process.mjs';
 import { boundOutputFrame, boundCompletedOutcome } from './output-frame.mjs';
 import readline from 'node:readline';
 import { readFileSync } from 'node:fs';
@@ -46,7 +46,7 @@ export class GatewayDaemon {
     if (!message || typeof message !== 'object') throw new Error('invalid_message');
     const method = String(message.method ?? '');
     const params = message.params && typeof message.params === 'object' ? message.params : {};
-    if (method.startsWith('codex.')) {
+    if (/^(codex|claude)\./.test(method)) {
       try {
         const result = await this.codex.handle(method, params, this.secureTransportContext);
         send({ type: 'response', requestId: message.id ?? null, ok: true, result });
@@ -54,7 +54,7 @@ export class GatewayDaemon {
       return;
     }
     if (method === 'hello') {
-      send({ type: 'response', requestId: message.id ?? null, ok: true, result: { ...this.identity, host: { ...collectHostMetadata(), codex: { available: Boolean(codexExecutable()), protocol: 1 } } } });
+      send({ type: 'response', requestId: message.id ?? null, ok: true, result: { ...this.identity, host: { ...collectHostMetadata(), codex: { available: Boolean(codexExecutable()), protocol: 1 }, claude: { available: Boolean(claudeExecutable()), protocol: 1 } } } });
       return;
     }
     if (method === 'health') {

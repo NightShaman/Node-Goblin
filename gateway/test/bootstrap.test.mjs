@@ -34,8 +34,8 @@ test('selected revisioned release is verified and passed to its package installe
     const bin = path.join(tmp, 'bin'); fs.mkdirSync(bin);
     const name = 'node-goblin-2026.10.18.2';
     const root = path.join(tmp, name); fs.mkdirSync(path.join(root, 'deploy'), { recursive: true });
-    fs.writeFileSync(path.join(root, 'deploy/install.sh'), '#!/bin/sh\nset -eu\n[ "$1" = --source ]\n[ "$2" = "$(dirname "$(dirname "$0")")" ]\nprintf "source-verified\\n" >> "$RECEIPT"\n', { mode: 0o755 });
-    fs.writeFileSync(path.join(root, 'deploy/update.sh'), '#!/bin/sh\nset -eu\n[ "$1" = --source ]\nprintf "update-and-restart\\n" >> "$RECEIPT"\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(root, 'deploy/install.sh'), '#!/bin/sh\nset -eu\n[ "$1" = --source ]\n[ "$2" = "$(dirname "$(dirname "$0")")" ]\nprintf "source-verified\\n" >> "$RECEIPT"\nprintf "%s\\n" "$@" > "$ARGS_LOG"\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(root, 'deploy/update.sh'), '#!/bin/sh\nset -eu\n[ "$1" = --source ]\nprintf "update-and-restart\\n" >> "$RECEIPT"\nprintf "%s\\n" "$@" > "$ARGS_LOG"\n', { mode: 0o755 });
     const archive = path.join(tmp, `${name}.tar.gz`);
     assert.equal(spawnSync('tar', ['-czf', archive, '-C', tmp, name]).status, 0);
     const digest = spawnSync('sha256sum', [archive], { encoding: 'utf8' }).stdout.split(' ')[0];
@@ -50,7 +50,7 @@ case "$2" in
  *) echo 'unexpected release authority' >&2; exit 42 ;;
 esac
 `, { mode: 0o755 });
-    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, NODE_GOBLIN_VERSION: '2026.10.18.2', FIXTURE: archive, URL_LOG: path.join(tmp, 'urls'), RECEIPT: path.join(tmp, 'receipt'), EXPECTED_REPOSITORY: authority };
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, NODE_GOBLIN_VERSION: '2026.10.18.2', FIXTURE: archive, URL_LOG: path.join(tmp, 'urls'), RECEIPT: path.join(tmp, 'receipt'), ARGS_LOG: path.join(tmp, 'args'), EXPECTED_REPOSITORY: authority };
     const run = (args = [], extra = {}) => spawnSync('sh', [script, ...args], { env: { ...env, ...extra }, encoding: 'utf8' });
     const incomplete = run(['--controller', 'host:123']);
     assert.equal(incomplete.status, 2); assert.equal(fs.existsSync(env.URL_LOG), false);
@@ -61,10 +61,12 @@ esac
     const conflicting = run(['--update', '--controller', 'host:123', '--node-id', 'node']);
     assert.equal(conflicting.status, 2);
     assert.equal(fs.existsSync(env.RECEIPT), false);
-    const good = run(); assert.equal(good.status, 0, good.stderr);
+    const good = run(['--with-codex', '--with-claude']); assert.equal(good.status, 0, good.stderr);
     assert.equal(fs.readFileSync(env.RECEIPT, 'utf8'), 'source-verified\n');
-    const updated = run(['--update']);
+    assert.deepEqual(fs.readFileSync(env.ARGS_LOG, 'utf8').trim().split('\n').slice(2), ['--with-codex', '--with-claude']);
+    const updated = run(['--update', '--with-claude', '--with-codex']);
     assert.equal(updated.status, 0, updated.stderr);
+    assert.deepEqual(fs.readFileSync(env.ARGS_LOG, 'utf8').trim().split('\n').slice(2), ['--with-codex', '--with-claude']);
     assert.equal(fs.readFileSync(env.RECEIPT, 'utf8'), 'source-verified\nupdate-and-restart\n');
     assert.doesNotMatch(updated.stdout, /Next:.*configure/);
     for (const repository of ['NightShaman/Node-Goblin', 'GoblinKing-Burrow/Node-Goblin']) {

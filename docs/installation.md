@@ -157,3 +157,37 @@ The app-server uses `CODEX_HOME` when set, otherwise `BURROW_GATEWAY_STATE_DIR/c
 On compatible Core and mod builds that declare managed skills, loading this mod automatically supplies the `node-goblin-operations` skill from [Burrow-Skills](https://github.com/GoblinKing-Burrow/Burrow-Skills/tree/main/node-goblin-operations). Core maintains the installed copy as read-only and refreshes managed skills at startup, on mod lifecycle changes, and on its default six-hour schedule. You do not paste, edit, or assign that managed copy manually. The skill provides instructions; it does not grant tool or data access.
 
 The current mod manifest declares this managed skill. Automatic mod-managed delivery still requires a Core build that supports it. Older public **2026.10.19** snapshots lack the declaration; updating only the skill repository cannot add the missing integration to those older packages. See [how managed skills work](https://docs.goblin-kingdom.com/burrow-skills/managed-skills/).
+
+### Optional Claude and Codex Minion runtimes
+
+Append `--with-claude` and/or `--with-codex` to the bootstrap install or
+`--update` command (or extracted `deploy/install.sh` / `deploy/update.sh`).
+Neither CLI is installed by default. These options require npm and install
+`@anthropic-ai/claude-code@latest` / `@openai/codex@latest` globally under
+`/usr/local`, without version pins. Successful opt-ins are remembered in the
+installed package; subsequent updates fetch latest again without repeating flags.
+Existing installations made before opt-in tracking should pass the flags once.
+CLI provisioning is external to package rollback: a failed package update can
+restore Node Goblin but does not downgrade an already upgraded provider CLI.
+
+The service discovers executables on its absolute PATH and standard system bin
+paths, including `/usr/local/bin`; it does not depend on root's interactive shell.
+`BURROW_CLAUDE_EXECUTABLE` and `BURROW_CODEX_EXECUTABLE` can override discovery
+with an absolute executable path in `gateway.env`. The `burrow` service user
+must be able to traverse and execute that path. Claude uses private writable
+HOME/config under `$BURROW_GATEWAY_STATE_DIR/claude` for service accounts without
+a login home. Runtime `hello` metadata advertises only availability and protocol,
+not credentials or authentication state. Claude OAuth is supplied transiently by
+the authenticated controller to the child process environment, not installer
+arguments or persistent gateway configuration. Verify a real authenticated
+Minion operation after provisioning; executable availability alone is not proof
+of provider authentication or successful inference.
+
+The private Claude process contract uses headless JSONL with
+`--allowedTools Bash,Edit,Write,Read,Glob,Grep,NotebookEdit --permission-prompts none`.
+The backend admits inspect/mutate policy and rejects configured hard blocks
+before requesting this invocation. These are broad native coding permissions
+(including unrestricted Bash), not an OS sandbox or workspace confinement.
+Other permission requests are denied without waiting for an absent host; native
+managed/deny rules still apply. A current CLI supporting `--permission-prompts`
+is required (inspected on 2.1.325); no permission-bypass fallback is used.

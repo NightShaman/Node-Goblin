@@ -11,11 +11,12 @@ NO_SYSTEMD=false
 SKIP_ACCOUNT=false
 RESTART=false
 WITH_CODEX=false
+WITH_CLAUDE=false
 SERVICE=burrow-host-gateway.service
 SYSTEMCTL_OVERRIDE=${SYSTEMCTL:-}
 SYSTEMCTL=${SYSTEMCTL:-systemctl}
 
-usage() { echo "usage: $0 [--root DIRECTORY] [--source DIRECTORY] [--no-systemd] [--skip-account] [--restart] [--with-codex]" >&2; }
+usage() { echo "usage: $0 [--root DIRECTORY] [--source DIRECTORY] [--no-systemd] [--skip-account] [--restart] [--with-codex] [--with-claude]" >&2; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --root) ROOT=$2; shift 2 ;;
@@ -24,6 +25,7 @@ while [ "$#" -gt 0 ]; do
     --skip-account) SKIP_ACCOUNT=true; shift ;;
     --restart) RESTART=true; shift ;;
     --with-codex) WITH_CODEX=true; shift ;;
+    --with-claude) WITH_CLAUDE=true; shift ;;
     *) usage; exit 2 ;;
   esac
 done
@@ -47,7 +49,12 @@ if [ "$NO_SYSTEMD" = false ] && [ "$ROOT" = / ]; then
   command -v "${SYSTEMCTL:-systemctl}" >/dev/null || exit 1
 fi
 validate_package "$SOURCE"
-if [ "$WITH_CODEX" = true ]; then command -v npm >/dev/null || { echo "npm required for --with-codex" >&2; exit 1; }; fi
+# Successful opt-ins belong to the package transaction and survive updates.
+[ ! -f "$(root_path /opt/burrow-host-gateway/.with-codex)" ] || WITH_CODEX=true
+[ ! -f "$(root_path /opt/burrow-host-gateway/.with-claude)" ] || WITH_CLAUDE=true
+if [ "$WITH_CODEX" = true ] || [ "$WITH_CLAUDE" = true ]; then
+  command -v npm >/dev/null || { echo "npm required for opted-in CLI provisioning" >&2; exit 1; }
+fi
 . "$SOURCE/deploy/service-common.sh"
 if [ "$RESTART" = true ]; then
   [ "$NO_SYSTEMD" = false ] && { [ "$ROOT" = / ] || [ -n "$SYSTEMCTL_OVERRIDE" ]; } || {
@@ -85,11 +92,16 @@ if [ "$SKIP_ACCOUNT" = false ]; then
   fi
 fi
 
-# Latest on every explicit opt-in install/update; no CLI version pin or lock.
+# Latest on every opted-in install/update; no CLI version pin or lock.
 if [ "$WITH_CODEX" = true ]; then
   CODEX_PREFIX=$(root_path /usr/local)
   mkdir -p "$CODEX_PREFIX"
   npm install --global --prefix "$CODEX_PREFIX" --no-audit --no-fund @openai/codex@latest
+fi
+if [ "$WITH_CLAUDE" = true ]; then
+  CLAUDE_PREFIX=$(root_path /usr/local)
+  mkdir -p "$CLAUDE_PREFIX"
+  npm install --global --prefix "$CLAUDE_PREFIX" --no-audit --no-fund @anthropic-ai/claude-code@latest
 fi
 INSTALL_DIR=$(root_path /opt/burrow-host-gateway)
 CONFIG_DIR=$(root_path /etc/burrow-host-gateway)
@@ -150,6 +162,8 @@ trap 'exit 1' HUP INT TERM
 ( cd "$SOURCE" && tar --exclude='./test' --exclude='./dist' -cf "$transaction/source.tar" . )
 ( cd "$tmp" && tar -xf "$transaction/source.tar" )
 validate_package "$tmp"
+[ "$WITH_CODEX" = false ] || touch "$tmp/.with-codex"
+[ "$WITH_CLAUDE" = false ] || touch "$tmp/.with-claude"
 find "$tmp" -type d -exec chmod 0755 {} +
 find "$tmp" -type f -exec chmod 0644 {} +
 chmod 0755 "$tmp/cli.mjs" "$tmp/node-goblin.mjs" "$tmp/deploy/"*.sh "$tmp/deploy/node-goblin"

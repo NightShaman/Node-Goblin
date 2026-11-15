@@ -84,3 +84,34 @@ test('deployment artifacts enforce dedicated account, outbound config, and no se
   assert.match(operatorCli, /is-active --quiet/);
   assert.doesNotMatch(operatorCli, /ENROLLMENT_TOKEN=.*\$[12]/);
 });
+
+test('optional latest CLIs persist through flag-free updates; failed provisioning does not opt in', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'burrow-cli-provision-'));
+  try {
+    const root = path.join(tmp, 'root'), bin = path.join(tmp, 'bin'), log = path.join(tmp, 'npm.log');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, 'npm'), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$NPM_LOG"\nexit "${NPM_STATUS:-0}"\n', { mode: 0o755 });
+    const systemctl = path.join(bin, 'systemctl');
+    fs.writeFileSync(systemctl, '#!/bin/sh\ncase "$*" in *LoadState*) echo loaded;; *ActiveState*) echo inactive;; esac\nexit 0\n', { mode: 0o755 });
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, NPM_LOG: log };
+    const stage = (args = [], extra = {}) => spawnSync(install, ['--root', root, '--skip-account', '--no-systemd', ...args], { env: { ...env, ...extra }, encoding: 'utf8' });
+    let result = stage(); assert.equal(result.status, 0, result.stderr);
+    assert.equal(fs.existsSync(log), false);
+    result = stage(['--with-claude'], { NPM_STATUS: '1' });
+    assert.notEqual(result.status, 0);
+    const marker = path.join(root, 'opt/burrow-host-gateway/.with-claude');
+    assert.equal(fs.existsSync(marker), false);
+    fs.writeFileSync(log, '');
+    result = stage(['--with-claude', '--with-codex']); assert.equal(result.status, 0, result.stderr);
+    assert.equal(fs.existsSync(marker), true);
+    fs.writeFileSync(path.join(root, 'etc/burrow-host-gateway/gateway.env'), 'BURROW_GATEWAY_CONTROLLER_URL=tls://controller:7443\nBURROW_GATEWAY_ID=test-node\n');
+    result = spawnSync(path.join(gateway, 'deploy/update.sh'), ['--root', root, '--skip-account'], { env: { ...env, SYSTEMCTL: systemctl }, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const calls = fs.readFileSync(log, 'utf8').trim().split('\n');
+    assert.equal(calls.length, 4);
+    for (const pkg of ['@openai/codex@latest', '@anthropic-ai/claude-code@latest']) {
+      assert.equal(calls.filter(line => line === `install --global --prefix ${root}/usr/local --no-audit --no-fund ${pkg}`).length, 2);
+    }
+    assert.equal(fs.existsSync(marker), true);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});

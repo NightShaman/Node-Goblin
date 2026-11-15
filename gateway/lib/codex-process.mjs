@@ -3,39 +3,72 @@ import { statSync, accessSync, mkdirSync, constants } from 'node:fs';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
-export function codexExecutable(env = process.env) {
-  const candidates = env.BURROW_CODEX_EXECUTABLE ? [env.BURROW_CODEX_EXECUTABLE] :
-    String(env.PATH || '').split(path.delimiter).filter(path.isAbsolute).map(dir => path.join(dir, 'codex'));
+function findExecutable(env, override, name) {
+  const candidates = override ? [override] :
+    [...String(env.PATH || '').split(path.delimiter).filter(path.isAbsolute), '/usr/local/bin', '/usr/bin', '/bin'].map(dir => path.join(dir, name));
   for (const file of candidates) {
     try { if (path.isAbsolute(file) && statSync(file).isFile()) { accessSync(file, constants.X_OK); return file; } } catch {}
   }
   return null;
 }
 
+export function codexExecutable(env = process.env) { return findExecutable(env, env.BURROW_CODEX_EXECUTABLE, 'codex'); }
+export function claudeExecutable(env = process.env) { return findExecutable(env, env.BURROW_CLAUDE_EXECUTABLE, 'claude'); }
+
+// Accept only the headless JSONL contract, never arbitrary CLI flags or env.
+export function validateClaudeInvocation({ args, token } = {}) {
+  const prefix = ['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose', '--allowedTools', 'Bash,Edit,Write,Read,Glob,Grep,NotebookEdit', '--permission-prompts', 'none', '--model'];
+  if (!Array.isArray(args) || ![12, 14].includes(args.length)
+    || prefix.some((arg, i) => args[i] !== arg)
+    || typeof args[11] !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,239}$/.test(args[11])
+    || (args.length === 14 && (args[12] !== '--resume' || typeof args[13] !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(args[13])))
+    || typeof token !== 'string' || !token.length || token.length > 16384 || /[\x00-\x20\x7f]/.test(token)) {
+    throw new Error('claude_invocation_invalid');
+  }
+  return [...args];
+}
+
 // Memory-only, connection-owned interactive IPC. No journal, output events,
 // telemetry, stderr, or diagnostic strings may cross this boundary.
 export class CodexProcesses {
-  constructor({ executable = () => codexExecutable(), spawnProcess = spawn } = {}) {
-    this.executable = executable; this.spawnProcess = spawnProcess; this.sessions = new Map();
+  constructor({ executable = () => codexExecutable(), claudeExecutable: resolveClaude = () => claudeExecutable(), spawnProcess = spawn } = {}) {
+    this.executable = executable; this.claudeExecutable = resolveClaude; this.spawnProcess = spawnProcess; this.sessions = new Map();
   }
   async handle(method, params, owner) {
     if (!owner?.connectionId) throw new Error('codex_authenticated_transport_required');
+    const runtime = method.startsWith('claude.') ? 'claude' : 'codex';
+    if (!['codex', 'claude'].some(name => ['open', 'write', 'read', 'close'].some(action => method === `${name}.${action}`))) throw new Error('codex_method_invalid');
+    method = method.replace(/^claude\./, 'codex.');
     const id = params.operationId;
     if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(id)) throw new Error('codex_operation_invalid');
     let entry = this.sessions.get(id);
-    if (entry && entry.owner !== owner.connectionId) throw new Error('codex_owner_invalid');
+    if (entry && (entry.owner !== owner.connectionId || entry.runtime !== runtime)) throw new Error('codex_owner_invalid');
     if (method === 'codex.open') {
       if (entry || this.sessions.size >= 8) throw new Error('codex_session_limit_or_conflict');
       if (typeof params.cwd !== 'string' || params.cwd.length > 4096 || !path.isAbsolute(params.cwd)
         || !statSync(params.cwd).isDirectory()) throw new Error('codex_cwd_invalid');
-      const executable = this.executable();
+      const args = runtime === 'claude' ? validateClaudeInvocation(params) : ['app-server', '--listen', 'stdio://'];
+      const executable = runtime === 'claude' ? this.claudeExecutable() : this.executable();
       if (!executable) throw new Error('codex_unavailable');
       const codexHome = process.env.CODEX_HOME || (process.env.BURROW_GATEWAY_STATE_DIR ? path.join(process.env.BURROW_GATEWAY_STATE_DIR, 'codex') : null);
-      if (codexHome) mkdirSync(codexHome, { recursive: true, mode: 0o700 });
-      const child = this.spawnProcess(executable, ['app-server', '--listen', 'stdio://'], {
-        cwd: params.cwd, ...(codexHome ? { env: { ...process.env, CODEX_HOME: codexHome } } : {}), stdio: ['pipe', 'pipe', 'pipe'], shell: false, detached: process.platform !== 'win32',
+      if (runtime === 'codex' && codexHome) mkdirSync(codexHome, { recursive: true, mode: 0o700 });
+      let env;
+      if (runtime === 'claude') {
+        env = { ...process.env };
+        for (const key of Object.keys(env)) if (/^(ANTHROPIC_|CLAUDE_CODE_|CLAUDECODE$)/.test(key)) delete env[key];
+        // Service accounts may have /nonexistent as their login home. Keep CLI
+        // config/cache writable without borrowing root's interactive profile.
+        if (process.env.BURROW_GATEWAY_STATE_DIR) {
+          env.HOME = path.join(process.env.BURROW_GATEWAY_STATE_DIR, 'claude');
+          env.CLAUDE_CONFIG_DIR = path.join(env.HOME, '.claude');
+          mkdirSync(env.CLAUDE_CONFIG_DIR, { recursive: true, mode: 0o700 });
+        }
+        env.CLAUDE_CODE_OAUTH_TOKEN = params.token;
+      } else if (codexHome) env = { ...process.env, CODEX_HOME: codexHome };
+      const child = this.spawnProcess(executable, args, {
+        cwd: params.cwd, ...(env ? { env } : {}), stdio: ['pipe', 'pipe', 'pipe'], shell: false, detached: process.platform !== 'win32',
       });
-      entry = { child, owner: owner.connectionId, data: '', bytes: 0, done: false, decoder: new StringDecoder('utf8') };
+      entry = { child, runtime, owner: owner.connectionId, data: '', bytes: 0, done: false, decoder: new StringDecoder('utf8') };
       this.sessions.set(id, entry);
       entry.timer = setTimeout(() => this.destroy(id), 30 * 60_000); entry.timer.unref?.();
       child.stdout.on('data', chunk => {
