@@ -128,6 +128,23 @@ For the mod, `git pull --ff-only` updates a clean checkout; then restart BURROW.
 
 `sudo node-goblin uninstall` removes runtime files, command links, and the unit. It preserves the account, configuration, identity/trust, and journal for reinstall. It is not a credential purge.
 
+## Optional Codex CLI for native minions
+
+If this execution host will run Burrow's native Codex minions, opt in to installing Codex on **this host**, not merely inside the Burrow container. The reviewed bootstrap, package installer, and package updater accept `--with-codex`:
+
+```bash
+# From a verified, extracted Node Goblin release:
+sudo sh deploy/install.sh --with-codex
+# For an existing configured installation, after draining work:
+sudo sh deploy/update.sh --with-codex
+```
+
+This option requires `npm` and installs `@openai/codex@latest` globally under `/usr/local` on a normal installation. Each explicit opt-in install/update requests the latest CLI; it is not pinned to the Node Goblin release. The ordinary installer does not install Codex.
+
+The gateway discovers an executable `codex` through its service `PATH`, or an absolute `BURROW_CODEX_EXECUTABLE` override. Discovery reports executable availability only, not OpenAI authentication or model eligibility. Burrow must also support native Codex minions and have the appropriate model connection configured.
+
+The app-server uses `CODEX_HOME` when set, otherwise `BURROW_GATEWAY_STATE_DIR/codex` when the state-directory variable is set. This lets the normal non-login service account use its writable state directory rather than requiring a home directory. Protect that state and never copy authentication data into command arguments or diagnostics.
+
 ## Source references
 
 - [`README.md`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/README.md)

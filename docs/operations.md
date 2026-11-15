@@ -89,6 +89,18 @@ Follow the [pairing recovery procedure](pairing.md#recover-from-a-changed-contro
 
 Uninstall deliberately preserves configuration and state. Secure decommissioning requires a separate reviewed credential/data-retention decision; do not mistake package removal for erasure.
 
+## Native Codex minion checks
+
+For Codex-specific failures, distinguish host capability from Burrow model configuration:
+
+1. Confirm the intended Node Goblin target is approved, connected and assigned.
+2. Confirm Codex was installed on that execution host and is executable in the gateway service's environment. An interactive shell finding it does not establish the service's `PATH`.
+3. Check Burrow's native Codex minion settings and eligible OpenAI connection separately. Host capability does not prove account authentication.
+4. Ensure the selected workspace is an existing absolute directory accessible to the service account, and Codex state is writable.
+5. After a disconnect or service restart, treat the Codex process as terminated. Its private transport has no operation-journal replay; inspect the workspace for completed edits before starting replacement work.
+
+Do not diagnose authentication by sending tokens through ordinary process commands, process journals, logs or chat. Keep private app-server protocol traffic on the authenticated Codex transport. A sanitized transport failure alone does not identify whether installation, workspace, process startup or protocol handling failed.
+
 ## Source references
 
 - [`gateway/deploy/node-goblin`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/deploy/node-goblin)

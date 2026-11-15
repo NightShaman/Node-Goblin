@@ -114,6 +114,23 @@ printf '%s
 
 Do not use this example with a controller URL already set in the environment: that switches the CLI into network mode. `GatewayClient` provides a local child-process helper for requests and collected execution events; callers still own process lifetime and error handling.
 
+## Private Codex app-server transport
+
+Native Codex minions use a separate, connection-owned RPC path over the existing authenticated TLS connection. It adds no listener or port and is not a shell command or a replacement for ordinary `process.exec`.
+
+| Method | Parameters | Result |
+| --- | --- | --- |
+| `codex.open` | Unique `operationId`, existing absolute directory `cwd` | Starts `codex app-server --listen stdio://`; returns `operationId` |
+| `codex.write` | `operationId`, string `data` | Writes exact stdin bytes without adding a newline; returns `written: true` |
+| `codex.read` | `operationId` | Returns a stdout chunk and `done`; final drained result also includes exit status/signal |
+| `codex.close` | `operationId`, optional `signal` | Without a signal, ends stdin; with `SIGTERM` or `SIGKILL`, signals the process group on non-Windows hosts; returns `closed` |
+
+An operation belongs to its authenticated connection and cannot be resumed by a new connection. IDs contain 1–128 letters, digits, underscores or hyphens. The current implementation permits eight simultaneous sessions per gateway, 128 KiB per write, reads of at most 32 Ki UTF-16 code units without splitting a surrogate pair, an 8 MiB buffered-output ceiling, and a 30-minute lifetime. Closed child output is retained for at most 60 seconds to be drained. These are transport limits, not promises of successful model execution.
+
+The daemon discards stderr. Codex RPC requests and responses bypass ordinary operation journals and controller activity events so authentication payloads are not exposed there. Disconnect and gateway shutdown destroy their Codex sessions. This differs from ordinary journaled process work: do not use ordinary operation-ID replay as a Codex recovery mechanism.
+
+Host metadata advertises `codex: { available, protocol: 1 }`. Availability means an executable was found, not that an account is authenticated. The controller surfaces sanitized `codex_transport_failed` errors rather than raw app-server/authentication diagnostics.
+
 ## Source references
 
 - [`gateway/lib/protocol.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/protocol.mjs)

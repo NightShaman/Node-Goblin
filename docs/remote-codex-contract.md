@@ -9,9 +9,9 @@ All requests use the existing authenticated, connection-bound gateway RPC envelo
 - `codex.open { operationId, cwd }` starts `codex app-server` interactively in the requested existing working directory. The caller supplies a unique operation ID. Success returns `{ operationId }`; errors are protocol errors.
 - `codex.write { operationId, data }` writes one bounded string to that operation's stdin and returns `{ operationId, written }`. No line is implicitly added.
 - `codex.read { operationId }` polls and returns `{ operationId, data, done }`, where `data` is a bounded stdout chunk. Stderr is discarded, never returned or logged.
-- `codex.close { operationId, signal }` closes stdin and optionally sends a validated termination signal; returns `{ operationId, closed }`. Repeated close is safe.
+- `codex.close { operationId, signal }` closes stdin when no signal is supplied, or sends a validated termination signal; returns `{ operationId, closed }`. Repeated close is safe.
 
-Unknown operation, non-owner access, malformed input, and resource-limit violations fail closed. Implementation limits apply to concurrent sessions, cwd and data sizes, per-read output, and total lifetime; clients must poll and honor `done`. Disconnect, gateway stop, and child exit clean up child processes and session state. OAuth/authentication payloads must not enter operation journals, logs, traces, or telemetry. No request contents are journaled. The controller must use only this contract and must not relay OAuth secrets via ordinary process execution or diagnostics.
+Unknown operation, non-owner access, malformed input, and resource-limit violations fail closed. Implementation limits apply to concurrent sessions, cwd and data sizes, per-read output, and total lifetime; clients must poll and honor `done`. Disconnect and gateway stop destroy sessions. After child exit, output remains available to drain for at most 60 seconds; the final drained read removes the session. OAuth/authentication payloads must not enter operation journals, logs, traces, or telemetry. No request contents are journaled. The controller must use only this contract and must not relay OAuth secrets via ordinary process execution or diagnostics.
 
 ## Host capability
 
@@ -20,3 +20,4 @@ The `hello` host metadata includes a bounded `codex` capability object indicatin
 ## Client guidance
 
 Use a fresh unpredictable operation ID per session, open once, send app-server protocol bytes through `write`, poll `read`, and always close in `finally`. The surrounding transport provides confidentiality and peer authentication; do not add a local/network listener.
+
