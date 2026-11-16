@@ -24,6 +24,8 @@ Read tests before changing behavior. Test doubles cover socket/controller flows,
 
 | Suite | Main subject |
 | --- | --- |
+| `gateway/codex-process.test.mjs` | Codex/Claude private session ownership, CLI discovery, service HOME, bounded I/O and validated Claude arguments |
+| `gateway/codex-authenticated-e2e.test.mjs` | Authenticated private transport with isolated process/connection doubles; credentials excluded from events and journals |
 | `gateway/daemon.test.mjs` | Envelope handling, operation correlation, replay/conflict, lifecycle |
 | `gateway/process-runner.test.mjs` | Process forms, timeout/output behavior |
 | `gateway/filesystem-runner.test.mjs` | Traversal defaults, bounds, completeness |

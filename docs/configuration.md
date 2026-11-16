@@ -15,6 +15,8 @@ Configuration lives on both controller and gateway. Changing one side does not a
 | `BURROW_GATEWAY_CA_FILE` | Optional CA file | TLS server trust for first strict connection and HMAC deployments |
 | `BURROW_GATEWAY_CERT_FILE` | Optional certificate file | Client TLS certificate passed to Node TLS |
 | `BURROW_GATEWAY_KEY_FILE` | Optional key file | Client TLS key passed to Node TLS |
+| `BURROW_CODEX_EXECUTABLE` / `BURROW_CLAUDE_EXECUTABLE` | Optional absolute executable paths | Override native minion CLI discovery; invalid overrides do not fall back to PATH |
+| `CODEX_HOME` | Optional Codex state path | Otherwise the gateway uses `$BURROW_GATEWAY_STATE_DIR/codex` when configured |
 | `BURROW_FILESYSTEM_TRAVERSAL_ENTRIES` | Positive integer; 4,000 | Default find/search traversal budget |
 
 The packaged environment file is `/etc/burrow-host-gateway/gateway.env`, root-owned and intended to be `root:burrow` mode `0640`. systemd reads it as an environment file, not a shell script. Do not use shell substitution or put reusable secrets into command-line arguments.
@@ -24,6 +26,8 @@ Keep the packaged service's state directory at `/var/lib/burrow-host-gateway` wh
 Library constructors additionally support programmatic options such as reconnect intervals, journal TTL/limit, injected clocks, and test TLS implementations. Those options do not imply matching environment variables. `HOSTNAME` is a library fallback gateway ID, but the network CLI explicitly requires `BURROW_GATEWAY_ID`.
 
 Installer/operator controls are separate: `BURROW_GATEWAY_ROOT` selects a staging root, `SYSTEMCTL` selects the operator command's systemctl executable, and `SOURCE_DATE_EPOCH` controls deterministic archive timestamps. They are not gateway protocol settings.
+
+Claude child processes use private writable HOME/configuration under `$BURROW_GATEWAY_STATE_DIR/claude` when a state directory is configured. Inherited Anthropic/Claude authentication variables are removed, then the controller-supplied OAuth token is passed transiently to that child. Do not put minion OAuth tokens in `gateway.env`; use Burrow’s supported connection flow. See [native minion setup](installation.md#optional-codex-cli-for-native-minions).
 
 ## Telemetry overrides
 

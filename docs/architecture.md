@@ -91,6 +91,10 @@ Controller operation correlation keeps up to 256 terminal records by default and
 
 Core storage implementation and encryption guarantees are outside this repository. Back up the Core-owned secrets store with its required keys, not just the mod's visible settings. See [configuration](configuration.md) for names and paths.
 
+## Native minion transport
+
+The execution provider also exposes private `codexRpc` for both `codex.*` app-server and `claude.*` headless JSONL sessions. Both use the already authenticated TLS channel, with no additional listener. They are connection-owned processes, not journaled shell/filesystem operations. Disconnect destroys them; native operation replay does not use the ordinary journal or Archive. Host metadata advertises each CLI’s availability without authentication material. See [native transport contracts](protocol.md#private-codex-app-server-transport).
+
 ## Source references
 
 - [`burrow.mod.json`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/burrow.mod.json)

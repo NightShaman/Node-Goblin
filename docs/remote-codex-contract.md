@@ -15,9 +15,15 @@ Unknown operation, non-owner access, malformed input, and resource-limit violati
 
 ## Host capability
 
-The `hello` host metadata includes a bounded `codex` capability object indicating executable availability (and optionally a safe version string); it must not include credentials, account identity, or auth state. Installer opt-in is `--with-codex`; when selected, install the latest available Codex CLI without pinning a version. Default installation does not install Codex.
+The `hello` host metadata includes a bounded `codex: {available, protocol: 1}` capability object indicating executable availability; it must not include credentials, account identity, or auth state. Installer opt-in is `--with-codex`; when selected, install the latest available Codex CLI without pinning a version. Default installation does not install Codex. Successful opt-ins are retained by the package and fetch latest again on later updates. CLI provisioning is outside Node Goblin package rollback.
 
 ## Client guidance
 
 Use a fresh unpredictable operation ID per session, open once, send app-server protocol bytes through `write`, poll `read`, and always close in `finally`. The surrounding transport provides confidentiality and peer authentication; do not add a local/network listener.
 
+
+## Claude transport extension
+
+The same connection-owned channel also supports `claude.open`, `claude.write`, `claude.read` and `claude.close`. The latter three have the same shapes; open additionally receives the controller-owned transient OAuth token and validated headless JSONL arguments. See [the full private Claude contract](protocol.md#private-claude-jsonl-transport) and [installation](installation.md#optional-codex-cli-for-native-minions). Codex and Claude share the eight-session gateway limit, but runtime ownership is enforced: a method for one cannot access a session of the other. Both native paths currently use the sanitized `codex_transport_failed` error name.
+
+Host metadata advertises a separate `claude: {available, protocol: 1}` capability. No version, account, token or authentication state survives normalization. Native IPC bypasses ordinary gateway operation journals, Archive activity and gateway spans; native minion observability remains Core-owned. Neither CLI’s authenticated session survives a gateway disconnect.

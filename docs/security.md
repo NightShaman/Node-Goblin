@@ -54,6 +54,10 @@ The gateway journal can retain process evidence, including ordinary output and c
 
 When configured, the host sends OTLP/HTTP traces to its configured collector. Execution spans include bounded operation kind, tool name, target ID, operation ID, timing, status, and trace context. The span builder does not include command arguments, file contents, prompts, protected values, or raw stdout/stderr. Treat identifiers and collector access headers as deployment-sensitive anyway. Host `OTEL_*` endpoint overrides take precedence over Core Settings; disabling Core telemetry does not disable a host override. Use a trusted collector and protect the environment file and its backups.
 
+## Native minion credentials and authority
+
+Codex app-server and Claude JSONL traffic use private authenticated transport, bypassing ordinary gateway journals, Archive activity and gateway operation telemetry. Native processes still run with the host service account’s real operating-system access. Claude’s fixed allowed coding-tool set includes Bash; it is not filesystem confinement. Credentials belong in the controller-managed connection flow, not command arguments, logs or manually persisted gateway token settings. Disconnect terminates the native sessions but cannot undo edits or other effects they already made. See [native transport](protocol.md#private-codex-app-server-transport).
+
 ## Availability and resource policy
 
 Default timeouts, output limits, replay retention, and traversal budgets reduce routine resource use. They are not an external resource sandbox. Some bounds can be overridden by callers and file reads/searches are buffered. Choose reasonable request limits, storage quotas, operating-system controls, and monitoring for the deployment.

@@ -130,20 +130,24 @@ For the mod, `git pull --ff-only` updates a clean checkout; then restart BURROW.
 
 ## Optional Codex CLI for native minions
 
-If this execution host will run Burrow's native Codex minions, opt in to installing Codex on **this host**, not merely inside the Burrow container. The reviewed bootstrap, package installer, and package updater accept `--with-codex`:
+Both **Codex and Claude native minions** need their CLI on the selected execution host, not merely inside Burrow's container. The reviewed bootstrap, package installer and updater accept `--with-codex`, `--with-claude`, or both:
 
 ```bash
 # From a verified, extracted Node Goblin release:
-sudo sh deploy/install.sh --with-codex
+sudo sh deploy/install.sh --with-codex --with-claude
 # For an existing configured installation, after draining work:
-sudo sh deploy/update.sh --with-codex
+sudo sh deploy/update.sh --with-codex --with-claude
 ```
 
-This option requires `npm` and installs `@openai/codex@latest` globally under `/usr/local` on a normal installation. Each explicit opt-in install/update requests the latest CLI; it is not pinned to the Node Goblin release. The ordinary installer does not install Codex.
+Neither CLI is installed by default. Opt-ins require npm and install `@openai/codex@latest` and/or `@anthropic-ai/claude-code@latest` globally under `/usr/local`, without version pins. Successful choices are remembered in the installed package; subsequent Node Goblin updates fetch those latest CLIs again even without repeating the flags. Older installations made before opt-in tracking must supply their flags once.
 
-The gateway discovers an executable `codex` through its service `PATH`, or an absolute `BURROW_CODEX_EXECUTABLE` override. Discovery reports executable availability only, not OpenAI authentication or model eligibility. Burrow must also support native Codex minions and have the appropriate model connection configured.
+Claude provisioning suppresses all npm lifecycle scripts with `--ignore-scripts`, includes native optional dependencies, and explicitly runs only the installed vendor `install.cjs`. It verifies the launcher at the selected installation prefix with `claude --version`; it does not change global npm script approvals. A missing vendor entrypoint, vendor failure or nonworking launcher aborts provisioning. **CLI upgrades are outside package rollback:** restoring Node Goblin after a failed update does not downgrade an already upgraded provider CLI.
 
-The app-server uses `CODEX_HOME` when set, otherwise `BURROW_GATEWAY_STATE_DIR/codex` when the state-directory variable is set. This lets the normal non-login service account use its writable state directory rather than requiring a home directory. Protect that state and never copy authentication data into command arguments or diagnostics.
+The gateway discovers executable `codex` and `claude` in absolute service `PATH` entries and standard system bin directories, including `/usr/local/bin`. Absolute `BURROW_CODEX_EXECUTABLE` and `BURROW_CLAUDE_EXECUTABLE` overrides take precedence. The service account must be able to traverse and execute the selected file. Discovery reports availability and protocol only, not authentication or model eligibility. Configure the corresponding native minion harness and eligible connection in compatible Burrow Core separately.
+
+Codex uses `CODEX_HOME` when set, otherwise `$BURROW_GATEWAY_STATE_DIR/codex` when the state-directory variable is set. Claude uses private writable `HOME` and configuration under `$BURROW_GATEWAY_STATE_DIR/claude` on the packaged service, which does not need a login home. Protect these directories. Claude OAuth is delivered transiently by the authenticated controller into the child environment, not installer arguments or a persistent gateway token setting.
+
+The current Claude transport requires the headless JSONL CLI contract with `--permission-prompts none` and the explicit native coding-tool set `Bash,Edit,Write,Read,Glob,Grep,NotebookEdit`. These are broad native coding permissions, not an operating-system sandbox or workspace confinement. Other permission requests are denied without waiting for an interactive host; there is no permission-bypass fallback. Use a CLI that supports this contract, then verify an authorized harmless minion operation. Finding an executable alone does not prove successful inference.
 
 ## Source references
 
@@ -157,53 +161,3 @@ The app-server uses `CODEX_HOME` when set, otherwise `BURROW_GATEWAY_STATE_DIR/c
 On compatible Core and mod builds that declare managed skills, loading this mod automatically supplies the `node-goblin-operations` skill from [Burrow-Skills](https://github.com/GoblinKing-Burrow/Burrow-Skills/tree/main/node-goblin-operations). Core maintains the installed copy as read-only and refreshes managed skills at startup, on mod lifecycle changes, and on its default six-hour schedule. You do not paste, edit, or assign that managed copy manually. The skill provides instructions; it does not grant tool or data access.
 
 The current mod manifest declares this managed skill. Automatic mod-managed delivery still requires a Core build that supports it. Older public **2026.10.19** snapshots lack the declaration; updating only the skill repository cannot add the missing integration to those older packages. See [how managed skills work](https://docs.goblin-kingdom.com/burrow-skills/managed-skills/).
-
-### Optional Claude and Codex Minion runtimes
-
-Append `--with-claude` and/or `--with-codex` to the bootstrap install or
-`--update` command (or extracted `deploy/install.sh` / `deploy/update.sh`).
-Neither CLI is installed by default. These options require npm and install
-`@anthropic-ai/claude-code@latest` / `@openai/codex@latest` globally under
-`/usr/local`, without version pins. Successful opt-ins are remembered in the
-installed package; subsequent updates fetch latest again without repeating flags.
-Existing installations made before opt-in tracking should pass the flags once.
-
-Claude provisioning works with both current npm (which can block lifecycle scripts
-by default) and older supported npm: it disables all npm lifecycle scripts with
-`--ignore-scripts`, includes native optional dependencies, and explicitly runs
-only the installed `@anthropic-ai/claude-code/install.cjs` vendor installer.
-It does not enable arbitrary dependency scripts or change npm's global approval
-configuration. The installer then runs `/usr/local/bin/claude --version` (or the
-same absolute path under a staging root), not a different Claude found on PATH.
-Missing vendor installer, vendor failure, or a failing launcher aborts installation
-before a new opt-in marker or package success is recorded. A vendor installer
-returning zero alone is insufficient: it can leave a non-working native stub.
-If a future latest package changes that entrypoint, provisioning fails closed
-rather than falling back to unrestricted scripts. Existing opt-in markers remain
-part of the previous package on a failed update; they are not proof that a failed
-CLI upgrade was rolled back.
-
-CLI provisioning is external to package rollback: a failed package update can
-restore Node Goblin but does not downgrade an already upgraded provider CLI.
-
-The service discovers executables on its absolute PATH and standard system bin
-paths, including `/usr/local/bin`; it does not depend on root's interactive shell.
-`BURROW_CLAUDE_EXECUTABLE` and `BURROW_CODEX_EXECUTABLE` can override discovery
-with an absolute executable path in `gateway.env`. The `burrow` service user
-must be able to traverse and execute that path. Claude uses private writable
-HOME/config under `$BURROW_GATEWAY_STATE_DIR/claude` for service accounts without
-a login home. Runtime `hello` metadata advertises only availability and protocol,
-not credentials or authentication state. Claude OAuth is supplied transiently by
-the authenticated controller to the child process environment, not installer
-arguments or persistent gateway configuration. Verify a real authenticated
-Minion operation after provisioning; executable availability alone is not proof
-of provider authentication or successful inference.
-
-The private Claude process contract uses headless JSONL with
-`--allowedTools Bash,Edit,Write,Read,Glob,Grep,NotebookEdit --permission-prompts none`.
-The backend admits inspect/mutate policy and rejects configured hard blocks
-before requesting this invocation. These are broad native coding permissions
-(including unrestricted Bash), not an OS sandbox or workspace confinement.
-Other permission requests are denied without waiting for an absent host; native
-managed/deny rules still apply. A current CLI supporting `--permission-prompts`
-is required (inspected on 2.1.325); no permission-bypass fallback is used.

@@ -125,11 +125,25 @@ Native Codex minions use a separate, connection-owned RPC path over the existing
 | `codex.read` | `operationId` | Returns a stdout chunk and `done`; final drained result also includes exit status/signal |
 | `codex.close` | `operationId`, optional `signal` | Without a signal, ends stdin; with `SIGTERM` or `SIGKILL`, signals the process group on non-Windows hosts; returns `closed` |
 
-An operation belongs to its authenticated connection and cannot be resumed by a new connection. IDs contain 1–128 letters, digits, underscores or hyphens. The current implementation permits eight simultaneous sessions per gateway, 128 KiB per write, reads of at most 32 Ki UTF-16 code units without splitting a surrogate pair, an 8 MiB buffered-output ceiling, and a 30-minute lifetime. Closed child output is retained for at most 60 seconds to be drained. These are transport limits, not promises of successful model execution.
+An operation belongs to its authenticated connection and cannot be resumed by a new connection. IDs contain 1–128 letters, digits, underscores or hyphens. The current implementation permits eight simultaneous sessions shared by Codex and Claude per gateway, 128 KiB per write, reads of at most 32 Ki UTF-16 code units without splitting a surrogate pair, an 8 MiB buffered-output ceiling, and a 30-minute lifetime. Closed child output is retained for at most 60 seconds to be drained. These are transport limits, not promises of successful model execution.
 
-The daemon discards stderr. Codex RPC requests and responses bypass ordinary operation journals and controller activity events so authentication payloads are not exposed there. Disconnect and gateway shutdown destroy their Codex sessions. This differs from ordinary journaled process work: do not use ordinary operation-ID replay as a Codex recovery mechanism.
+The daemon discards stderr. Codex and Claude RPC requests and responses bypass ordinary operation journals, controller activity events and gateway operation telemetry so authentication payloads are not exposed there. Disconnect and gateway shutdown destroy their native sessions. This differs from ordinary journaled process work: do not use ordinary operation-ID replay as a Codex recovery mechanism.
 
-Host metadata advertises `codex: { available, protocol: 1 }`. Availability means an executable was found, not that an account is authenticated. The controller surfaces sanitized `codex_transport_failed` errors rather than raw app-server/authentication diagnostics.
+Host metadata advertises separate `codex: { available, protocol: 1 }` and `claude: { available, protocol: 1 }` capabilities. Availability means an executable was found, not that an account is authenticated. The controller surfaces sanitized `codex_transport_failed` errors rather than raw app-server/authentication diagnostics.
+
+### Private Claude JSONL transport
+
+Claude uses the same authenticated connection-owned transport and shared session limits, with `claude.open`, `claude.write`, `claude.read` and `claude.close`. Read/write/close shapes match Codex; `claude.open` additionally receives a transient OAuth `token` and an exact validated argument list:
+
+```text
+-p --output-format stream-json --input-format stream-json --verbose
+--allowedTools Bash,Edit,Write,Read,Glob,Grep,NotebookEdit
+--permission-prompts none --model MODEL
+```
+
+Only an optional trailing `--resume SESSION_ID` is accepted beyond that contract. Arbitrary CLI flags, environment maps and permission-bypass options are not supported. Core supplies credentials privately; this is not a public HTTP endpoint or a tool for passing tokens in shell arguments. The child gets its token through `CLAUDE_CODE_OAUTH_TOKEN` after inherited Anthropic/Claude credential variables are removed. Its working directory must already exist and be absolute.
+
+Ownership binds both authenticated connection and runtime. A Codex method cannot read a Claude session, and reconnect does not restore either live transport. An accepted CLI-level resume ID is distinct from reconnecting a lost gateway process. Both native paths currently surface the sanitized error name `codex_transport_failed`, including Claude failures. Native minion tracing is Core-owned; gateway process/filesystem spans and Archive entries do not certify these private sessions.
 
 ## Source references
 

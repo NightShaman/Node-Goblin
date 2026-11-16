@@ -47,7 +47,7 @@ API clients should keep filters unchanged while following a cursor. Concurrent a
 
 ## Disconnect and cancellation
 
-A TCP/TLS disconnect rejects the controller's pending request, but does not automatically cancel host-side work. The gateway can continue executing and journal a completed result. Reconnection alone does not prove it is safe to repeat side effects.
+For ordinary process/filesystem operations, a TCP/TLS disconnect rejects the controller's pending request, but does not automatically cancel host-side work. The gateway can continue executing and journal a completed result. Reconnection alone does not prove it is safe to repeat side effects.
 
 Service stop/restart is different from a network disconnect. The CLI handles SIGINT/SIGTERM by marking the daemon stopping and requesting cancellation of active operations before stopping transport/telemetry; systemd also owns service-process cleanup. Drain work before applying configuration, updating, or unpairing. Neither a stop request nor an interrupted connection proves a side effect was undone.
 
@@ -91,15 +91,17 @@ Uninstall deliberately preserves configuration and state. Secure decommissioning
 
 ## Native Codex minion checks
 
-For Codex-specific failures, distinguish host capability from Burrow model configuration:
+These checks cover both Codex and Claude native minions. Distinguish host capability from Burrow model configuration:
 
 1. Confirm the intended Node Goblin target is approved, connected and assigned.
-2. Confirm Codex was installed on that execution host and is executable in the gateway service's environment. An interactive shell finding it does not establish the service's `PATH`.
-3. Check Burrow's native Codex minion settings and eligible OpenAI connection separately. Host capability does not prove account authentication.
-4. Ensure the selected workspace is an existing absolute directory accessible to the service account, and Codex state is writable.
-5. After a disconnect or service restart, treat the Codex process as terminated. Its private transport has no operation-journal replay; inspect the workspace for completed edits before starting replacement work.
+2. Confirm the selected Codex or Claude CLI was installed on that execution host and is executable in the gateway service's environment. An interactive shell finding it does not establish the service's `PATH`.
+3. Check Burrow's selected native harness and corresponding eligible OpenAI or Anthropic connection separately. Host capability does not prove account authentication.
+4. Ensure the selected workspace is an existing absolute directory accessible to the service account, and the selected CLI’s state is writable. Claude’s packaged-service HOME/config is under the gateway state directory, not root’s interactive profile.
+5. After a disconnect or service restart, treat either native CLI process as terminated. Its private transport has no operation-journal replay; inspect the workspace for completed edits before starting replacement work.
 
-Do not diagnose authentication by sending tokens through ordinary process commands, process journals, logs or chat. Keep private app-server protocol traffic on the authenticated Codex transport. A sanitized transport failure alone does not identify whether installation, workspace, process startup or protocol handling failed.
+Do not diagnose authentication by sending tokens through ordinary process commands, process journals, logs or chat. Keep private app-server/JSONL protocol traffic on the authenticated native transport. A sanitized transport failure alone does not identify whether installation, workspace, process startup or protocol handling failed.
+
+Successful CLI opt-ins are remembered and fetch latest again on subsequent package updates. If Claude provisioning fails, inspect whether its vendor installer or launcher verification failed; do not enable arbitrary dependency scripts as a workaround. A failed package update does not roll back an already upgraded CLI. See [installation](installation.md#optional-codex-cli-for-native-minions).
 
 ## Source references
 

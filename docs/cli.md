@@ -41,7 +41,7 @@ The JavaScript entry point does not parse the shell wrapper's subcommands or pro
 The repository-root `install.sh` downloads and verifies a Node Goblin release, then calls its package installer:
 
 ```text
-install.sh [--version YYYY.MM.DD[.N]] [--controller HOST:PORT] [--node-id ID] [--update]
+install.sh [--version YYYY.MM.DD[.N]] [--controller HOST:PORT] [--node-id ID] [--update] [--with-codex] [--with-claude]
 ```
 
 It requires root, `curl`, `tar`, and `sha256sum`. Version defaults to `latest`; controller and node ID must be supplied together and trigger configure/connect after installation. `NODE_GOBLIN_VERSION` selects a default version and `NODE_GOBLIN_REPOSITORY` overrides the release repository. Bootstrap snapshots can default to a different release authority. For public packages, pass `NODE_GOBLIN_REPOSITORY=GoblinKing-Burrow/Node-Goblin` to the root installer itself, for example `sudo env NODE_GOBLIN_REPOSITORY=GoblinKing-Burrow/Node-Goblin sh install.sh --update`. Setting it only on `curl` does not configure the installer. Use the official public repository unless you have explicitly reviewed another publisher. See [installation](installation.md#install-mini-node-goblin).
@@ -51,14 +51,16 @@ It requires root, `curl`, `tar`, and `sha256sum`. Version defaults to `latest`; 
 ## Package installer and uninstaller scripts
 
 ```text
-install.sh [--root DIRECTORY] [--source DIRECTORY] [--no-systemd] [--skip-account] [--restart]
-update.sh [--source DIRECTORY]
+install.sh [--root DIRECTORY] [--source DIRECTORY] [--no-systemd] [--skip-account] [--restart] [--with-codex] [--with-claude]
+update.sh [--source DIRECTORY] [--with-codex] [--with-claude]
 uninstall.sh [--root DIRECTORY] [--no-systemd]
 ```
 
 `deploy/update.sh` requires an existing configured installation and invokes the transactional installer with `--restart`. It stops and verifies the old service before replacing files, checks the restarted service, and attempts package/service rollback on failure. Active state is not controller/execution verification.
 
 A non-root staging installation must use `--root` and `--skip-account`. `--source` identifies the package's gateway-root source directory. Use `--no-systemd` for staging; production use should preserve service lifecycle management.
+
+Optional `--with-codex` and `--with-claude` provision the corresponding latest vendor CLI. Successful opt-ins are retained across future package updates, which fetch latest again without repeating flags. They require npm and are not part of the default host installation. CLI provisioning is outside Node Goblin package rollback; see [native minion setup](installation.md#optional-codex-cli-for-native-minions).
 
 ## Release tools
 

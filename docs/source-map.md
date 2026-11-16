@@ -1,5 +1,10 @@
 # Source and coverage
 
+## Full reconciliation checkpoint — 15 November 2026
+
+All 14 consolidated guides were statically reconciled against implementation **2026.11.15.3**, source `75d29eddf675e2274c2c8017c7a52fe8cee7ddaf`, including unchanged pages. Review covered installer/update lifecycle and optional CLI provisioning; pairing and TLS trust; process/filesystem routing and bounds; native Codex/Claude transport and credential handling; telemetry, Archive, configuration, HTTP APIs and recovery. Native Claude setup and protocol, retained latest-CLI opt-ins, rollback boundaries, discovery and disconnect behavior were corrected. Source and test declarations were inspected, not executed. No application tests, live service/provider calls, runtime changes or security-setting changes were performed. This is documentation reconciliation, not runtime certification or a security audit. Public promotion and installed capabilities must be verified separately.
+
+
 ## Ordinary delta checkpoint — 10 November 2026
 
 Source **2026.11.09**, commit `913af49152570235a28001965227bc43997f0cef`, was compared with the previous source baseline `c2a12e4e8a2ed141156f08cdfc8d62ebe1ae881f`. Changes are release metadata, README examples and a bootstrap-test assertion; no runtime implementation changed. Public installation/update examples already pass `NODE_GOBLIN_REPOSITORY=GoblinKing-Burrow/Node-Goblin` to the root installer and remain valid. Development-publisher examples are not part of this public guide. Unchanged contracts inherit the 8 November full review. No application tests or service updates were run; source version does not prove public package availability.
@@ -48,7 +53,7 @@ Burrow owns the mod lifecycle, authenticated API hosting, agent assignments, and
 
 Operations may continue after a transport failure. Replay and retention are bounded, and a new operation ID can repeat a side effect. Follow the recovery instructions before retrying uncertain work.
 
-Public release versions use `YYYY.MM.DD`. The wire protocol version is a separate compatibility identifier. Check the installed package and host status rather than treating a docs date as proof of what a machine is running.
+Release versions use a date-based `YYYY.MM.DD` line, with numeric patch suffixes when needed (for example, `2026.11.15.3`). The wire protocol version is a separate compatibility identifier. Check the installed package and host status rather than treating a docs date as proof of what a machine is running.
 
 ## Review checkpoint: 21 October 2026
 
