@@ -128,7 +128,7 @@ test('Gemini validates headless contract, isolates API-key auth and enforces run
     invocation = { args, options }; return spawn(exe, ['-e', 'process.stdin.resume()'], options);
   } });
   const owner = { connectionId: 'gemini-owner' };
-  const args = ['-p', 'Private task\nwith context', '--output-format', 'stream-json', '--model', 'gemini-3-pro-preview', '--approval-mode', 'yolo', '--resume', 'native-session'];
+  const args = ['-p', 'Private task\nwith context', '--output-format', 'stream-json', '--model', 'gemini-3-pro-preview', '--approval-mode', 'yolo', '--skip-trust', '--resume', 'native-session'];
   const open = { operationId: 'gemini-test', cwd: state, args, apiKey: 'selected-test-key' };
   try {
     for (const invalid of [{ args: [...args, '--yolo'] }, { args: ['--help'] }, { args: args.map((v, i) => i === 7 ? '../bad' : v) },
@@ -156,4 +156,25 @@ test('Gemini validates headless contract, isolates API-key auth and enforces run
     Object.assign(process.env, saved);
     fs.rmSync(state, { recursive: true, force: true });
   }
+});
+
+test('Gemini private diagnostics redact chunk-split keys and omit structured payloads', async () => {
+  const sessions = new CodexProcesses({ geminiExecutable: () => process.execPath,
+    spawnProcess: (exe, args, options) => spawn(exe, ['-e', `process.stderr.write('bad selected-'); setTimeout(() => { process.stderr.write('test-key\\n{"tool_result":"private payload"}\\n'); process.exitCode = 17; }, 20)`], options) });
+  const owner = { connectionId: 'diagnostic-owner' };
+  try {
+    await sessions.handle('gemini.open', { operationId: 'diagnostic', cwd: process.cwd(), apiKey: 'selected-test-key',
+      args: ['-p', 'task', '--output-format', 'stream-json', '--model', 'gemini-test', '--approval-mode', 'yolo', '--skip-trust'] }, owner);
+    let stderr = '', result;
+    for (let i = 0; i < 100; i++) {
+      result = await sessions.handle('gemini.read', { operationId: 'diagnostic' }, owner);
+      stderr += result.stderr;
+      if (result.done) break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(result.done, true);
+    assert.equal(result.exitCode, 17);
+    assert.match(stderr, /bad \[redacted\]/);
+    assert.doesNotMatch(stderr, /selected-test-key|private payload|tool_result/);
+  } finally { sessions.closeAll(); }
 });

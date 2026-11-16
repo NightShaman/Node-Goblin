@@ -31,12 +31,13 @@ export function validateClaudeInvocation({ args, token } = {}) {
 
 // Only the headless stream-json contract; credentials never become CLI flags.
 export function validateGeminiInvocation({ args, apiKey } = {}) {
-  if (!Array.isArray(args) || ![8, 10].includes(args.length)
+  const trust = args?.[8] === '--skip-trust' ? 1 : 0;
+  if (!Array.isArray(args) || ![8 + trust, 10 + trust].includes(args.length)
     || args[0] !== '-p' || args[2] !== '--output-format' || args[3] !== 'stream-json'
     || args[4] !== '--model' || args[6] !== '--approval-mode' || args[7] !== 'yolo'
     || typeof args[5] !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,239}$/.test(args[5])
     || typeof args[1] !== 'string' || !args[1].length || Buffer.byteLength(args[1]) > 96 * 1024 || args[1].includes('\0')
-    || (args.length === 10 && (args[8] !== '--resume' || typeof args[9] !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(args[9])))
+    || (args.length === 10 + trust && (args[8 + trust] !== '--resume' || typeof args[9 + trust] !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(args[9 + trust])))
     || typeof apiKey !== 'string' || !apiKey.length || apiKey.length > 16384 || /[\x00-\x20\x7f]/.test(apiKey)) {
     throw new Error('gemini_invocation_invalid');
   }
@@ -44,7 +45,8 @@ export function validateGeminiInvocation({ args, apiKey } = {}) {
 }
 
 // Memory-only, connection-owned interactive IPC. No journal, output events,
-// telemetry, stderr, or diagnostic strings may cross this boundary.
+// telemetry or raw diagnostics. Gemini returns bounded redacted diagnostic text
+// only through this private authenticated RPC, never public evidence.
 export class CodexProcesses {
   constructor({ executable = () => codexExecutable(), claudeExecutable: resolveClaude = () => claudeExecutable(), geminiExecutable: resolveGemini = () => geminiExecutable(), spawnProcess = spawn } = {}) {
     this.executable = executable; this.claudeExecutable = resolveClaude; this.geminiExecutable = resolveGemini; this.spawnProcess = spawnProcess; this.sessions = new Map();
@@ -102,15 +104,37 @@ export class CodexProcesses {
       });
       entry = { child, runtime, owner: owner.connectionId, data: '', bytes: 0, done: false, decoder: new StringDecoder('utf8') };
       this.sessions.set(id, entry);
-      entry.timer = setTimeout(() => this.destroy(id), 30 * 60_000); entry.timer.unref?.();
+      if (runtime !== 'gemini') { entry.timer = setTimeout(() => this.destroy(id), 30 * 60_000); entry.timer.unref?.(); }
       child.stdout.on('data', chunk => {
         entry.data += entry.decoder.write(chunk); entry.bytes = Buffer.byteLength(entry.data);
         if (entry.bytes > 8 * 1024 * 1024) this.destroy(id);
       });
-      child.stderr.on('data', () => {});
+      // Assemble complete lines before redacting so chunk-split keys cannot leak.
+      // Drop oversized/structured tool lines rather than forwarding raw payloads.
+      let diagnosticLine = '', droppingDiagnostic = false;
+      const diagnosticDecoder = new StringDecoder('utf8');
+      const sanitize = value => String(value || '').split(params.apiKey || '\0').join('[redacted]')
+        .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 2000);
+      const retainLine = () => {
+        if (!droppingDiagnostic && !/[{}]|^\s*[\[]|tool[_ -]?(use|result|payload)|parameters\s*[:=]/i.test(diagnosticLine)) {
+          entry.stderr = ((entry.stderr || '') + sanitize(diagnosticLine) + '\n').slice(-8000);
+        }
+        diagnosticLine = ''; droppingDiagnostic = false;
+      };
+      child.stderr.on('data', chunk => {
+        if (runtime !== 'gemini') return;
+        for (const part of diagnosticDecoder.write(chunk).split(/(?<=\n)/)) {
+          if (!droppingDiagnostic) diagnosticLine += part;
+          if (diagnosticLine.length > 32768) { diagnosticLine = ''; droppingDiagnostic = true; }
+          if (part.endsWith('\n')) retainLine();
+        }
+      });
       for (const stream of [child.stdin, child.stdout, child.stderr]) stream.on('error', () => this.destroy(id));
-      child.on('error', () => this.destroy(id));
-      child.on('close', (code, signal) => { entry.done = true; entry.exitCode = code; entry.signal = signal; clearTimeout(entry.timer); entry.timer = setTimeout(() => this.destroy(id), 60_000); entry.timer.unref?.(); });
+      child.on('error', error => {
+        if (runtime === 'gemini') entry.processError = sanitize(error?.message);
+        else this.destroy(id);
+      });
+      child.on('close', (code, signal) => { if (runtime === 'gemini') { diagnosticLine += diagnosticDecoder.end(); retainLine(); } entry.done = true; entry.exitCode = code; entry.signal = signal; clearTimeout(entry.timer); entry.timer = setTimeout(() => this.destroy(id), 60_000); entry.timer.unref?.(); });
       return { operationId: id };
     }
     if (!entry) {
@@ -127,9 +151,11 @@ export class CodexProcesses {
       let end = Math.min(entry.data.length, 32 * 1024);
       if (end < entry.data.length && /[\uD800-\uDBFF]/.test(entry.data[end - 1])) end--;
       const data = entry.data.slice(0, end); entry.data = entry.data.slice(data.length);
+      const stderr = runtime === 'gemini' ? entry.stderr || '' : '';
+      entry.stderr = '';
       const done = entry.done && !entry.data;
       if (done) { clearTimeout(entry.timer); this.sessions.delete(id); }
-      return { operationId: id, data, done, ...(done ? { exitCode: entry.exitCode, signal: entry.signal } : {}) };
+      return { operationId: id, data, done, ...(runtime === 'gemini' ? { stderr, ...(entry.processError ? { processError: entry.processError } : {}) } : {}), ...(done ? { exitCode: entry.exitCode, signal: entry.signal } : {}) };
     }
     if (method === 'codex.close') {
       if (params.signal != null && !['SIGTERM', 'SIGKILL'].includes(params.signal)) throw new Error('codex_signal_invalid');
