@@ -60,12 +60,16 @@ test('daemon hello refreshes current OS network information on each request', as
 test('runtime capabilities preserve only availability and protocol at controller boundary', async () => {
   const { normalizeHostMetadata } = await import('./lib/host-metadata.mjs');
   const host = normalizeHostMetadata({ hostname: 'node', platform: 'linux', addresses: [],
+    gemini: { protocol: 1, available: true, apiKey: 'must-not-survive' },
     claude: { protocol: 1, available: true, token: 'must-not-survive' }, codex: { protocol: 1, available: 'truthy' } });
+  assert.deepEqual(host.gemini, { available: true, protocol: 1 });
   assert.deepEqual(host.claude, { available: true, protocol: 1 });
   assert.deepEqual(host.codex, { available: false, protocol: 1 });
   const responses = [];
   const daemon = new GatewayDaemon({ telemetry: { async shutdown() {} } });
   await daemon.handle({ method: 'hello' }, value => responses.push(value));
+  assert.equal(responses[0].result.host.gemini.protocol, 1);
+  assert.equal(typeof responses[0].result.host.gemini.available, 'boolean');
   assert.equal(responses[0].result.host.claude.protocol, 1);
   assert.equal(typeof responses[0].result.host.claude.available, 'boolean');
 });

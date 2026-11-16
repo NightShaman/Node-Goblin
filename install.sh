@@ -10,10 +10,11 @@ TMP=
 UPDATE=false
 WITH_CODEX=false
 WITH_CLAUDE=false
+WITH_GEMINI=false
 
 usage() {
   cat >&2 <<'EOF'
-usage: install.sh [--version YYYY.MM.DD[.N]] [--controller HOST:PORT] [--node-id ID] [--update] [--with-codex] [--with-claude]
+usage: install.sh [--version YYYY.MM.DD[.N]] [--controller HOST:PORT] [--node-id ID] [--update] [--with-codex] [--with-claude] [--with-gemini]
 
 Installs the latest calendar-versioned Mini Node Goblin release by default.
 Controller address and node ID are non-secret and may be supplied now or
@@ -28,6 +29,7 @@ while [ "$#" -gt 0 ]; do
     --update) UPDATE=true; shift ;;
     --with-codex) WITH_CODEX=true; shift ;;
     --with-claude) WITH_CLAUDE=true; shift ;;
+    --with-gemini) WITH_GEMINI=true; shift ;;
     --version) VERSION=$2; shift 2 ;;
     --controller) CONTROLLER=$2; shift 2 ;;
     --node-id) NODE_ID=$2; shift 2 ;;
@@ -71,6 +73,7 @@ tar -xzf "$TMP/$NAME.tar.gz" -C "$TMP"
 set --
 [ "$WITH_CODEX" = false ] || set -- "$@" --with-codex
 [ "$WITH_CLAUDE" = false ] || set -- "$@" --with-claude
+[ "$WITH_GEMINI" = false ] || set -- "$@" --with-gemini
 if [ "$UPDATE" = true ]; then
   "$TMP/$NAME/deploy/update.sh" --source "$TMP/$NAME" "$@"
   exit 0

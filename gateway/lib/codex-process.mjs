@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { statSync, accessSync, mkdirSync, constants } from 'node:fs';
+import { statSync, accessSync, mkdirSync, writeFileSync, constants } from 'node:fs';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
@@ -14,6 +14,7 @@ function findExecutable(env, override, name) {
 
 export function codexExecutable(env = process.env) { return findExecutable(env, env.BURROW_CODEX_EXECUTABLE, 'codex'); }
 export function claudeExecutable(env = process.env) { return findExecutable(env, env.BURROW_CLAUDE_EXECUTABLE, 'claude'); }
+export function geminiExecutable(env = process.env) { return findExecutable(env, env.BURROW_GEMINI_EXECUTABLE, 'gemini'); }
 
 // Accept only the headless JSONL contract, never arbitrary CLI flags or env.
 export function validateClaudeInvocation({ args, token } = {}) {
@@ -28,17 +29,31 @@ export function validateClaudeInvocation({ args, token } = {}) {
   return [...args];
 }
 
+// Only the headless stream-json contract; credentials never become CLI flags.
+export function validateGeminiInvocation({ args, apiKey } = {}) {
+  if (!Array.isArray(args) || ![8, 10].includes(args.length)
+    || args[0] !== '-p' || args[2] !== '--output-format' || args[3] !== 'stream-json'
+    || args[4] !== '--model' || args[6] !== '--approval-mode' || args[7] !== 'yolo'
+    || typeof args[5] !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,239}$/.test(args[5])
+    || typeof args[1] !== 'string' || !args[1].length || Buffer.byteLength(args[1]) > 96 * 1024 || args[1].includes('\0')
+    || (args.length === 10 && (args[8] !== '--resume' || typeof args[9] !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(args[9])))
+    || typeof apiKey !== 'string' || !apiKey.length || apiKey.length > 16384 || /[\x00-\x20\x7f]/.test(apiKey)) {
+    throw new Error('gemini_invocation_invalid');
+  }
+  return [...args];
+}
+
 // Memory-only, connection-owned interactive IPC. No journal, output events,
 // telemetry, stderr, or diagnostic strings may cross this boundary.
 export class CodexProcesses {
-  constructor({ executable = () => codexExecutable(), claudeExecutable: resolveClaude = () => claudeExecutable(), spawnProcess = spawn } = {}) {
-    this.executable = executable; this.claudeExecutable = resolveClaude; this.spawnProcess = spawnProcess; this.sessions = new Map();
+  constructor({ executable = () => codexExecutable(), claudeExecutable: resolveClaude = () => claudeExecutable(), geminiExecutable: resolveGemini = () => geminiExecutable(), spawnProcess = spawn } = {}) {
+    this.executable = executable; this.claudeExecutable = resolveClaude; this.geminiExecutable = resolveGemini; this.spawnProcess = spawnProcess; this.sessions = new Map();
   }
   async handle(method, params, owner) {
     if (!owner?.connectionId) throw new Error('codex_authenticated_transport_required');
-    const runtime = method.startsWith('claude.') ? 'claude' : 'codex';
-    if (!['codex', 'claude'].some(name => ['open', 'write', 'read', 'close'].some(action => method === `${name}.${action}`))) throw new Error('codex_method_invalid');
-    method = method.replace(/^claude\./, 'codex.');
+    const runtime = method.split('.')[0];
+    if (!['codex', 'claude', 'gemini'].some(name => ['open', 'write', 'read', 'close'].some(action => method === `${name}.${action}`))) throw new Error('codex_method_invalid');
+    method = method.replace(/^(claude|gemini)\./, 'codex.');
     const id = params.operationId;
     if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(id)) throw new Error('codex_operation_invalid');
     let entry = this.sessions.get(id);
@@ -47,8 +62,8 @@ export class CodexProcesses {
       if (entry || this.sessions.size >= 8) throw new Error('codex_session_limit_or_conflict');
       if (typeof params.cwd !== 'string' || params.cwd.length > 4096 || !path.isAbsolute(params.cwd)
         || !statSync(params.cwd).isDirectory()) throw new Error('codex_cwd_invalid');
-      const args = runtime === 'claude' ? validateClaudeInvocation(params) : ['app-server', '--listen', 'stdio://'];
-      const executable = runtime === 'claude' ? this.claudeExecutable() : this.executable();
+      const args = runtime === 'claude' ? validateClaudeInvocation(params) : runtime === 'gemini' ? validateGeminiInvocation(params) : ['app-server', '--listen', 'stdio://'];
+      const executable = runtime === 'claude' ? this.claudeExecutable() : runtime === 'gemini' ? this.geminiExecutable() : this.executable();
       if (!executable) throw new Error('codex_unavailable');
       const codexHome = process.env.CODEX_HOME || (process.env.BURROW_GATEWAY_STATE_DIR ? path.join(process.env.BURROW_GATEWAY_STATE_DIR, 'codex') : null);
       if (runtime === 'codex' && codexHome) mkdirSync(codexHome, { recursive: true, mode: 0o700 });
@@ -64,6 +79,23 @@ export class CodexProcesses {
           mkdirSync(env.CLAUDE_CONFIG_DIR, { recursive: true, mode: 0o700 });
         }
         env.CLAUDE_CODE_OAUTH_TOKEN = params.token;
+      } else if (runtime === 'gemini') {
+        env = { ...process.env };
+        // Do not let ambient OAuth, Vertex or service-account auth override the
+        // selected API key. This environment is private to this child only.
+        for (const key of Object.keys(env)) if (/^(GEMINI_|GOOGLE_|GCLOUD_|CLOUDSDK_)/.test(key)) delete env[key];
+        if (process.env.BURROW_GATEWAY_STATE_DIR) {
+          env.HOME = path.join(process.env.BURROW_GATEWAY_STATE_DIR, 'gemini');
+          mkdirSync(path.join(env.HOME, '.gemini'), { recursive: true, mode: 0o700 });
+        }
+        env.GEMINI_API_KEY = params.apiKey;
+        // System scope wins over workspace and existing interactive auth settings.
+        if (env.HOME) {
+          const settingsPath = path.join(env.HOME, '.gemini', 'burrow-system-settings.json');
+          mkdirSync(path.dirname(settingsPath), { recursive: true, mode: 0o700 });
+          writeFileSync(settingsPath, JSON.stringify({ security: { auth: { selectedType: 'gemini-api-key', enforcedType: 'gemini-api-key', useExternal: false } } }), { mode: 0o600 });
+          env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = settingsPath;
+        }
       } else if (codexHome) env = { ...process.env, CODEX_HOME: codexHome };
       const child = this.spawnProcess(executable, args, {
         cwd: params.cwd, ...(env ? { env } : {}), stdio: ['pipe', 'pipe', 'pipe'], shell: false, detached: process.platform !== 'win32',

@@ -12,11 +12,12 @@ SKIP_ACCOUNT=false
 RESTART=false
 WITH_CODEX=false
 WITH_CLAUDE=false
+WITH_GEMINI=false
 SERVICE=burrow-host-gateway.service
 SYSTEMCTL_OVERRIDE=${SYSTEMCTL:-}
 SYSTEMCTL=${SYSTEMCTL:-systemctl}
 
-usage() { echo "usage: $0 [--root DIRECTORY] [--source DIRECTORY] [--no-systemd] [--skip-account] [--restart] [--with-codex] [--with-claude]" >&2; }
+usage() { echo "usage: $0 [--root DIRECTORY] [--source DIRECTORY] [--no-systemd] [--skip-account] [--restart] [--with-codex] [--with-claude] [--with-gemini]" >&2; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --root) ROOT=$2; shift 2 ;;
@@ -26,6 +27,7 @@ while [ "$#" -gt 0 ]; do
     --restart) RESTART=true; shift ;;
     --with-codex) WITH_CODEX=true; shift ;;
     --with-claude) WITH_CLAUDE=true; shift ;;
+    --with-gemini) WITH_GEMINI=true; shift ;;
     *) usage; exit 2 ;;
   esac
 done
@@ -52,7 +54,8 @@ validate_package "$SOURCE"
 # Successful opt-ins belong to the package transaction and survive updates.
 [ ! -f "$(root_path /opt/burrow-host-gateway/.with-codex)" ] || WITH_CODEX=true
 [ ! -f "$(root_path /opt/burrow-host-gateway/.with-claude)" ] || WITH_CLAUDE=true
-if [ "$WITH_CODEX" = true ] || [ "$WITH_CLAUDE" = true ]; then
+[ ! -f "$(root_path /opt/burrow-host-gateway/.with-gemini)" ] || WITH_GEMINI=true
+if [ "$WITH_CODEX" = true ] || [ "$WITH_CLAUDE" = true ] || [ "$WITH_GEMINI" = true ]; then
   command -v npm >/dev/null || { echo "npm required for opted-in CLI provisioning" >&2; exit 1; }
 fi
 . "$SOURCE/deploy/service-common.sh"
@@ -111,6 +114,12 @@ if [ "$WITH_CLAUDE" = true ]; then
   # The vendor installer can return zero while leaving a placeholder launcher
   # (e.g. missing native optional dependency). Verify this prefix, never PATH.
   "$CLAUDE_PREFIX/bin/claude" --version || { echo "Installed Claude launcher verification failed" >&2; exit 1; }
+fi
+if [ "$WITH_GEMINI" = true ]; then
+  GEMINI_PREFIX=$(root_path /usr/local)
+  mkdir -p "$GEMINI_PREFIX"
+  npm install --global --prefix "$GEMINI_PREFIX" --no-audit --no-fund @google/gemini-cli@latest
+  "$GEMINI_PREFIX/bin/gemini" --version || { echo "Installed Gemini launcher verification failed" >&2; exit 1; }
 fi
 INSTALL_DIR=$(root_path /opt/burrow-host-gateway)
 CONFIG_DIR=$(root_path /etc/burrow-host-gateway)
@@ -173,6 +182,7 @@ trap 'exit 1' HUP INT TERM
 validate_package "$tmp"
 [ "$WITH_CODEX" = false ] || touch "$tmp/.with-codex"
 [ "$WITH_CLAUDE" = false ] || touch "$tmp/.with-claude"
+[ "$WITH_GEMINI" = false ] || touch "$tmp/.with-gemini"
 find "$tmp" -type d -exec chmod 0755 {} +
 find "$tmp" -type f -exec chmod 0644 {} +
 chmod 0755 "$tmp/cli.mjs" "$tmp/node-goblin.mjs" "$tmp/deploy/"*.sh "$tmp/deploy/node-goblin"

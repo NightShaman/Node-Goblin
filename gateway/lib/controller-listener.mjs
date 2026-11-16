@@ -198,7 +198,7 @@ class GatewayConnection extends EventEmitter {
     }
     if (message.type === 'response' && message.requestId != null) {
       const pending = this.pendingRequests.get(message.requestId);
-      const privateCodex = /^(codex|claude)\./.test(pending?.method || '');
+      const privateCodex = /^(codex|claude|gemini)\./.test(pending?.method || '');
       if (pending) {
         this.pendingRequests.delete(message.requestId);
         const operationId = pending.operationId;
@@ -213,7 +213,7 @@ class GatewayConnection extends EventEmitter {
     }
     if (message.type === 'error' && message.requestId != null) {
       const pending = this.pendingRequests.get(message.requestId);
-      const privateCodex = /^(codex|claude)\./.test(pending?.method || '');
+      const privateCodex = /^(codex|claude|gemini)\./.test(pending?.method || '');
       if (pending) {
         this.pendingRequests.delete(message.requestId);
         this.listener.recordResponse(this.gatewayId, pending, message);
@@ -434,7 +434,7 @@ export class GatewayControllerListener extends EventEmitter {
   }
 
   recordDispatch(gatewayId, pending) {
-    if (/^(codex|claude)\./.test(pending.method) || !pending.operationId || pending.method === 'cancel' || this.liveGateway(gatewayId)?.activeOperationRequests.has(pending.operationId)) return;
+    if (/^(codex|claude|gemini)\./.test(pending.method) || !pending.operationId || pending.method === 'cancel' || this.liveGateway(gatewayId)?.activeOperationRequests.has(pending.operationId)) return;
     this.putActivity({ gatewayId, operationId: pending.operationId, kind: pending.method === 'filesystem.execute' ? 'filesystem' : 'process', state: 'dispatching', replay: false, reconnectRequired: false, terminalOutcome: null, startedAt: pending.startedAt, endedAt: null, durationMs: null });
   }
 
@@ -444,7 +444,7 @@ export class GatewayControllerListener extends EventEmitter {
   }
 
   recordResponse(gatewayId, pending, message) {
-    if (/^(codex|claude)\./.test(pending?.method || '') || !pending?.operationId || pending.method === 'cancel'
+    if (/^(codex|claude|gemini)\./.test(pending?.method || '') || !pending?.operationId || pending.method === 'cancel'
       || (this.liveGateway(gatewayId)?.activeOperationRequests.has(pending.operationId) && this.liveGateway(gatewayId)?.activeOperationRequests.get(pending.operationId) !== pending.requestId)) return;
     const endedAt = new Date().toISOString();
     const outcome = operationOutcome(message);
@@ -452,7 +452,7 @@ export class GatewayControllerListener extends EventEmitter {
   }
 
   recordDisconnected(gatewayId, pending) {
-    if (/^(codex|claude)\./.test(pending?.method || '') || !pending?.operationId || pending.method === 'cancel'
+    if (/^(codex|claude|gemini)\./.test(pending?.method || '') || !pending?.operationId || pending.method === 'cancel'
       || (this.liveGateway(gatewayId)?.activeOperationRequests.has(pending.operationId) && this.liveGateway(gatewayId)?.activeOperationRequests.get(pending.operationId) !== pending.requestId)) return;
     this.putActivity({ ...(this.activity.find((entry) => entry.gatewayId === gatewayId && entry.operationId === pending.operationId) || {}), gatewayId, operationId: pending.operationId, kind: pending.method === 'filesystem.execute' ? 'filesystem' : 'process', state: 'interrupted', replay: false, reconnectRequired: true, terminalOutcome: null, startedAt: pending.startedAt, endedAt: null, durationMs: null });
   }
@@ -469,7 +469,7 @@ export class GatewayControllerListener extends EventEmitter {
   }
 
   dispatchCodex(gatewayId, method, params = {}) {
-    if (!['codex.open', 'codex.write', 'codex.read', 'codex.close', 'claude.open', 'claude.write', 'claude.read', 'claude.close'].includes(method)) throw new Error('codex_method_invalid');
+    if (!['codex.open', 'codex.write', 'codex.read', 'codex.close', 'claude.open', 'claude.write', 'claude.read', 'claude.close', 'gemini.open', 'gemini.write', 'gemini.read', 'gemini.close'].includes(method)) throw new Error('codex_method_invalid');
     const connection = this.liveGateway(gatewayId);
     if (!connection) throw new Error('gateway_not_connected');
     return connection.dispatch(method, params);

@@ -55,18 +55,23 @@ test('CLI discovery accepts absolute executable paths only and standard system f
   const fs = await import('node:fs');
   const os = await import('node:os');
   const path = await import('node:path');
-  const { claudeExecutable, codexExecutable } = await import('./lib/codex-process.mjs');
+  const { claudeExecutable, codexExecutable, geminiExecutable } = await import('./lib/codex-process.mjs');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-discovery-'));
   try {
     const cli = path.join(dir, 'claude');
     fs.writeFileSync(cli, '#!/bin/sh\n', { mode: 0o755 });
     assert.equal(claudeExecutable({ PATH: dir }), cli);
+    const gemini = path.join(dir, 'gemini');
+    fs.writeFileSync(gemini, '#!/bin/sh\n', { mode: 0o755 });
+    assert.equal(geminiExecutable({ PATH: dir }), gemini);
+    assert.equal(geminiExecutable({ BURROW_GEMINI_EXECUTABLE: gemini }), gemini);
+    assert.equal(geminiExecutable({ PATH: dir, BURROW_GEMINI_EXECUTABLE: './gemini' }), null);
     assert.equal(claudeExecutable({ PATH: '', BURROW_CLAUDE_EXECUTABLE: cli }), cli);
     assert.equal(claudeExecutable({ PATH: dir, BURROW_CLAUDE_EXECUTABLE: './claude' }), null);
     fs.chmodSync(cli, 0o644);
     assert.equal(claudeExecutable({ BURROW_CLAUDE_EXECUTABLE: cli }), null);
     assert.equal(codexExecutable({ BURROW_CODEX_EXECUTABLE: dir }), null);
-    for (const [name, resolve] of [['claude', claudeExecutable], ['codex', codexExecutable]]) {
+    for (const [name, resolve] of [['claude', claudeExecutable], ['codex', codexExecutable], ['gemini', geminiExecutable]]) {
       const expected = ['/usr/local/bin', '/usr/bin', '/bin'].map(dir => path.join(dir, name)).find(file => {
         try { fs.accessSync(file, fs.constants.X_OK); return fs.statSync(file).isFile(); } catch { return false; }
       }) || null;
@@ -109,5 +114,46 @@ test('Claude unattended contract requires coding permissions, rejects drift, and
     args.map((a, i) => i === 7 ? 'Read' : a), args.map((a, i) => i === 9 ? 'host' : a),
     [...args, '--dangerously-skip-permissions'], [...args, '--resume', '../bad']]) {
     assert.throws(() => validateClaudeInvocation({ args: bad, token }), /claude_invocation_invalid/);
+  }
+});
+
+test('Gemini validates headless contract, isolates API-key auth and enforces runtime ownership', async () => {
+  const fs = await import('node:fs'), os = await import('node:os'), path = await import('node:path');
+  const state = fs.mkdtempSync(path.join(os.tmpdir(), 'gemini-service-home-'));
+  const saved = { ...process.env };
+  Object.assign(process.env, { BURROW_GATEWAY_STATE_DIR: state, GOOGLE_API_KEY: 'ambient', GOOGLE_APPLICATION_CREDENTIALS: '/bad',
+    GOOGLE_GENAI_USE_VERTEXAI: 'true', GEMINI_CLI_USE_COMPUTE_ADC: 'true', GEMINI_API_KEY: 'ambient-gemini' });
+  let invocation;
+  const sessions = new CodexProcesses({ geminiExecutable: () => process.execPath, spawnProcess: (exe, args, options) => {
+    invocation = { args, options }; return spawn(exe, ['-e', 'process.stdin.resume()'], options);
+  } });
+  const owner = { connectionId: 'gemini-owner' };
+  const args = ['-p', 'Private task\nwith context', '--output-format', 'stream-json', '--model', 'gemini-3-pro-preview', '--approval-mode', 'yolo', '--resume', 'native-session'];
+  const open = { operationId: 'gemini-test', cwd: state, args, apiKey: 'selected-test-key' };
+  try {
+    for (const invalid of [{ args: [...args, '--yolo'] }, { args: ['--help'] }, { args: args.map((v, i) => i === 7 ? '../bad' : v) },
+      { apiKey: '' }, { apiKey: 'bad\nkey' }, { cwd: 'relative' }]) {
+      await assert.rejects(sessions.handle('gemini.open', { ...open, ...invalid }, owner));
+    }
+    assert.equal(invocation, undefined);
+    await assert.rejects(sessions.handle('gemini.open', open, null), /authenticated/);
+    await sessions.handle('gemini.open', open, owner);
+    assert.deepEqual(invocation.args, args);
+    assert.equal(invocation.options.env.GEMINI_API_KEY, open.apiKey);
+    for (const key of ['GOOGLE_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'GOOGLE_GENAI_USE_VERTEXAI', 'GEMINI_CLI_USE_COMPUTE_ADC']) assert.equal(invocation.options.env[key], undefined);
+    assert.equal(process.env.GEMINI_API_KEY, 'ambient-gemini');
+    assert.equal(invocation.options.env.HOME, path.join(state, 'gemini'));
+    assert.equal(fs.statSync(path.join(state, 'gemini/.gemini')).mode & 0o777, 0o700);
+    assert.equal(invocation.options.shell, false);
+    assert.equal(JSON.stringify(invocation.args).includes(open.apiKey), false);
+    assert.equal(JSON.stringify([...sessions.sessions.values()].map(({ child, timer, ...value }) => value)).includes(open.apiKey), false);
+    await assert.rejects(sessions.handle('claude.read', { operationId: open.operationId }, owner), /owner/);
+    await assert.rejects(sessions.handle('gemini.read', { operationId: open.operationId }, { connectionId: 'other' }), /owner/);
+    await sessions.handle('gemini.close', { operationId: open.operationId, signal: 'SIGTERM' }, owner);
+  } finally {
+    sessions.closeAll();
+    for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+    Object.assign(process.env, saved);
+    fs.rmSync(state, { recursive: true, force: true });
   }
 });

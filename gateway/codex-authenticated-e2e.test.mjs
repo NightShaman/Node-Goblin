@@ -53,7 +53,7 @@ class PairedTlsServer extends EventEmitter {
 }
 
 
-for (const runtime of ['codex', 'claude']) test(`authenticated ${runtime} RPC keeps OAuth bytes out of events journals and correlations`, async () => {
+for (const runtime of ['codex', 'claude', 'gemini']) test(`authenticated ${runtime} RPC keeps OAuth bytes out of events journals and correlations`, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-codex-e2e-'));
   let tlsServer;
   const listener = new GatewayControllerListener({ gateways: [{ gatewayId: 'gateway-1', controllerId: 'controller', secret: 'shared-secret' }],
@@ -62,6 +62,7 @@ for (const runtime of ['codex', 'claude']) test(`authenticated ${runtime} RPC ke
   const daemon = new GatewayDaemon({ journal: new OperationJournal({ filePath: journalPath }) });
   daemon.codex.executable = () => process.execPath;
   daemon.codex.claudeExecutable = () => process.execPath;
+  daemon.codex.geminiExecutable = () => process.execPath;
   daemon.codex.spawnProcess = (exe, args, options) => spawn(exe, ['-e', "process.stdin.pipe(process.stdout);process.stderr.write('stderr-secret')"], options);
   const transport = new OutboundGatewayTransport({ host: 'controller.test', port: 7443, gatewayId: 'gateway-1', stateDir: path.join(root, 'trust'),
     enrollmentToken: 'shared-secret', ca: 'test-ca', daemon, tlsConnect: () => tlsServer.connect() });
@@ -71,12 +72,12 @@ for (const runtime of ['codex', 'claude']) test(`authenticated ${runtime} RPC ke
   const rpc = (method, params = {}) => controller.codexRpc({ targetId: 'gateway-1', method: `${runtime}.${method}`, params: { operationId: 'codex-e2e', ...params } });
   try {
     transport.start(); await once(transport, 'authenticated');
-    await rpc('open', { cwd: root, ...(runtime === 'claude' ? { args: ['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose', '--allowedTools', 'Bash,Edit,Write,Read,Glob,Grep,NotebookEdit', '--permission-prompts', 'none', '--model', 'claude-sonnet-4-6'], token: 'oauth-env-secret' } : {}) });
+    await rpc('open', { cwd: root, ...(runtime === 'claude' ? { args: ['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose', '--allowedTools', 'Bash,Edit,Write,Read,Glob,Grep,NotebookEdit', '--permission-prompts', 'none', '--model', 'claude-sonnet-4-6'], token: 'oauth-env-secret' } : runtime === 'gemini' ? { args: ['-p', 'Private task', '--output-format', 'stream-json', '--model', 'gemini-3-pro-preview', '--approval-mode', 'yolo'], apiKey: 'gemini-env-secret' } : {}) });
     await rpc('write', { data: 'oauth-transient-secret\n' });
     let data = '';
     for (let i = 0; i < 100 && !data; i++) { data += (await rpc('read')).data; await new Promise(resolve => setTimeout(resolve, 10)); }
     assert.equal(data, 'oauth-transient-secret\n');
-    assert.doesNotMatch(JSON.stringify(seen), /oauth-transient-secret|oauth-env-secret|stderr-secret/);
+    assert.doesNotMatch(JSON.stringify(seen), /oauth-transient-secret|oauth-env-secret|gemini-env-secret|Private task|stderr-secret/);
     assert.equal(listener.snapshotOperationActivity().operations.length, 0);
     assert.equal(fs.existsSync(journalPath), false);
     await rpc('close');

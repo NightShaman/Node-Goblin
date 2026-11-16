@@ -156,3 +156,38 @@ fs.writeFileSync(path.join(pkg, 'native'), '#!/bin/sh\\n[ "$1" = --version ] || 
     assert.equal(fs.readFileSync(path.join(root, 'opt/burrow-host-gateway/VERSION'), 'utf8'), version);
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
+
+test('Gemini opt-in installs latest, verifies launcher and persists across flag-free updates', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'burrow-gemini-provision-'));
+  const root = path.join(tmp, 'root'), bin = path.join(tmp, 'bin'), log = path.join(tmp, 'npm.log');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'npm'), `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >> "$NPM_LOG"
+[ "\${NPM_FAIL:-0}" = 0 ] || exit 1
+prefix=
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --prefix ]; then prefix=$2; shift; fi
+  shift
+done
+mkdir -p "$prefix/bin"
+printf '#!/bin/sh\\nexit 0\\n' > "$prefix/bin/gemini"
+chmod 755 "$prefix/bin/gemini"
+`, { mode: 0o755 });
+  const stage = (args = [], extra = {}) => spawnSync(install, ['--root', root, '--skip-account', '--no-systemd', ...args], {
+    encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, NPM_LOG: log, ...extra },
+  });
+  try {
+    const marker = path.join(root, 'opt/burrow-host-gateway/.with-gemini');
+    assert.notEqual(stage(['--with-gemini'], { NPM_FAIL: '1' }).status, 0);
+    assert.equal(fs.existsSync(marker), false);
+    fs.writeFileSync(log, '');
+    for (const args of [['--with-gemini'], []]) {
+      const result = stage(args); assert.equal(result.status, 0, result.stderr);
+      assert.equal(fs.existsSync(marker), true);
+    }
+    const lines = fs.readFileSync(log, 'utf8').trim().split('\n');
+    assert.equal(lines.length, 2);
+    for (const line of lines) assert.match(line, /@google\/gemini-cli@latest$/);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});
