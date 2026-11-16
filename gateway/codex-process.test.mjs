@@ -178,3 +178,55 @@ test('Gemini private diagnostics redact chunk-split keys and omit structured pay
     assert.doesNotMatch(stderr, /selected-test-key|private payload|tool_result/);
   } finally { sessions.closeAll(); }
 });
+
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function waitFor(check, message) {
+  for (let i = 0; i < 200; i++) {
+    if (check()) return;
+    await pause(10);
+  }
+  assert.fail(message);
+}
+
+for (const [runtime, disconnect] of [['codex', false], ['claude', false], ['gemini', false], ['gemini', true]]) {
+  test(`${runtime} ${disconnect ? 'disconnect' : 'RPC cancellation'} kills detached shell and TERM-resistant grandchild after read consumes leader`, { skip: process.platform !== 'linux' }, async () => {
+    const fs = await import('node:fs'), os = await import('node:os'), path = await import('node:path');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cancel-tree-'));
+    const marker = path.join(dir, 'marker'), ready = path.join(dir, 'ready'), shellPid = path.join(dir, 'shell-pid');
+    const grandchild = path.join(dir, 'grandchild.cjs'), root = path.join(dir, 'root.cjs');
+    fs.writeFileSync(grandchild, `const fs = require('node:fs'); process.on('SIGTERM', () => {}); fs.writeFileSync(${JSON.stringify(ready)}, String(process.pid)); setTimeout(() => fs.writeFileSync(${JSON.stringify(marker)}, 'escaped'), 1400); setInterval(() => {}, 1000);`);
+    fs.writeFileSync(root, `const {spawn} = require('node:child_process'); const fs = require('node:fs'); const child = spawn('/bin/sh', ['-c', 'trap "" TERM; "$1" "$2" & wait', 'tree-test', process.execPath, ${JSON.stringify(grandchild)}], {detached:true, stdio:'ignore'}); fs.writeFileSync(${JSON.stringify(shellPid)}, String(child.pid)); child.unref(); process.stdin.resume();`);
+    const sessions = new CodexProcesses({ executable: () => process.execPath, claudeExecutable: () => process.execPath, geminiExecutable: () => process.execPath,
+      spawnProcess: (exe, args, options) => spawn(exe, [root], options) });
+    const owner = { connectionId: `tree-${runtime}` };
+    const args = runtime === 'claude'
+      ? ['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose', '--allowedTools', 'Bash,Edit,Write,Read,Glob,Grep,NotebookEdit', '--permission-prompts', 'none', '--model', 'test']
+      : ['-p', 'task', '--output-format', 'stream-json', '--model', 'test', '--approval-mode', 'yolo'];
+    const pids = [];
+    const alive = pid => {
+      try { return !['Z', 'X'].includes(fs.readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1].split(' ')[0]); } catch { return false; }
+    };
+    try {
+      await sessions.handle(`${runtime}.open`, { operationId: 'tree', cwd: dir, args, token: 'test-token', apiKey: 'test-key' }, owner);
+      pids.push(sessions.sessions.get('tree').child.pid);
+      await waitFor(() => fs.existsSync(ready), 'grandchild not ready');
+      pids.push(Number(fs.readFileSync(shellPid, 'utf8')), Number(fs.readFileSync(ready, 'utf8')));
+      if (disconnect) sessions.closeAll();
+      else await sessions.handle(`${runtime}.close`, { operationId: 'tree', signal: 'SIGTERM' }, owner);
+      if (!disconnect) {
+        await waitFor(() => sessions.sessions.get('tree')?.done, 'leader did not exit');
+        const result = await sessions.handle(`${runtime}.read`, { operationId: 'tree' }, owner);
+        assert.equal(result.done, true);
+      }
+      assert.equal(sessions.sessions.size, 0);
+      assert.equal(alive(pids[2]), true, 'grandchild must resist TERM to exercise delayed KILL');
+      await waitFor(() => pids.every(pid => !alive(pid)), 'cancelled descendants survived KILL');
+      await pause(1500);
+      assert.equal(fs.existsSync(marker), false, 'cancelled tool produced delayed side effect');
+    } finally {
+      sessions.closeAll();
+      for (const pid of pids) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}

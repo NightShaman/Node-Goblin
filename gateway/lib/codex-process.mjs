@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { statSync, accessSync, mkdirSync, writeFileSync, constants } from 'node:fs';
+import { statSync, accessSync, mkdirSync, writeFileSync, readFileSync, readdirSync, constants } from 'node:fs';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
@@ -42,6 +42,72 @@ export function validateGeminiInvocation({ args, apiKey } = {}) {
     throw new Error('gemini_invocation_invalid');
   }
   return [...args];
+}
+
+// Linux /proc identities let cancellation follow detached descendants without
+// signalling a PID that has since been reused. Never inspect/kill a tree on
+// successful completion: CLIs may intentionally leave background work running.
+function linuxProcess(pid) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    return { pid: Number(pid), parent: Number(fields[1]), start: fields[19] };
+  } catch { return null; }
+}
+
+function trackDescendants(tracked) {
+  const processes = new Map();
+  try {
+    for (const pid of readdirSync('/proc')) {
+      if (!/^\d+$/.test(pid)) continue;
+      const info = linuxProcess(pid);
+      if (info) processes.set(info.pid, info);
+    }
+  } catch { return; }
+  const parents = new Set();
+  for (const [pid, start] of tracked) if (processes.get(pid)?.start === start) parents.add(pid);
+  // Include every generation, irrespective of session or process group.
+  let changed;
+  do {
+    changed = false;
+    for (const info of processes.values()) {
+      if (!parents.has(info.pid) && parents.has(info.parent)) {
+        parents.add(info.pid); tracked.set(info.pid, info.start); changed = true;
+      }
+    }
+  } while (changed);
+}
+
+function terminateTree(entry, signal = 'SIGTERM') {
+  if (entry.cancelling) return;
+  entry.cancelling = true;
+  const child = entry.child;
+  const tracked = new Map();
+  if (entry.identity) tracked.set(child.pid, entry.identity);
+  if (process.platform === 'linux') trackDescendants(tracked);
+  const send = sig => {
+    // Preserve the process-group fallback on other POSIX platforms. On Linux
+    // only use it while the original group leader still has its identity.
+    const rootAlive = process.platform !== 'linux' || (entry.identity && linuxProcess(child.pid)?.start === entry.identity);
+    if (rootAlive) {
+      try {
+        if (child.pid && process.platform !== 'win32') process.kill(-child.pid, sig);
+        else child.kill(sig);
+      } catch {}
+    }
+    for (const [pid, start] of tracked) {
+      if (linuxProcess(pid)?.start === start) { try { process.kill(pid, sig); } catch {} }
+    }
+  };
+  send(signal);
+  if (signal === 'SIGKILL') return;
+  // Not entry.timer: close/read/destroy may consume the session before this
+  // grace period expires, but detached TERM-resistant children still need KILL.
+  const cleanup = setTimeout(() => {
+    if (process.platform === 'linux') trackDescendants(tracked);
+    send('SIGKILL');
+  }, 500);
+  cleanup.unref?.();
 }
 
 // Memory-only, connection-owned interactive IPC. No journal, output events,
@@ -102,9 +168,8 @@ export class CodexProcesses {
       const child = this.spawnProcess(executable, args, {
         cwd: params.cwd, ...(env ? { env } : {}), stdio: ['pipe', 'pipe', 'pipe'], shell: false, detached: process.platform !== 'win32',
       });
-      entry = { child, runtime, owner: owner.connectionId, data: '', bytes: 0, done: false, decoder: new StringDecoder('utf8') };
+      entry = { child, identity: process.platform === 'linux' ? linuxProcess(child.pid)?.start : null, runtime, owner: owner.connectionId, data: '', bytes: 0, done: false, decoder: new StringDecoder('utf8') };
       this.sessions.set(id, entry);
-      if (runtime !== 'gemini') { entry.timer = setTimeout(() => this.destroy(id), 30 * 60_000); entry.timer.unref?.(); }
       child.stdout.on('data', chunk => {
         entry.data += entry.decoder.write(chunk); entry.bytes = Buffer.byteLength(entry.data);
         if (entry.bytes > 8 * 1024 * 1024) this.destroy(id);
@@ -134,7 +199,7 @@ export class CodexProcesses {
         if (runtime === 'gemini') entry.processError = sanitize(error?.message);
         else this.destroy(id);
       });
-      child.on('close', (code, signal) => { if (runtime === 'gemini') { diagnosticLine += diagnosticDecoder.end(); retainLine(); } entry.done = true; entry.exitCode = code; entry.signal = signal; clearTimeout(entry.timer); entry.timer = setTimeout(() => this.destroy(id), 60_000); entry.timer.unref?.(); });
+      child.on('close', (code, signal) => { if (runtime === 'gemini') { diagnosticLine += diagnosticDecoder.end(); retainLine(); } entry.done = true; entry.exitCode = code; entry.signal = signal; clearTimeout(entry.timer); if (this.sessions.get(id) === entry) { entry.timer = setTimeout(() => this.destroy(id), 60_000); entry.timer.unref?.(); } });
       return { operationId: id };
     }
     if (!entry) {
@@ -160,7 +225,7 @@ export class CodexProcesses {
     if (method === 'codex.close') {
       if (params.signal != null && !['SIGTERM', 'SIGKILL'].includes(params.signal)) throw new Error('codex_signal_invalid');
       if (params.signal) {
-        try { if (entry.child.pid && process.platform !== 'win32') process.kill(-entry.child.pid, params.signal); else entry.child.kill(params.signal); } catch {}
+        terminateTree(entry, params.signal);
       } else entry.child.stdin.end();
       return { operationId: id, closed: entry.done };
     }
@@ -168,8 +233,9 @@ export class CodexProcesses {
   }
   destroy(id) {
     const entry = this.sessions.get(id); if (!entry) return;
-    this.sessions.delete(id); clearTimeout(entry.timer); entry.data = ''; entry.done = true;
-    try { if (entry.child.pid && process.platform !== 'win32') process.kill(-entry.child.pid, 'SIGKILL'); else entry.child.kill('SIGKILL'); } catch { try { entry.child.kill('SIGKILL'); } catch {} }
+    this.sessions.delete(id); clearTimeout(entry.timer); entry.data = '';
+    if (!entry.done) terminateTree(entry);
+    entry.done = true;
   }
   closeAll() { for (const id of this.sessions.keys()) this.destroy(id); }
 }
