@@ -93,7 +93,7 @@ Core storage implementation and encryption guarantees are outside this repositor
 
 ## Native minion transport
 
-The execution provider also exposes private `codexRpc` for both `codex.*` app-server and `claude.*` headless JSONL sessions. Both use the already authenticated TLS channel, with no additional listener. They are connection-owned processes, not journaled shell/filesystem operations. Disconnect destroys them; native operation replay does not use the ordinary journal or Archive. Host metadata advertises each CLI’s availability without authentication material. See [native transport contracts](protocol.md#private-codex-app-server-transport).
+The execution provider also exposes private `codexRpc` for `codex.*` app-server, `claude.*` headless JSONL and `gemini.*` headless stream-JSON sessions. All three use the already authenticated TLS channel, with no additional listener. They are connection-owned processes, not journaled shell/filesystem operations. Disconnect destroys them; native operation replay does not use the ordinary journal or Archive. Host metadata advertises each CLI’s availability without authentication material. See [native transport contracts](protocol.md#private-codex-app-server-transport).
 
 ## Source references
 
@@ -119,3 +119,4 @@ another execution host. Settings display is unchanged.
 This requires the updated controller mod, Mini Node Goblin host package and Core
 execution-provider bridge. They remain backward-compatible when updated in any
 order; missing metadata does not block ordinary execution.
+

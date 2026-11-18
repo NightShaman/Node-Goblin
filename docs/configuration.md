@@ -15,7 +15,7 @@ Configuration lives on both controller and gateway. Changing one side does not a
 | `BURROW_GATEWAY_CA_FILE` | Optional CA file | TLS server trust for first strict connection and HMAC deployments |
 | `BURROW_GATEWAY_CERT_FILE` | Optional certificate file | Client TLS certificate passed to Node TLS |
 | `BURROW_GATEWAY_KEY_FILE` | Optional key file | Client TLS key passed to Node TLS |
-| `BURROW_CODEX_EXECUTABLE` / `BURROW_CLAUDE_EXECUTABLE` | Optional absolute executable paths | Override native minion CLI discovery; invalid overrides do not fall back to PATH |
+| `BURROW_CODEX_EXECUTABLE` / `BURROW_CLAUDE_EXECUTABLE` / `BURROW_GEMINI_EXECUTABLE` | Optional absolute executable paths | Override native minion CLI discovery; invalid overrides do not fall back to PATH |
 | `CODEX_HOME` | Optional Codex state path | Otherwise the gateway uses `$BURROW_GATEWAY_STATE_DIR/codex` when configured |
 | `BURROW_FILESYSTEM_TRAVERSAL_ENTRIES` | Positive integer; 4,000 | Default find/search traversal budget |
 
@@ -111,4 +111,5 @@ The checked-in unit runs as `burrow:burrow`, working directory `/opt/burrow-host
 - [`gateway/deploy/burrow-host-gateway.service`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/deploy/burrow-host-gateway.service)
 - [`server/index.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/server/index.mjs)
 - [`gateway/lib/journal.mjs`](https://github.com/GoblinKing-Burrow/Node-Goblin/blob/main/gateway/lib/journal.mjs)
+
 

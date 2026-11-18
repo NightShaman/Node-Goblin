@@ -130,7 +130,7 @@ For the mod, `git pull --ff-only` updates a clean checkout; then restart BURROW.
 
 ## Optional Codex CLI for native minions
 
-Both **Codex and Claude native minions** need their CLI on the selected execution host, not merely inside Burrow's container. The reviewed bootstrap, package installer and updater accept `--with-codex`, `--with-claude`, or both:
+**Codex, Claude and Gemini native minions** need their CLI on the selected execution host, not merely inside Burrow's container. The reviewed bootstrap, package installer and updater accept `--with-codex`, `--with-claude` and `--with-gemini`, separately or together:
 
 ```bash
 # From a verified, extracted Node Goblin release:
@@ -139,7 +139,7 @@ sudo sh deploy/install.sh --with-codex --with-claude
 sudo sh deploy/update.sh --with-codex --with-claude
 ```
 
-Neither CLI is installed by default. Opt-ins require npm and install `@openai/codex@latest` and/or `@anthropic-ai/claude-code@latest` globally under `/usr/local`, without version pins. Successful choices are remembered in the installed package; subsequent Node Goblin updates fetch those latest CLIs again even without repeating the flags. Older installations made before opt-in tracking must supply their flags once.
+None of these CLIs is installed by default. Opt-ins require npm and install `@openai/codex@latest`, `@anthropic-ai/claude-code@latest` and/or `@google/gemini-cli@latest` globally under `/usr/local`, without version pins. Successful choices are remembered in the installed package; subsequent Node Goblin updates fetch those latest CLIs again even without repeating the flags. Older installations made before opt-in tracking must supply their flags once.
 
 Claude provisioning suppresses all npm lifecycle scripts with `--ignore-scripts`, includes native optional dependencies, and explicitly runs only the installed vendor `install.cjs`. It verifies the launcher at the selected installation prefix with `claude --version`; it does not change global npm script approvals. A missing vendor entrypoint, vendor failure or nonworking launcher aborts provisioning. **CLI upgrades are outside package rollback:** restoring Node Goblin after a failed update does not downgrade an already upgraded provider CLI.
 
@@ -161,3 +161,8 @@ The current Claude transport requires the headless JSONL CLI contract with `--pe
 On compatible Core and mod builds that declare managed skills, loading this mod automatically supplies the `node-goblin-operations` skill from [Burrow-Skills](https://github.com/GoblinKing-Burrow/Burrow-Skills/tree/main/node-goblin-operations). Core maintains the installed copy as read-only and refreshes managed skills at startup, on mod lifecycle changes, and on its default six-hour schedule. You do not paste, edit, or assign that managed copy manually. The skill provides instructions; it does not grant tool or data access.
 
 The current mod manifest declares this managed skill. Automatic mod-managed delivery still requires a Core build that supports it. Older public **2026.10.19** snapshots lack the declaration; updating only the skill repository cannot add the missing integration to those older packages. See [how managed skills work](https://docs.goblin-kingdom.com/burrow-skills/managed-skills/).
+
+
+### Optional Gemini CLI
+
+The current bootstrap, package installer and updater also accept `--with-gemini`. It installs `@google/gemini-cli@latest` under the same prefix, verifies that launcher with `--version`, and retains the successful opt-in for future updates. npm is required; Gemini is not installed by default. CLI upgrades remain outside Node Goblin package rollback. `BURROW_GEMINI_EXECUTABLE` can select an absolute executable. Compatible Core must configure an eligible API-key connection and Gemini native minion harness; executable discovery alone does not prove successful inference. The child uses private state under `$BURROW_GATEWAY_STATE_DIR/gemini` when configured and receives the selected key transiently, not through installer arguments or a gateway credential setting.

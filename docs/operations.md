@@ -91,7 +91,7 @@ Uninstall deliberately preserves configuration and state. Secure decommissioning
 
 ## Native Codex minion checks
 
-These checks cover both Codex and Claude native minions. Distinguish host capability from Burrow model configuration:
+These checks cover both Codex, Claude and Gemini native minions. Distinguish host capability from Burrow model configuration:
 
 1. Confirm the intended Node Goblin target is approved, connected and assigned.
 2. Confirm the selected Codex or Claude CLI was installed on that execution host and is executable in the gateway service's environment. An interactive shell finding it does not establish the service's `PATH`.
@@ -124,3 +124,6 @@ from a disconnect; inspect the host's local `controller_tls_identity_mismatch`
 diagnostic. TLS metadata fingerprints use SHA-256 over DER, not PEM text.
 
 
+
+
+Native Codex/Claude/Gemini sessions no longer have the gateway’s former 30-minute active-session cap. Cancellation and disconnect request process-tree cleanup, with Linux descendant identity tracking and delayed KILL escalation. An RPC acknowledgement alone is not terminal cleanup evidence; verify the actual outcome before retrying side effects. Ordinary successful completion preserves intentional background processes. See [private transport and cancellation](protocol.md#private-gemini-transport-and-cancellation).

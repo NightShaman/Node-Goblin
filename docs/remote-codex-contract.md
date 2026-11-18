@@ -24,6 +24,9 @@ Use a fresh unpredictable operation ID per session, open once, send app-server p
 
 ## Claude transport extension
 
-The same connection-owned channel also supports `claude.open`, `claude.write`, `claude.read` and `claude.close`. The latter three have the same shapes; open additionally receives the controller-owned transient OAuth token and validated headless JSONL arguments. See [the full private Claude contract](protocol.md#private-claude-jsonl-transport) and [installation](installation.md#optional-codex-cli-for-native-minions). Codex and Claude share the eight-session gateway limit, but runtime ownership is enforced: a method for one cannot access a session of the other. Both native paths currently use the sanitized `codex_transport_failed` error name.
+The same connection-owned channel also supports `claude.open`, `claude.write`, `claude.read` and `claude.close`. The latter three have the same shapes; open additionally receives the controller-owned transient OAuth token and validated headless JSONL arguments. See [the full private Claude contract](protocol.md#private-claude-jsonl-transport) and [installation](installation.md#optional-codex-cli-for-native-minions). Codex, Claude and Gemini share the eight-session gateway limit, but runtime ownership is enforced: a method for one cannot access a session of the other. Both native paths currently use the sanitized `codex_transport_failed` error name.
 
 Host metadata advertises a separate `claude: {available, protocol: 1}` capability. No version, account, token or authentication state survives normalization. Native IPC bypasses ordinary gateway operation journals, Archive activity and gateway spans; native minion observability remains Core-owned. Neither CLI’s authenticated session survives a gateway disconnect.
+
+
+Gemini also uses the connection-owned `gemini.open/write/read/close` channel. Its transient API-key authentication, bounded private diagnostics and cancellation limits are described in [private Gemini transport and cancellation](protocol.md#private-gemini-transport-and-cancellation). There is no fixed active-session lifetime cap in the current gateway.
