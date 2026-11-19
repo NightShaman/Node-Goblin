@@ -71,3 +71,29 @@ test('multibyte redaction and truncation share the byte limit without replacemen
   assert.equal(result.stdout, '[redacted]');
   assert.equal(result.truncated, true);
 });
+
+test('output limit escalates a TERM-resistant process without relabeling it as a timeout', { skip: process.platform === 'win32', timeout: 5_000 }, async () => {
+  const result = await runProcess({ executable: process.execPath, maxOutputBytes: 16, timeoutMs: 15_000,
+    args: ['-e', "process.on('SIGTERM', () => {}); process.stdout.write('x'.repeat(32)); setInterval(() => {}, 1000)"] });
+  assert.equal(result.stdout, 'x'.repeat(16));
+  assert.equal(result.truncated, true);
+  assert.equal(result.killed, true);
+  assert.equal(result.signal, 'SIGKILL');
+  assert.equal(result.timedOut, false);
+  assert.equal(result.timeoutReason, null);
+  assert.equal(result.cancelled, false);
+  assert.ok(result.durationMs < 4_000, `overflow took ${result.durationMs}ms`);
+});
+
+test('an abort during output-limit grace does not replace the stop cause', { skip: process.platform === 'win32', timeout: 5_000 }, async () => {
+  const controller = new AbortController();
+  const result = await runProcess({ executable: process.execPath, maxOutputBytes: 1, timeoutMs: 15_000,
+    args: ['-e', "process.on('SIGTERM', () => {}); process.stdout.write('xx'); setInterval(() => {}, 1000)"] }, {
+    signal: controller.signal,
+    emitEvent: event => { if (event.type === 'process.stream' && event.truncated) controller.abort(); },
+  });
+  assert.equal(controller.signal.aborted, true);
+  assert.equal(result.truncated, true);
+  assert.equal(result.cancelled, false);
+  assert.equal(result.timedOut, false);
+});

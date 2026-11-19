@@ -43,8 +43,7 @@ export function runProcess(request, { protectedEnv = null, emitEvent, signal, no
   let truncated = false;
   let killed = false;
   let settled = false;
-  let timeoutTriggered = false;
-  let timeoutReason = null;
+  let stopReason = null;
   const timers = [];
 
   const totalBytes = () => Buffer.byteLength(stdout, 'utf8') + Buffer.byteLength(stderr, 'utf8');
@@ -77,7 +76,7 @@ export function runProcess(request, { protectedEnv = null, emitEvent, signal, no
     else stderr += kept;
     if (Buffer.byteLength(kept, 'utf8') !== Buffer.byteLength(text, 'utf8') && !truncated) {
       truncated = true;
-      terminate('SIGTERM');
+      stop('outputLimit');
     }
     emitEvent?.({ type: 'process.stream', stream, seq: ++seq, data: kept, truncated });
   };
@@ -102,11 +101,10 @@ export function runProcess(request, { protectedEnv = null, emitEvent, signal, no
 
   let forceSettle = null;
   const stop = (reason) => {
-    if (settled) return;
-    if (reason === 'timeoutMs' || reason === 'deadlineMs') {
-      timeoutTriggered = true;
-      timeoutReason = reason;
-    }
+    // The first trigger owns the stop; a deadline during grace must not
+    // relabel an overflow (or schedule a second escalation).
+    if (settled || stopReason !== null) return;
+    stopReason = reason;
     killed = terminate('SIGTERM') || killed;
     const killTimer = setTimeout(() => { killed = terminate('SIGKILL') || killed; }, 1_000);
     const fallbackTimer = setTimeout(() => forceSettle?.(null, 'SIGTERM'), 1_100);
@@ -146,6 +144,7 @@ export function runProcess(request, { protectedEnv = null, emitEvent, signal, no
       drainRedacted('stderr', true);
       const endedAt = new Date().toISOString();
       const durationMs = Number(process.hrtime.bigint() - startHr) / 1e6;
+      const timeoutReason = stopReason === 'timeoutMs' || stopReason === 'deadlineMs' ? stopReason : null;
       const result = {
         type: 'process.result',
         startedAt,
@@ -161,10 +160,10 @@ export function runProcess(request, { protectedEnv = null, emitEvent, signal, no
         command: exec.mode === 'shell' ? exec.file : null,
         exitCode: code,
         signal: closeSignal,
-        cancelled: signal?.aborted === true,
+        cancelled: stopReason === 'abort',
         killed,
         truncated,
-        timedOut: timeoutTriggered,
+        timedOut: timeoutReason !== null,
         timeoutReason,
         timeoutMs,
         deadlineMs,

@@ -8,6 +8,7 @@ import test from 'node:test';
 import { authenticationProof, enrollController, enrollmentConsumedPath, markEnrollmentConsumed, OutboundGatewayTransport, pairingCodePath, readControllerTrust, writePairingCode } from './lib/network-transport.mjs';
 import { controllerIdentity } from './lib/pairing.mjs';
 import { GatewayDaemon } from './lib/daemon.mjs';
+import { OperationJournal } from './lib/journal.mjs';
 import { createGatewayTelemetry } from './lib/otel-runtime.mjs';
 import { MAX_FRAME_BYTES } from './lib/output-frame.mjs';
 
@@ -40,6 +41,7 @@ function fixture(options = {}) {
   const transport = new OutboundGatewayTransport({
     host: 'controller.test', port: 7443, gatewayId: 'gateway-1', stateDir,
     enrollmentToken: 'one-time-secret', reconnectMinMs: 10, reconnectMaxMs: 10,
+    daemon: new GatewayDaemon({ journal: new OperationJournal({ stateDir }) }),
     tlsConnect: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
     ...options,
   }).start();
@@ -171,11 +173,10 @@ test('in-flight output remains owned by the disconnected authenticated connectio
     await waitFor(() => sockets[0].messages().some((message) => message.type === 'accepted'));
     sockets[0].destroy();
     await waitFor(() => sockets.length === 2);
-    await delay(150);
+    await waitFor(() => transport.daemon.journal.get('continuing-op') !== null);
     assert.equal(transport.authenticated, false);
     assert.deepEqual(sockets[1].messages(), []);
     authenticate(sockets[1], 'fedcba9876543210');
-    await delay(30);
     assert.equal(sockets[1].messages().some((message) => message.requestId === 'old-request' || message.operationId === 'continuing-op'), false);
     sockets[1].feed({ id: 'replay', method: 'process.exec', params: {
       operationId: 'continuing-op', executable: process.execPath,
@@ -219,13 +220,12 @@ test('disconnect reconnects, reauthenticates, and replays completed operation', 
     authenticate(sockets[0]);
     const request = { id: 'first', method: 'process.exec', params: { operationId: 'replay-op', executable: process.execPath, args: ['-e', "process.stdout.write('once')"] } };
     sockets[0].feed(request);
-    await delay(120);
+    await waitFor(() => sockets[0].messages().some(m => m.type === 'response' && m.requestId === 'first' && m.ok));
     sockets[0].destroy();
-    await delay(30);
-    assert.equal(sockets.length, 2);
+    await waitFor(() => sockets.length === 2);
     authenticate(sockets[1], 'fedcba9876543210');
     sockets[1].feed({ ...request, id: 'second' });
-    await delay();
+    await waitFor(() => sockets[1].messages().some(m => m.type === 'response' && m.requestId === 'second'));
     const replay = sockets[1].messages().find((m) => m.requestId === 'second');
     assert.equal(replay.result.replay, true);
     assert.equal(replay.result.outcome.stdout, 'once');
