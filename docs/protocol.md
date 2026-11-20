@@ -56,7 +56,7 @@ or a shell command string. `command` uses `shell: true`; `executable` with an ar
 | `env` | String-coerced environment additions over the daemon environment |
 | `timeoutMs` | Positive integer; default 30,000 ms |
 | `deadlineMs` | Optional absolute deadline using the supplied clock |
-| `maxOutputBytes` | Positive integer; combined captured stdout/stderr cap, default 1 MiB; overflow truncates capture and sends SIGTERM to the process/group |
+| `maxOutputBytes` | Positive integer; combined captured stdout/stderr cap, default 1 MiB; overflow truncates capture and requests process/group termination, escalating from SIGTERM to SIGKILL after one second if still unsettled |
 | `operationId` | Explicit identifier; daemon can derive a hash when absent, but controller HTTP execution requires it |
 | `protectedBindingMetadata` | Safe binding metadata retained for digest/correlation |
 | `protectedValues` and `protectedDelivery` | Internal authenticated one-shot delivery; not ordinary persisted request data |
@@ -78,6 +78,8 @@ On POSIX, child processes start detached and termination targets the process gro
 Only process execution accepts protected values. The daemon checks valid environment names and nonempty string values and binds delivery to gateway ID, connection ID, request ID, and operation ID supplied by the authenticated transport. Protected environment values override ordinary environment entries. Literal matching values are redacted from stdout/stderr stream data and captured terminal stdout/stderr before journal/transport accumulation. This does not redact command, argument, or working-directory metadata and is not general data-loss prevention for transformed or encoded secrets.
 
 One-shot protected values and delivery bindings are excluded from the canonical request digest and journal input. A replay attempt that resends protected values returns `protected_redelivery_forbidden`. Do not build an automatic retry that blindly re-delivers credentials.
+
+For ordinary `process.exec`, the first stop trigger owns the result flags. Output overflow sets `truncated`, not `timedOut` or `cancelled`; a later deadline or abort during its termination grace does not relabel it. Timeout/deadline triggers set `timedOut` and `timeoutReason`; an abort trigger sets `cancelled`. A fallback settles the local result after about 1.1 seconds if close has not arrived, so result settlement alone does not prove every descendant has exited. These process-tool limits are separate from native Codex/Claude/Gemini sessions.
 
 ## Replay guarantees and limits
 
