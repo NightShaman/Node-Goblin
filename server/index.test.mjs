@@ -789,3 +789,41 @@ test('archive reports an unavailable listener without consulting durable correla
       retainedEntries: 0, maxEntries: null, matchedEntries: 0, lostOnRestart: true, evictsOldestUpdated: true, clearedOnGatewayRevocation: true },
   });
 });
+
+
+test('controller discovers current approved targets without leaking trust material', async t => {
+  const value = harness();
+  await value.settings.set('controllerGateways', [
+    {gatewayId:'worker-online', status:'approved'},
+    {gatewayId:'worker-offline', status:'approved'},
+    {gatewayId:'revoked', status:'revoked'},
+    {gatewayId:'untrusted'},
+    {gatewayId:'interrupted', status:'approved'},
+  ]);
+  await value.settings.set('controllerTrustMutations', ['interrupted']);
+  await value.secrets.set('controller.gateway.worker-online', 'do-not-disclose');
+  const service = await createControllerService(value);
+  t.after(() => service.close());
+  const controller = createProcessController(service);
+  assert.deepEqual(await controller.listHosts(), [
+    {id:'worker-offline', name:'worker-offline'},
+    {id:'worker-online', name:'worker-online'},
+  ]);
+  assert.equal(await controller.describeHost('worker-offline'), null);
+  await value.settings.set('controllerGateways', [{gatewayId:'new-approval', status:'approved'}]);
+  assert.deepEqual(await controller.listHosts(), [{id:'new-approval',name:'new-approval'}], 'read current trust, not activation snapshot');
+  await value.settings.set('controllerGateways', []);
+  assert.deepEqual(await controller.listHosts(), []);
+});
+
+test('registered execution provider exposes listHosts and preserves exact advertised targets', async () => {
+  const value = harness(); let controller;
+  const expected = [{id:'worker',name:'Worker'}];
+  const service = {state:()=>({}),listLiveGateways:()=>[],listHosts:async()=>expected,
+    dispatchProcessExec(){},dispatchCancel(){},close(){}};
+  const lifecycle = await activate({...value,controllerService:service,
+    processExecution:{registerController(c){controller=c;return ()=>{};}}});
+  try { assert.deepEqual(await controller.listHosts(), expected); }
+  finally { await lifecycle.close(); }
+  await assert.rejects(createProcessController({dispatchProcessExec(){},dispatchCancel(){}}).listHosts(), /remote_host_listing_unsupported/);
+});

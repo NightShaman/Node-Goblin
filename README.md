@@ -25,6 +25,8 @@ The packaged installer targets Linux/systemd. See the [installation guide](docs/
 
 > Pairing gives Burrow access to run processes and read or change files as the host's `burrow` service account. Choose hosts and accounts you trust. A workspace path is a working location, not a sandbox.
 
+Current controller releases expose approved execution hosts to Core’s generic minion catalog, so mods such as Auditor can discover them without re-entering host IDs. Disconnected hosts remain visible as unavailable; revoked or untrusted entries are not new selectable targets. Native harness eligibility still requires the matching installed CLI and protocol capability on that host. This controller-side discovery update does not require upgrading or restarting Mini Node Goblin on execution hosts.
+
 ## Quick start
 
 ### 1. Install the mod on your Burrow controller

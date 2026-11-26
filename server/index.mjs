@@ -320,6 +320,10 @@ export function createProcessController(service, { logger = console, operationSt
   if (!service || typeof service.dispatchProcessExec !== 'function' || typeof service.dispatchCancel !== 'function') throw new Error('controller_service_invalid');
   return Object.freeze({
     describeHost: targetId => service.describeHost?.(targetId) ?? null,
+    async listHosts() {
+      if (typeof service.listHosts !== 'function') throw problem('remote_host_listing_unsupported');
+      return service.listHosts();
+    },
     async codexRpc({ targetId, method, params }) {
       const dispatch = await service.dispatchCodex(targetId, method, params);
       if (!dispatch?.response?.ok) throw new Error('codex_transport_failed');
@@ -581,6 +585,15 @@ export async function createControllerService({ settings, secrets, listenerFacto
       });
     },
     describeHost: (gatewayId) => listener?.describeHost?.(gatewayId) ?? null,
+    async listHosts() {
+      // Discover from the same current trust authority used by Settings. A
+      // disconnected approved host remains selectable as unavailable; revoked,
+      // untrusted and interrupted approvals must not be advertised as targets.
+      return (await configuredGatewayIdentities(settings, secrets))
+        .filter(identity => identity.approved)
+        .map(({ gatewayId }) => ({ id: gatewayId, name: gatewayId }))
+        .sort((a, b) => a.id.localeCompare(b.id));
+    },
     listLiveGateways: () => listener ? listener.listLiveGateways() : [],
     listGateways: () => listener
       ? (listener.listGateways?.() ?? listener.listLiveGateways())
