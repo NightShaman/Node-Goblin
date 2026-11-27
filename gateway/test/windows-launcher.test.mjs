@@ -25,10 +25,12 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
   const env = { ...process.env, LOCALAPPDATA: root, BURROW_GATEWAY_STATE_DIR: path.join(root, 'must-not-create') };
   const state = path.join(root, 'NodeGoblin', 'state');
   const host = 'test-launcher';
-  let listener, child, childDone;
+  let listener, child, childDone, startupError;
+  const diagnostic = () => startupError?.replace(/\b[A-F0-9]{4}(?:-[A-F0-9]{4}){2}\b/g, '[pairing code]');
   const open = () => {
     child = spawn('powershell.exe', args('run'), { env, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
-    child.stderr.resume(); // Do not emit pairing codes in CI logs.
+    startupError = '';
+    child.stderr.setEncoding('utf8').on('data', chunk => { startupError = (startupError + chunk).slice(-4000); });
     childDone = once(child, 'exit');
     childDone.catch(() => {});
   };
@@ -49,7 +51,7 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
     checked(env, 'configure', '-Controller', `tls://127.0.0.1:${listener.server.address().port}`, '-GatewayId', host);
     const pending = once(listener, 'gatewayPairingPending', { signal: AbortSignal.timeout(10_000) });
     open();
-    await pending;
+    await pending.catch(error => { throw new Error(`launcher never requested pairing: ${diagnostic() || 'no stderr'}`, { cause: error }); });
     const approval = listener.preparePendingApproval(host);
     assert.ok(approval);
     const codeFile = path.join(state, 'pairing-code.json');
@@ -78,7 +80,8 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
     await disconnected;
     const reconnected = once(listener, 'gatewayAuthenticated', { signal: AbortSignal.timeout(10_000) });
     open();
-    assert.equal((await reconnected)[0].gatewayId, host);
+    const [connection] = await reconnected.catch(error => { throw new Error(`launcher did not reconnect: ${diagnostic() || 'no stderr'}`, { cause: error }); });
+    assert.equal(connection.gatewayId, host);
     assert.equal((await write()).response.result.replay, true);
   } finally {
     try { await halt(); } finally {

@@ -12,7 +12,7 @@ $script:Base = Join-Path $env:LOCALAPPDATA 'NodeGoblin'
 $script:ConfigDir = Join-Path $script:Base 'config'
 $script:StateDir = Join-Path $script:Base 'state'
 $script:Config = Join-Path $script:ConfigDir 'gateway.env'
-$script:Node = Join-Path $PSScriptRoot '..\..\cli.mjs'
+$script:EntryPoint = Join-Path $PSScriptRoot '..\..\cli.mjs'
 
 function Assert-NotReparse([string]$Path) {
   if (Test-Path -LiteralPath $Path) {
@@ -117,7 +117,7 @@ switch ($Command) {
   'run' {
     $values = Read-Config
     if (-not $values['BURROW_GATEWAY_CONTROLLER_URL'] -or -not $values['BURROW_GATEWAY_ID']) { throw 'Run configure first.' }
-    if (-not (Test-Path -LiteralPath $script:Node -PathType Leaf)) { throw 'Node Goblin cli.mjs was not found next to this deployment.' }
+    if (-not (Test-Path -LiteralPath $script:EntryPoint -PathType Leaf)) { throw 'Node Goblin cli.mjs was not found next to this deployment.' }
     $names = @('BURROW_GATEWAY_CONTROLLER_URL','BURROW_GATEWAY_ID','BURROW_GATEWAY_STATE_DIR','BURROW_GATEWAY_ENROLLMENT_TOKEN','BURROW_GATEWAY_CA_FILE','BURROW_GATEWAY_CERT_FILE','BURROW_GATEWAY_KEY_FILE')
     $prior = @{}; foreach ($name in $names) { $prior[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
     try {
@@ -125,8 +125,8 @@ switch ($Command) {
       $env:BURROW_GATEWAY_CONTROLLER_URL = $values['BURROW_GATEWAY_CONTROLLER_URL']
       $env:BURROW_GATEWAY_ID = $values['BURROW_GATEWAY_ID']
       $env:BURROW_GATEWAY_STATE_DIR = $script:StateDir
-      $node = Get-Command node.exe -CommandType Application -ErrorAction Stop
-      & $node.Source $script:Node
+      $nodeApplication = Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1
+      & $nodeApplication.Path $script:EntryPoint
       if ($LASTEXITCODE -ne 0) { throw "Gateway exited with code $LASTEXITCODE" }
     }
     finally {
