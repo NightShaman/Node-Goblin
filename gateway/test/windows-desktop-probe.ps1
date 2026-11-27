@@ -72,6 +72,6 @@ if ($ExerciseGateway) {
   if ($state -ne 'interactive_non_elevated_capture_verified') { throw "Standard-user desktop prerequisite failed ($state at $stage): $problem" }
   $env:NODE_GOBLIN_DESKTOP_E2E = '1'
   $env:Path = "$PSScriptRoot;${env:ProgramFiles}\Git\usr\bin;$env:Path"
-  & (Join-Path $PSScriptRoot 'node.exe') --test gateway/test/windows-launcher.test.mjs *> (Join-Path $PSScriptRoot 'desktop-e2e.log')
+  & (Join-Path $PSScriptRoot 'node.exe') --test --test-reporter=tap gateway/test/windows-launcher.test.mjs *> (Join-Path $PSScriptRoot 'desktop-e2e.log')
   exit $LASTEXITCODE
 }

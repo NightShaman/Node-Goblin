@@ -24,7 +24,7 @@ jobs:
           if (-not (Get-Command openssl.exe -ErrorAction SilentlyContinue)) {
             $env:Path = "$env:ProgramFiles\Git\usr\bin;$env:Path"
           }
-          node --test gateway/test/windows-host.test.mjs gateway/test/windows-bootstrap.test.mjs gateway/test/windows-launcher.test.mjs
+          node --test --test-reporter=tap gateway/test/windows-host.test.mjs gateway/test/windows-bootstrap.test.mjs gateway/test/windows-launcher.test.mjs
       - name: Require the full desktop slice as a disposable standard Windows user
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/hatchet/windows-node-goblin' }}
         shell: pwsh
@@ -54,7 +54,9 @@ jobs:
             if (Test-Path -LiteralPath $desktopLog) { Get-Content -LiteralPath $desktopLog }
             if ($proc.ExitCode -ne 0) { throw "Desktop integration failed ($($proc.ExitCode))" }
             if (($surface | ConvertFrom-Json).state -ne 'interactive_non_elevated_capture_verified') { throw 'Standard-user app pixels were not verified' }
-            if (-not (Test-Path -LiteralPath $desktopLog) -or -not (Select-String -LiteralPath $desktopLog -SimpleMatch 'NG_WINDOWS_DESKTOP_E2E_VERIFIED' -Quiet)) { throw 'Full desktop integration proof missing' }
+            foreach ($marker in 'NG_WINDOWS_DESKTOP_APP_INVOKED', 'NG_WINDOWS_DESKTOP_STOP_VERIFIED', 'NG_WINDOWS_DESKTOP_E2E_VERIFIED') {
+              if (-not (Test-Path -LiteralPath $desktopLog) -or -not (Select-String -LiteralPath $desktopLog -Pattern "^# ${marker}: " -Quiet)) { throw "Desktop integration proof missing: $marker" }
+            }
           }
           finally {
             if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }

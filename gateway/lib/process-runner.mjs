@@ -31,6 +31,18 @@ export function buildExec(request = {}, platform = process.platform, env = proce
   return { mode: 'exec', file: executable.trim(), args: args ? [...args] : [], options: { shell: false } };
 }
 
+function processEnvironment(ordinary, protectedValues) {
+  if (!ordinary && !protectedValues) return process.env;
+  if (process.platform !== 'win32') return { ...process.env, ...ordinary, ...protectedValues };
+  // Windows treats names as case-insensitive; Node otherwise keeps the first
+  // lexicographic spelling, not necessarily the highest-priority layer.
+  const entries = new Map();
+  for (const layer of [process.env, ordinary, protectedValues]) {
+    for (const [name, value] of Object.entries(layer || {})) entries.set(name.toUpperCase(), [name, value]);
+  }
+  return Object.fromEntries(entries.values());
+}
+
 export function runProcess(request, { protectedEnv = null, emitEvent, signal, now = () => Date.now() } = {}) {
   const startHr = process.hrtime.bigint();
   const startedAt = new Date().toISOString();
@@ -44,7 +56,7 @@ export function runProcess(request, { protectedEnv = null, emitEvent, signal, no
   const exec = buildExec(request);
   const child = spawn(exec.file, exec.args, {
     cwd,
-    env: env || secretEnv ? { ...process.env, ...(env || {}), ...(secretEnv || {}) } : process.env,
+    env: processEnvironment(env, secretEnv),
     shell: exec.options.shell,
     detached: process.platform !== 'win32',
     ...(process.platform === 'win32' ? { windowsHide: true } : {}),

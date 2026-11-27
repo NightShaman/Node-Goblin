@@ -29,9 +29,10 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
   const env = { ...process.env, LOCALAPPDATA: root, BURROW_GATEWAY_STATE_DIR: path.join(root, 'must-not-create') };
   const state = path.join(root, 'NodeGoblin', 'state');
   const host = 'test-launcher';
-  let listener, child, childDone, startupError, app, appDone;
+  let listener, child, childDone, gatewayPid, startupError, app, appDone, primaryError;
   const diagnostic = () => startupError?.replace(/\b[A-F0-9]{4}(?:-[A-F0-9]{4}){2}\b/g, '[pairing code]');
   const open = (desktop) => {
+    gatewayPid = undefined;
     child = spawn('powershell.exe', args('run', ...(desktop ? ['-EnableDesktop'] : [])), { env, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
     startupError = '';
     child.stderr.setEncoding('utf8').on('data', chunk => { startupError = (startupError + chunk).slice(-4000); });
@@ -40,9 +41,16 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
   };
   const halt = async () => {
     if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
-    const killed = spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { timeout: 5_000, windowsHide: true, stdio: 'ignore' });
-    assert.equal(killed.status, 0, 'fixture PowerShell process tree could not be stopped');
-    await childDone;
+    if (gatewayPid) {
+      // This is the gateway that directly spawned our owned probe. Its exit
+      // releases the foreground launcher and the desktop helper's input pipe.
+      // Killing it is fixture cleanup, not proof of console Ctrl+C delivery.
+      try { process.kill(gatewayPid); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+    } else {
+      const killed = spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { timeout: 5_000, windowsHide: true, encoding: 'utf8' });
+      assert.equal(killed.status, 0, `fixture launcher cleanup failed: ${killed.error?.message || killed.stderr || killed.stdout}`);
+    }
+    await Promise.race([childDone, delay(5_000, undefined, { ref: false }).then(() => { throw new Error('fixture launcher did not exit'); })]);
   };
   try {
     const key = path.join(root, 'key.pem');
@@ -67,6 +75,15 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
     assert.ok(!fs.existsSync(confirmFile), 'gateway did not consume the local confirmation');
     assert.equal(listener.commitPendingApproval(host, approval)?.status, 'approved');
     const controller = createProcessController(listener);
+    const identifyGateway = async (operationId) => {
+      const probe = await controller.executeProcess({ targetId: host, operationId,
+        process: { executable: process.execPath, args: ['-p', 'process.ppid'] } });
+      assert.equal(probe.ok, true, 'could not identify the owned gateway process');
+      const pid = Number(probe.stdout.trim());
+      assert.ok(Number.isSafeInteger(pid) && pid > 0 && pid !== child.pid && pid !== process.pid, 'invalid owned gateway PID');
+      gatewayPid = pid;
+    };
+    await identifyGateway('launcher-owned-pid');
     const work = path.join(root, 'launcher proof.txt');
     const write = () => listener.dispatchFilesystem(host, { operationId: 'write', tool: 'files_write', arguments: { filePath: work, content: 'launcher' } });
     assert.equal((await write()).response.result.outcome.ok, true);
@@ -134,6 +151,7 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
       assert.equal(JSON.parse(status.content[0].text).state, 'desktop_helper_absent');
       assert.equal((await desktop('screenshot')).isError, true);
       assert.equal((await write()).response.result.replay, true, 'desktop stop did not preserve shell/files transport');
+      t.diagnostic('NG_WINDOWS_DESKTOP_STOP_VERIFIED: local Stop revoked desktop access while file replay stayed connected');
     }
     const disconnected = once(listener, 'gatewayDisconnected', { signal: AbortSignal.timeout(10_000) });
     await halt();
@@ -142,16 +160,28 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
     open();
     const [connection] = await reconnected.catch(error => { throw new Error(`launcher did not reconnect: ${diagnostic() || 'no stderr'}`, { cause: error }); });
     assert.equal(connection.gatewayId, host);
+    await identifyGateway('launcher-restarted-pid');
     assert.equal((await write()).response.result.replay, true);
     if (desktop) {
       assert.equal(JSON.parse((await desktop('status')).content[0].text).state, 'desktop_disabled');
       t.diagnostic('NG_WINDOWS_DESKTOP_E2E_VERIFIED: paired TLS, PowerShell/files, primary JPEG, owned app inspect/invoke marker, local Stop, files replay and opt-in reset on restart');
     }
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    if (app?.pid && app.exitCode === null && app.signalCode === null) { app.kill(); await appDone; }
-    try { await halt(); } finally {
-      await listener?.close();
-      fs.rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+    try {
+      try {
+        if (app?.pid && app.exitCode === null && app.signalCode === null) { app.kill(); await appDone; }
+      } finally {
+        try { await halt(); } finally {
+          await listener?.close();
+          fs.rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+        }
+      }
+    } catch (cleanupError) {
+      if (!primaryError) throw cleanupError;
+      t.diagnostic(`Fixture cleanup also failed: ${cleanupError.message}`);
     }
   }
 });

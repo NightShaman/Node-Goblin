@@ -13,7 +13,7 @@ import { createProcessController } from '../../server/index.mjs';
 
 const windows = process.platform === 'win32';
 
-test('real TLS pairing authorizes a host, runs a harmless shell command, mutates a file and replays after reconnect', { timeout: 30_000 }, async () => {
+test('real TLS pairing authorizes a host, runs a harmless shell command, mutates a file and replays after reconnect', { timeout: 30_000 }, async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'node-goblin-host-'));
   const certPath = path.join(dir, 'test-cert.pem');
   const keyPath = path.join(dir, 'test-key.pem');
@@ -45,6 +45,17 @@ test('real TLS pairing authorizes a host, runs a harmless shell command, mutates
     const executed = await controller.executeProcess(request);
     assert.equal(executed.ok, true);
     assert.equal(executed.stdout.trim(), 'node-goblin');
+    const protectedCase = await controller.executeProcess({
+      targetId: gatewayId, operationId: 'protected-env-case',
+      process: { executable: process.execPath,
+        args: ['-e', 'console.log(process.env.NG_FIXTURE_CASE); console.log(process.env.ng_fixture_case)'],
+        env: { NG_FIXTURE_CASE: 'ordinary-env-fixture' } },
+      protectedValues: { ng_fixture_case: 'protected-env-fixture' },
+    });
+    assert.equal(protectedCase.ok, true);
+    assert.deepEqual(protectedCase.stdout.trim().split(/\r?\n/),
+      windows ? ['[redacted]', '[redacted]'] : ['ordinary-env-fixture', '[redacted]']);
+    if (windows) t.diagnostic('NG_WINDOWS_PROTECTED_ENV_VERIFIED: protected value wins across casing in the child and is redacted');
     if (windows) {
       const cmd = await controller.executeProcess({ targetId: gatewayId, operationId: 'cmd-smoke', process: { commandShell: 'cmd', command: 'echo node-goblin && echo second' } });
       assert.equal(cmd.ok, true);
