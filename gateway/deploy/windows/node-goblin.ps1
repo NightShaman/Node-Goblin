@@ -7,6 +7,7 @@ param(
   [string]$GatewayId
 )
 $ErrorActionPreference = 'Stop'
+if ($PSVersionTable.PSEdition -ne 'Desktop') { throw 'Run this script with Windows PowerShell (powershell.exe).' }
 $script:Base = Join-Path $env:LOCALAPPDATA 'NodeGoblin'
 $script:ConfigDir = Join-Path $script:Base 'config'
 $script:StateDir = Join-Path $script:Base 'state'
@@ -26,27 +27,36 @@ function Get-RuleSid($Identity) {
 function Protect-Path([string]$Path, [bool]$Directory) {
   Assert-NotReparse $Path
   $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
-  $system = New-Object Security.Principal.SecurityIdentifier('S-1-5-18')
-  $admins = New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')
+  $system = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
+  $admins = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
   $allowed = @($sid.Value,$system.Value,$admins.Value)
-  if ($Directory) { $acl = Get-Acl -LiteralPath $Path -ErrorAction SilentlyContinue; if (-not $acl) { New-Item -ItemType Directory -Path $Path -Force | Out-Null; $acl = Get-Acl -LiteralPath $Path } }
-  else { if (-not (Test-Path -LiteralPath $Path)) { return }; $acl = Get-Acl -LiteralPath $Path }
-  # Validate before tightening. Never silently bless a path that another
-  # principal can already read or modify, and reject all deny/unknown ACEs.
-  foreach ($entry in $acl.Access) {
-    if ($entry.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
-        (Get-RuleSid $entry.IdentityReference) -notin $allowed) { throw "Unexpected ACL entry on $Path" }
-  }
+  $exists = Test-Path -LiteralPath $Path
+  if ($exists) {
+    $item = Get-Item -LiteralPath $Path -Force
+    if ($Directory -ne $item.PSIsContainer) { throw "Unexpected path type: $Path" }
+    $acl = if ($Directory) { [IO.Directory]::GetAccessControl($Path) } else { [IO.File]::GetAccessControl($Path) }
+    if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $allowed) { throw "Unexpected ACL owner: $Path" }
+    foreach ($entry in $acl.Access) {
+      if ($entry.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+          (Get-RuleSid $entry.IdentityReference) -notin $allowed) { throw "Unexpected ACL entry on $Path" }
+    }
+  } elseif ($Directory) { $acl = [Security.AccessControl.DirectorySecurity]::new() }
+  else { return }
   $acl.SetAccessRuleProtection($true, $false)
-  foreach ($rule in @($acl.Access)) { [void]$acl.RemoveAccessRuleAll($rule) }
+  foreach ($rule in @($acl.Access)) { $acl.RemoveAccessRuleAll($rule) }
   $inherit = if ($Directory) { [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit' } else { [Security.AccessControl.InheritanceFlags]::None }
-  $prop = [Security.AccessControl.PropagationFlags]::None
   foreach ($who in @($sid,$system,$admins)) {
-    $rule = New-Object Security.AccessControl.FileSystemAccessRule($who,[Security.AccessControl.FileSystemRights]::FullControl,$inherit,$prop,[Security.AccessControl.AccessControlType]::Allow)
-    [void]$acl.AddAccessRule($rule)
+    $rule = [Security.AccessControl.FileSystemAccessRule]::new($who,[Security.AccessControl.FileSystemRights]::FullControl,$inherit,[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow)
+    $acl.AddAccessRule($rule)
   }
-  Set-Acl -LiteralPath $Path -AclObject $acl
-  $check = Get-Acl -LiteralPath $Path
+  if ($Directory) {
+    if ($exists) { [IO.Directory]::SetAccessControl($Path,$acl) }
+    else { [void][IO.Directory]::CreateDirectory($Path,$acl) }
+    $check = [IO.Directory]::GetAccessControl($Path)
+  } else {
+    [IO.File]::SetAccessControl($Path,$acl)
+    $check = [IO.File]::GetAccessControl($Path)
+  }
   if (-not $check.AreAccessRulesProtected) { throw "ACL inheritance could not be disabled: $Path" }
   foreach ($entry in $check.Access) {
     if ($entry.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
@@ -56,11 +66,7 @@ function Protect-Path([string]$Path, [bool]$Directory) {
 }
 function Initialize-ProtectedPaths {
   Assert-NotReparse $env:LOCALAPPDATA
-  foreach ($p in @($script:Base,$script:ConfigDir,$script:StateDir)) {
-    Assert-NotReparse $p
-    if (-not (Test-Path -LiteralPath $p)) { New-Item -ItemType Directory -Path $p | Out-Null }
-    Protect-Path $p $true
-  }
+  foreach ($p in @($script:Base,$script:ConfigDir,$script:StateDir)) { Protect-Path $p $true }
   Protect-Path $script:Config $false
 }
 function Read-Config {
@@ -85,7 +91,7 @@ function Write-Config($Values) {
 }
 function Show-Help {
   Write-Output 'Usage: node-goblin.ps1 configure | run | pairing-code | confirm-pairing CODE'
-  Write-Output 'run starts the gateway in this console; Ctrl+C stops it. No service or automatic startup is configured.'
+  Write-Output 'run starts the foreground gateway in this console; Ctrl+C stops it. No service or automatic startup is configured.'
 }
 
 if ($Command -eq 'help') { Show-Help; return }
