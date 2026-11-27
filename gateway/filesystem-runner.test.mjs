@@ -17,6 +17,18 @@ test('filesystem operation matrix preserves kinds and structures path/type failu
  assert.equal((await runFilesystem({tool:'files_read',arguments:{filePath:made}})).content,'after');
 });
 
+test('Windows replaces existing files and preserves Windows path spelling', { skip: process.platform !== 'win32' }, async t => {
+ const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'fs-windows-'));
+ t.after(() => fs.promises.rm(root, { recursive: true, force: true }));
+ const filePath = path.join(root, 'replace me.txt');
+ await fs.promises.writeFile(filePath, 'before');
+ const result = await runFilesystem({ tool: 'files_write', arguments: { filePath, content: 'after' } });
+ assert.equal(result.ok, true);
+ assert.equal(result.filePath, filePath);
+ assert.equal(await fs.promises.readFile(filePath, 'utf8'), 'after');
+ assert.deepEqual((await fs.promises.readdir(root)).sort(), ['replace me.txt']);
+});
+
 test('filesystem traversal reports depth and entry truncation with explicit bounds', async () => {
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'fs-bounds-')); fs.mkdirSync(path.join(root,'one','two'),{recursive:true});
  fs.writeFileSync(path.join(root,'one','two','deep.mjs'),'x'); fs.writeFileSync(path.join(root,'sibling.mjs'),'x');

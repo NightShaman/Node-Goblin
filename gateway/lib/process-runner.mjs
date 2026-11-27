@@ -4,7 +4,7 @@ import { StringDecoder } from 'node:string_decoder';
 import process from 'node:process';
 import { DEFAULT_MAX_OUTPUT_BYTES, digestHex, truncateUtf8 } from './protocol.mjs';
 
-function normalizeExec(request = {}) {
+export function buildExec(request = {}, platform = process.platform, env = process.env) {
   const command = request.command;
   const executable = request.executable;
   const args = request.args;
@@ -14,6 +14,19 @@ function normalizeExec(request = {}) {
   if (command != null && executable != null) throw new Error('command_and_executable_mutually_exclusive');
   if (command == null && executable == null) throw new Error('command_or_executable_required');
   if (command != null && args?.length) throw new Error('args_with_command_invalid');
+  const shell = request.commandShell;
+  if (shell != null && (command == null || !['powershell', 'cmd'].includes(shell))) throw new Error('command_shell_invalid');
+  if (command != null && platform === 'win32') {
+    if (shell === 'powershell') {
+      const file = env.SystemRoot ? `${env.SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe` : 'powershell.exe';
+      const script = '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)\n' + command.trim();
+      return { mode: 'shell', shell, file, args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], options: { shell: false } };
+    }
+    // Node builds the Windows /d /s /c command line (including its outer
+    // quotes) the same way as for the legacy default shell.
+    return { mode: 'shell', shell: 'cmd', file: command.trim(), args: [], options: { shell: env.ComSpec || env.COMSPEC || 'cmd.exe' } };
+  }
+  if (shell != null) throw new Error('command_shell_unsupported');
   if (command != null) return { mode: 'shell', file: command.trim(), args: [], options: { shell: true } };
   return { mode: 'exec', file: executable.trim(), args: args ? [...args] : [], options: { shell: false } };
 }
@@ -28,12 +41,13 @@ export function runProcess(request, { protectedEnv = null, emitEvent, signal, no
   const maxOutputBytes = Number.isInteger(request.maxOutputBytes) && request.maxOutputBytes > 0 ? request.maxOutputBytes : DEFAULT_MAX_OUTPUT_BYTES;
   const timeoutMs = Number.isInteger(request.timeoutMs) && request.timeoutMs > 0 ? request.timeoutMs : 30_000;
   const deadlineMs = Number.isInteger(request.deadlineMs) ? request.deadlineMs : null;
-  const exec = normalizeExec(request);
+  const exec = buildExec(request);
   const child = spawn(exec.file, exec.args, {
     cwd,
     env: env || secretEnv ? { ...process.env, ...(env || {}), ...(secretEnv || {}) } : process.env,
     shell: exec.options.shell,
     detached: process.platform !== 'win32',
+    ...(process.platform === 'win32' ? { windowsHide: true } : {}),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -90,21 +104,42 @@ export function runProcess(request, { protectedEnv = null, emitEvent, signal, no
 
   const terminate = (reasonSignal = 'SIGTERM') => {
     if (!child.pid) return false;
-    try {
-      if (process.platform !== 'win32') process.kill(-child.pid, reasonSignal);
-      else child.kill(reasonSignal);
-      return true;
-    } catch {
-      try { return child.kill(reasonSignal); } catch { return false; }
-    }
+    try { process.kill(-child.pid, reasonSignal); return true; }
+    catch { try { return child.kill(reasonSignal); } catch { return false; } }
   };
 
   let forceSettle = null;
+  let treeKillPending = false;
+  let pendingClose = null;
+  const stopWindows = () => {
+    if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
+    const taskkill = process.env.SystemRoot ? `${process.env.SystemRoot}\\System32\\taskkill.exe` : 'taskkill.exe';
+    // Best effort until verified on Windows. A successful spawn is not proof
+    // the target tree was killed; use the system utility's exit status.
+    treeKillPending = true;
+    const killer = spawn(taskkill, ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    const done = (code) => {
+      if (!treeKillPending) return;
+      treeKillPending = false;
+      killed = code === 0;
+      if (!killed && child.exitCode === null && child.signalCode === null) { try { child.kill(); } catch {} }
+      if (pendingClose) forceSettle?.(...pendingClose);
+    };
+    killer.once('error', () => done(null));
+    killer.once('exit', done);
+  };
   const stop = (reason) => {
     // The first trigger owns the stop; a deadline during grace must not
     // relabel an overflow (or schedule a second escalation).
     if (settled || stopReason !== null) return;
     stopReason = reason;
+    if (process.platform === 'win32') {
+      stopWindows();
+      const timer = setTimeout(() => forceSettle?.(null, null), 3_000);
+      timer.unref?.();
+      timers.push(timer);
+      return;
+    }
     killed = terminate('SIGTERM') || killed;
     const killTimer = setTimeout(() => { killed = terminate('SIGKILL') || killed; }, 1_000);
     const fallbackTimer = setTimeout(() => forceSettle?.(null, 'SIGTERM'), 1_100);
@@ -157,7 +192,8 @@ export function runProcess(request, { protectedEnv = null, emitEvent, signal, no
         mode: exec.mode,
         executable: exec.mode === 'exec' ? exec.file : null,
         args: exec.mode === 'exec' ? exec.args : [],
-        command: exec.mode === 'shell' ? exec.file : null,
+        command: exec.mode === 'shell' ? request.command.trim() : null,
+        ...(exec.shell ? { commandShell: exec.shell } : {}),
         exitCode: code,
         signal: closeSignal,
         cancelled: stopReason === 'abort',
@@ -177,6 +213,9 @@ export function runProcess(request, { protectedEnv = null, emitEvent, signal, no
     };
     forceSettle = finish;
     child.once('error', reject);
-    child.once('close', finish);
+    child.once('close', (...result) => {
+      if (treeKillPending) pendingClose = result;
+      else finish(...result);
+    });
   });
 }

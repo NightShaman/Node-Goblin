@@ -25,10 +25,11 @@ async function snapshot(filePath) {
 const contentVersion = (content) => crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
 async function mutate(filePath, a, edit, signal) {
   const target = await mutationPath(filePath);
-  const previous = mutations.get(target) || Promise.resolve();
+  const lockKey = process.platform === 'win32' ? target.toLowerCase() : target;
+  const previous = mutations.get(lockKey) || Promise.resolve();
   let release;
   const held = new Promise(resolve => { release = resolve; });
-  mutations.set(target, held);
+  mutations.set(lockKey, held);
   await previous;
   let temporary;
   try {
@@ -47,7 +48,7 @@ async function mutate(filePath, a, edit, signal) {
     await fs.mkdir(path.dirname(target), { recursive: true });
     temporary = path.join(path.dirname(target), `.node-goblin-${crypto.randomUUID()}.tmp`);
     await fs.writeFile(temporary, content, { encoding: 'utf8', flag: 'wx', mode: before ? before.stat.mode & 0o777 : 0o666 });
-    if (before) {
+    if (before && process.platform !== 'win32') {
       const staged = await fs.stat(temporary);
       if (staged.uid !== before.stat.uid || staged.gid !== before.stat.gid) await fs.chown(temporary, before.stat.uid, before.stat.gid);
       await fs.chmod(temporary, before.stat.mode & 0o7777);
@@ -64,7 +65,7 @@ async function mutate(filePath, a, edit, signal) {
   } finally {
     if (temporary) await fs.unlink(temporary).catch(() => {});
     release();
-    if (mutations.get(target) === held) mutations.delete(target);
+    if (mutations.get(lockKey) === held) mutations.delete(lockKey);
   }
 }
 
@@ -150,7 +151,7 @@ export async function runFilesystem(params = {}, { signal, now = () => Date.now(
       const listing = await walk(root, { maxDepth: bound(a.maxDepth, tool === 'files_list' ? 4 : 8), maxEntries: tool === 'files_list' ? bound(a.maxEntries, 500) : bound(a.maxTraversalEntries, traversalBudget()), signal });
       if (tool === 'files_list') result = { tool, ok: true, dirPath: root, entries: listing.entries, ...traversalMeta(listing), error: null, artifacts: null };
       else if (tool === 'files_find') {
-        const pattern = String(a.pattern || '*'); const paths = listing.entries.map(e => e.path).filter(p => globRegex(pattern).test(p));
+        const pattern = String(a.pattern || '*'); const paths = listing.entries.map(e => e.path).filter(p => globRegex(pattern).test(path.sep === '\\' ? p.replaceAll('\\', '/') : p));
         const limit = bound(a.maxEntries, 500); const limited = paths.length > limit;
         result = { tool, ok: true, dirPath: root, pattern, paths: paths.slice(0, limit), ...traversalMeta(listing, { resultLimitReached: limited }), error: null, artifacts: null };
       } else {

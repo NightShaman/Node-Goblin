@@ -43,7 +43,8 @@ function cleanProcessRequest(value = {}) {
   if (command != null && executable != null) throw problem('command_and_executable_mutually_exclusive');
   if (command == null && executable == null) throw problem('command_or_executable_required');
   if (command != null && args?.length) throw problem('args_with_command_invalid');
-  return command != null ? { command: command.trim() } : { executable: executable.trim(), args: args ? [...args] : [] };
+  if (value.commandShell != null && (command == null || !['powershell', 'cmd'].includes(value.commandShell))) throw problem('command_shell_invalid');
+  return command != null ? { command: command.trim(), ...(value.commandShell != null ? { commandShell: value.commandShell } : {}) } : { executable: executable.trim(), args: args ? [...args] : [] };
 }
 
 function cleanName(value) {
@@ -298,7 +299,7 @@ export function shellExecResult(request, dispatch) {
     signal: evidence.signal ?? null,
     timedOut,
     cancelled,
-    killed: evidence.signal != null,
+    killed: evidence.killed === true || evidence.signal != null,
     durationMs: evidence.durationMs ?? null,
     stdout,
     stderr,

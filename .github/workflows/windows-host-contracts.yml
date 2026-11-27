@@ -1,0 +1,27 @@
+name: Windows gateway contracts
+on:
+  push:
+    branches: [hatchet/windows-node-goblin]
+  pull_request:
+    paths: ['gateway/**', 'server/**', '.github/workflows/windows-host-contracts.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    timeout-minutes: 10
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Exercise Windows host primitives over real pairing and TLS
+        shell: pwsh
+        run: |
+          if (-not (Get-Command openssl.exe -ErrorAction SilentlyContinue)) {
+            $env:Path = "$env:ProgramFiles\Git\usr\bin;$env:Path"
+          }
+          node --test gateway/test/windows-host.test.mjs gateway/test/windows-bootstrap.test.mjs

@@ -1,6 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { runProcess } from './lib/process-runner.mjs';
+import { runProcess, buildExec } from './lib/process-runner.mjs';
+
+test('platform-neutral command builders choose explicit Windows shells without shell interpolation', () => {
+  const powershell = buildExec({ command: 'Write-Output "hello"', commandShell: 'powershell' }, 'win32', { SystemRoot: 'C:\\Windows' });
+  assert.equal(powershell.file, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+  assert.equal(powershell.args.at(-2), '-EncodedCommand');
+  assert.match(Buffer.from(powershell.args.at(-1), 'base64').toString('utf16le'), /Write-Output "hello"/);
+  assert.equal(powershell.options.shell, false);
+  const cmd = buildExec({ command: 'echo hello', commandShell: 'cmd' }, 'win32', { ComSpec: 'C:\\Windows\\System32\\cmd.exe' });
+  assert.equal(cmd.options.shell, 'C:\\Windows\\System32\\cmd.exe');
+  assert.equal(cmd.file, 'echo hello');
+  assert.throws(() => buildExec({ command: 'echo', commandShell: 'bash' }, 'win32'), /command_shell_invalid/);
+});
+
+test('Windows command invocations execute through selected shells', { skip: process.platform !== 'win32' }, async () => {
+  for (const [commandShell, command] of [['cmd', 'echo goblin-cmd && echo second'], ['powershell', `Write-Output ('goblin-powershell ' + 'é')`]]) {
+    const result = await runProcess({ command, commandShell, timeoutMs: 10_000 });
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /goblin-(cmd|powershell)/);
+    assert.equal(result.commandShell, commandShell);
+  }
+});
 
 const stubbornProcess = [
   '-e',
