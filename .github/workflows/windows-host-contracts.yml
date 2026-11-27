@@ -54,7 +54,7 @@ jobs:
             if (Test-Path -LiteralPath $desktopLog) { Get-Content -LiteralPath $desktopLog }
             if ($proc.ExitCode -ne 0) { throw "Desktop integration failed ($($proc.ExitCode))" }
             if (($surface | ConvertFrom-Json).state -ne 'interactive_non_elevated_capture_verified') { throw 'Standard-user app pixels were not verified' }
-            foreach ($marker in 'NG_WINDOWS_DESKTOP_APP_INVOKED', 'NG_WINDOWS_DESKTOP_STOP_VERIFIED', 'NG_WINDOWS_DESKTOP_E2E_VERIFIED') {
+            foreach ($marker in 'NG_WINDOWS_DESKTOP_APP_INVOKED', 'NG_WINDOWS_DESKTOP_STOP_VERIFIED', 'NG_WINDOWS_DESKTOP_DISCONNECT_VERIFIED', 'NG_WINDOWS_DESKTOP_E2E_VERIFIED') {
               if (-not (Test-Path -LiteralPath $desktopLog) -or -not (Select-String -LiteralPath $desktopLog -Pattern "^# ${marker}: " -Quiet)) { throw "Desktop integration proof missing: $marker" }
             }
           }
