@@ -171,8 +171,9 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
       await offDisconnected;
       const optedIn = once(listener, 'gatewayAuthenticated', { signal: AbortSignal.timeout(10_000) });
       open(true);
-      const [beforeDrop] = await optedIn;
-      assert.equal(beforeDrop.gatewayId, host);
+      const [{ gatewayId: optedInHost, connection: beforeDrop }] = await optedIn;
+      assert.equal(optedInHost, host);
+      assert.equal(listener.liveGateway(host), beforeDrop);
       await identifyGateway('launcher-opted-back-in-pid');
       const beforeDropPid = gatewayPid;
       let status;
@@ -182,10 +183,16 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
         await delay(150);
       }
       assert.equal(status.available, true, `local re-opt-in did not enable desktop: ${JSON.stringify(status)}`);
-      const afterDropAuth = once(listener, 'gatewayAuthenticated', { signal: AbortSignal.timeout(10_000) });
+      const droppedAndReauthenticated = Promise.all([
+        once(listener, 'gatewayDisconnected', { signal: AbortSignal.timeout(10_000) }),
+        once(listener, 'gatewayAuthenticated', { signal: AbortSignal.timeout(10_000) }),
+      ]);
       beforeDrop.socket.destroy();
-      const [afterDrop] = await afterDropAuth;
-      assert.equal(afterDrop.gatewayId, host);
+      const [[dropped], [{ gatewayId: reauthenticatedHost, connection: afterDrop }]] = await droppedAndReauthenticated;
+      assert.equal(dropped.gatewayId, host);
+      assert.equal(dropped.connection, beforeDrop);
+      assert.equal(reauthenticatedHost, host);
+      assert.equal(listener.liveGateway(host), afterDrop);
       assert.notEqual(afterDrop.connectionId, beforeDrop.connectionId);
       await identifyGateway('launcher-reconnected-pid');
       assert.equal(gatewayPid, beforeDropPid, 'the gateway must reconnect without a process restart');
@@ -193,7 +200,9 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
       assert.equal(status.connected, true);
       assert.equal(status.available, false);
       assert.equal(status.state, 'desktop_helper_absent');
-      assert.equal((await desktop('screenshot')).isError, true);
+      const denied = await desktop('screenshot');
+      assert.equal(denied.isError, true);
+      assert.equal(JSON.parse(denied.content[0].text).error, 'desktop_helper_absent');
       assert.equal((await write()).response.result.replay, true, 'desktop revocation prevented file replay on reconnect');
       t.diagnostic('NG_WINDOWS_DESKTOP_DISCONNECT_VERIFIED: authenticated transport loss revoked desktop across same-process reconnect; file replay resumed');
       t.diagnostic('NG_WINDOWS_DESKTOP_E2E_VERIFIED: paired TLS, PowerShell/files, primary JPEG, owned app inspect/invoke marker, local Stop, files replay and opt-in reset on restart');
