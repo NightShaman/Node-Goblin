@@ -24,4 +24,37 @@ jobs:
           if (-not (Get-Command openssl.exe -ErrorAction SilentlyContinue)) {
             $env:Path = "$env:ProgramFiles\Git\usr\bin;$env:Path"
           }
-          node --test gateway/test/windows-host.test.mjs gateway/test/windows-bootstrap.test.mjs
+          node --test gateway/test/windows-host.test.mjs gateway/test/windows-bootstrap.test.mjs gateway/test/windows-launcher.test.mjs
+      - name: Verify whether this disposable runner has a real standard-user desktop
+        if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/hatchet/windows-node-goblin' }}
+        shell: pwsh
+        run: |
+          $probe = (Resolve-Path 'gateway/test/windows-desktop-probe.ps1').Path
+          $result = Join-Path $env:RUNNER_TEMP 'node-goblin-desktop-probe.json'
+          $winps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          & $winps -NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -File $probe -ResultPath $result
+          $direct = Get-Content -LiteralPath $result -Raw | ConvertFrom-Json
+          Write-Output "Runner process: $($direct | ConvertTo-Json -Compress)"
+          if ($direct.state -ne 'interactive_non_elevated_capture_verified') {
+            Remove-Item -LiteralPath $result
+            $name = "Node Goblin CI fixture $([Guid]::NewGuid())"
+            $action = New-ScheduledTaskAction -Execute $winps -Argument "-NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -File `"$probe`" -ResultPath `"$result`""
+            $owner = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+            $principal = New-ScheduledTaskPrincipal -UserId $owner -LogonType Interactive -RunLevel Limited
+            $registered = $false
+            try {
+              Register-ScheduledTask -TaskName $name -Action $action -Principal $principal -ErrorAction Stop | Out-Null
+              $registered = $true
+              Start-ScheduledTask -TaskName $name -ErrorAction Stop
+              for ($i = 0; $i -lt 15 -and -not (Test-Path -LiteralPath $result); $i++) { Start-Sleep -Seconds 1 }
+              if (Test-Path -LiteralPath $result) { Write-Output "Limited interactive token: $(Get-Content -LiteralPath $result -Raw)" }
+              else { Write-Output "Limited interactive token: no desktop receipt (task result: $((Get-ScheduledTaskInfo -TaskName $name).LastTaskResult))" }
+            } catch { Write-Output "Limited interactive token not available: $($_.Exception.Message)" }
+            finally {
+              if ($registered) {
+                Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
+                Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
+              }
+            }
+          }
+          if (Test-Path -LiteralPath $result) { Remove-Item -LiteralPath $result }

@@ -114,7 +114,7 @@ export function runProcess(request, { protectedEnv = null, emitEvent, signal, no
   const stopWindows = () => {
     if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
     const taskkill = process.env.SystemRoot ? `${process.env.SystemRoot}\\System32\\taskkill.exe` : 'taskkill.exe';
-    // Best effort until verified on Windows. A successful spawn is not proof
+    // Best effort for a live leader and its known tree. A spawn alone is not proof
     // the target tree was killed; use the system utility's exit status.
     treeKillPending = true;
     const killer = spawn(taskkill, ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
