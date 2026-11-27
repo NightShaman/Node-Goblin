@@ -1,6 +1,6 @@
 # Run only as the foreground launcher's child, with private stdin/stdout.
 $ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Windows.Forms, System.Drawing, UIAutomationClient, UIAutomationTypes
+Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, UIAutomationClient, UIAutomationTypes
 Add-Type @'
 using System;
 using System.Collections.Concurrent;
@@ -94,7 +94,8 @@ function Limit-Label([string]$value) { if ($value.Length -gt 200) { $value.Subst
 function Get-AvailableDesktop {
   $state = Get-DesktopState
   if ($state -ne 'available') { return $state }
-  if (-not $window.Visible -or -not [NodeGoblinDesktop]::IsWindowVisible($window.Handle) -or [NodeGoblinDesktop]::IsIconic($window.Handle)) { return 'desktop_indicator_unavailable' }
+  $hwnd = [Windows.Interop.WindowInteropHelper]::new($window).Handle
+  if (-not $window.IsVisible -or -not [NodeGoblinDesktop]::IsWindowVisible($hwnd) -or [NodeGoblinDesktop]::IsIconic($hwnd)) { return 'desktop_indicator_unavailable' }
   return 'available'
 }
 function Get-MainWindows {
@@ -163,28 +164,32 @@ function Handle-Request($request) {
     default { throw 'desktop_arguments_invalid' }
   }
 }
-$window = [Windows.Forms.Form]::new()
-$window.Text = 'Node Goblin desktop access'
-$window.ClientSize = [Drawing.Size]::new(320,54)
-$window.StartPosition = 'Manual'
-$window.Location = [Drawing.Point]::new(20,20)
-$window.TopMost = $true
-$window.MinimizeBox = $false
-$window.MaximizeBox = $false
-$stop = [Windows.Forms.Button]::new()
-$stop.Text = 'Stop Node Goblin desktop access'
-$stop.Dock = 'Fill'
+# Use a native WPF button so the visible local Stop is exposed to Windows assistive technology.
+$window = [Windows.Window]::new()
+$window.Title = 'Node Goblin desktop access'
+$window.Width = 320
+$window.Height = 88
+$window.WindowStartupLocation = 'Manual'
+$window.Left = 20
+$window.Top = 20
+$window.Topmost = $true
+$window.ResizeMode = 'NoResize'
+$window.ShowActivated = $false
+$stop = [Windows.Controls.Button]::new()
+$stop.Content = 'Stop Node Goblin desktop access'
+[Windows.Automation.AutomationProperties]::SetName($stop, 'Stop Node Goblin desktop access')
 $stop.Add_Click({ $window.Close() })
-$window.Controls.Add($stop)
-$window.Add_FormClosed({ [Windows.Forms.Application]::ExitThread() })
-$timer = [Windows.Forms.Timer]::new()
-$timer.Interval = 100
+$window.Content = $stop
+$dispatcher = [Windows.Threading.Dispatcher]::CurrentDispatcher
+$window.Add_Closed({ $dispatcher.BeginInvokeShutdown([Windows.Threading.DispatcherPriority]::Send) })
+$timer = [Windows.Threading.DispatcherTimer]::new()
+$timer.Interval = [TimeSpan]::FromMilliseconds(100)
 $timer.Add_Tick({
-  if ([NodeGoblinDesktop]::Closed) { [Windows.Forms.Application]::ExitThread(); return }
-  if (-not $window.Visible -and (Get-DesktopState) -eq 'available') {
+  if ([NodeGoblinDesktop]::Closed) { $window.Close(); return }
+  if (-not $window.IsVisible -and (Get-DesktopState) -eq 'available') {
     $window.Show()
     # A hidden subprocess startup flag can override the first ShowWindow call.
-    [NodeGoblinDesktop]::ShowIndicator($window.Handle)
+    [NodeGoblinDesktop]::ShowIndicator([Windows.Interop.WindowInteropHelper]::new($window).Handle)
   }
   $line = $null
   if (-not [NodeGoblinDesktop]::Input.TryDequeue([ref]$line)) { return }
@@ -202,5 +207,5 @@ $timer.Add_Tick({
   [Console]::WriteLine((ConvertTo-Json -InputObject $reply -Depth 8 -Compress))
 })
 [NodeGoblinDesktop]::StartReader()
-try { $timer.Start(); [Windows.Forms.Application]::Run() }
-finally { $timer.Dispose(); $window.Dispose() }
+try { $timer.Start(); [Windows.Threading.Dispatcher]::Run() }
+finally { $timer.Stop() }

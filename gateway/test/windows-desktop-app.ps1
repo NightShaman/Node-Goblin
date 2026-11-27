@@ -1,7 +1,7 @@
 # Harmless same-user CI fixture, also used to exercise the local Stop control.
 param([string]$Marker, [string]$Ready, [switch]$StopHelper)
 $ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Windows.Forms, System.Drawing, UIAutomationClient, UIAutomationTypes
+Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, UIAutomationClient, UIAutomationTypes
 if ($StopHelper) {
   $title = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, 'Node Goblin desktop access')
   $window = [Windows.Automation.AutomationElement]::RootElement.FindFirst([Windows.Automation.TreeScope]::Children, $title)
@@ -12,19 +12,21 @@ if ($StopHelper) {
   $button.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
   return
 }
-$form = [Windows.Forms.Form]::new()
-$form.Text = 'Node Goblin disposable application'
-$form.StartPosition = 'CenterScreen'
-$form.ClientSize = [Drawing.Size]::new(300,200)
-$form.TopMost = $true
-$button = [Windows.Forms.Button]::new()
-$button.Text = 'Write harmless proof'
-$button.Dock = 'Fill'
+# WPF supplies a public ButtonAutomationPeer with InvokePattern on .NET Framework.
+# Do not treat the older WinForms/MSAA bridge as a portable UIA provider.
+$window = [Windows.Window]::new()
+$window.Title = 'Node Goblin disposable application'
+$window.WindowStartupLocation = 'CenterScreen'
+$window.Width = 300
+$window.Height = 200
+$window.Topmost = $true
+$button = [Windows.Controls.Button]::new()
+$button.Content = 'Write harmless proof'
+[Windows.Automation.AutomationProperties]::SetName($button, 'Write harmless proof')
 $button.Add_Click({ [IO.File]::WriteAllText($Marker, 'invoked in the Windows app') })
-$form.Controls.Add($button)
-$form.Add_Shown({
-  $form.Refresh()
-  [IO.File]::WriteAllText($Ready, ('{0}:{1}' -f $PID, $form.Handle.ToInt64()))
+$window.Content = $button
+$window.Add_ContentRendered({
+  $hwnd = [Windows.Interop.WindowInteropHelper]::new($window).Handle
+  [IO.File]::WriteAllText($Ready, ('{0}:{1}' -f $PID, $hwnd.ToInt64()))
 })
-try { [Windows.Forms.Application]::Run($form) }
-finally { $form.Dispose() }
+[void]$window.ShowDialog()

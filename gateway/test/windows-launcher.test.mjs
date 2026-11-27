@@ -114,7 +114,9 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
       const capture = await desktop('screenshot');
       assert.equal(capture.content[1]?.mimeType, 'image/jpeg', capture.content[0].text);
       assert.ok(Buffer.from(capture.content[1].data, 'base64').length > 1024);
-      const inspect = JSON.parse((await desktop('inspect', { windowId: win.windowId })).content[0].text);
+      const inspected = await desktop('inspect', { windowId: win.windowId });
+      assert.notEqual(inspected.isError, true, `${inspected.content[0].text}; ${diagnostic() || 'no helper stderr'}`);
+      const inspect = JSON.parse(inspected.content[0].text);
       const control = inspect.controls?.find(item => item.enabled && item.name === 'Write harmless proof');
       assert.ok(control, JSON.stringify(inspect));
       const invocation = await desktop('invoke', { windowId: win.windowId, controlId: control.controlId });
