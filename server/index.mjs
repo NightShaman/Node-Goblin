@@ -182,7 +182,7 @@ function safeTelemetryDispatch(value, code) {
 // Keep documented operational categories while discarding arbitrary exception text.
 const SAFE_GATEWAY_DISPATCH_ERRORS = new Set([
   'gateway_not_connected', 'gateway_not_ready', 'gateway_disconnected', 'gateway_dispatch_failed',
-  'operation_id_conflict', 'operation_in_progress', 'protected_redelivery_forbidden',
+  'operation_id_conflict', 'operation_in_progress', 'protected_redelivery_forbidden', 'protected_delivery_binding_invalid',
 ]);
 function safeTelemetryDispatchError(error) {
   const candidate = error?.code || error?.message;
@@ -199,11 +199,9 @@ function serviceError(error) {
 function dispatchError(envelope) {
   const detail = envelope?.error || {};
   const code = SAFE_GATEWAY_DISPATCH_ERRORS.has(detail.code) ? detail.code : 'gateway_dispatch_failed';
-  const error = new Error(code);
-  error.code = code;
-  error.operationId = detail.operationId;
-  error.envelope = { ...envelope, error: { ...detail, code } };
-  return error;
+  // A peer can echo private request data in any property. Only the known code
+  // crosses this error boundary; do not attach the peer response to the Error.
+  return Object.assign(new Error(code), { code });
 }
 
 const OPERATIONS_NAME = 'controllerOperations';

@@ -85,7 +85,7 @@ entries. The legacy latest-N `/operations` route remains compatible.
 
 The process route requires either a nonempty `command` or a nonempty `executable`, never both; `args` is an array of strings and cannot be nonempty with `command`. Remaining body fields are forwarded to the dispatch service, except `telemetryConfiguration`: the public route removes that private Core transport field. Operator API callers cannot select a run's private telemetry destination snapshot. Only supply reviewed options documented in the [protocol](protocol.md).
 
-`dispatch` contains `accepted`, `response`, and `events`. A completed replay can have no new accepted envelope or stream events. Inspect nested success and process evidence. Disconnected/not-ready gateway dispatch errors map to HTTP 503; other dispatch exceptions map to 400 with a code such as `gateway_dispatch_failed`.
+`dispatch` contains `accepted`, `response`, and `events`. A completed replay can have no new accepted envelope or stream events. Inspect nested success and process evidence. Disconnected/not-ready gateway dispatch errors map to HTTP 503; other dispatch exceptions map to 400 with a code such as `gateway_dispatch_failed`. For remote `shell_exec`, a rejected protected binding is reported as `protected_delivery_binding_invalid`. Only the known gateway error code is forwarded, not the peer error envelope or credential data.
 
 There is no direct filesystem HTTP route in this module. Core calls `executeNativeFilesystem` through the registered execution provider.
 

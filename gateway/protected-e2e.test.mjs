@@ -99,6 +99,17 @@ test('authenticated controller to TLS transport injects protected child env with
     assert.equal([JSON.stringify(result), JSON.stringify(gatewayEvents), journalText, correlationText].some((text) => text.includes(secret)), false);
     assert.equal((await operationStore.get('protected-e2e')).parentRunId, 'run-secret');
     assert.equal((await operationStore.get('protected-e2e')).toolCallId, 'call-secret');
+
+    // An empty binding from legacy state is rejected before launching a process.
+    const rejected = 'protected-e2e-empty';
+    await assert.rejects(controller.executeProcess({
+      operationId: rejected, targetId: 'gateway-1', parentRunId: 'run-secret', toolCallId: 'empty',
+      process: { command: 'printf must-not-run' }, protectedValues: { TOKEN: '', OTHER: secret },
+    }), error => error.code === 'protected_delivery_binding_invalid' && error.message === error.code
+      && Object.keys(error).every(key => key === 'code') && !JSON.stringify(error).includes(secret));
+    assert.equal(gatewayEvents.some(event => event.operationId === rejected && event.type.startsWith('process.')), false);
+    assert.equal(fs.readFileSync(journalPath, 'utf8').includes(rejected), false);
+
   } finally {
     transport.stop();
     listener.close();

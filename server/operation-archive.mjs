@@ -5,7 +5,7 @@ const DEFAULT_PAGE_SIZE = 50;
 const SAFE_OUTCOMES = new Set([
   'completed', 'cancelling', 'timed_out', 'cancelled', 'failed',
   'gateway_not_connected', 'gateway_not_ready', 'gateway_disconnected', 'gateway_dispatch_failed',
-  'operation_id_conflict', 'operation_in_progress', 'protected_redelivery_forbidden',
+  'operation_id_conflict', 'operation_in_progress', 'protected_redelivery_forbidden', 'protected_delivery_binding_invalid',
   'process_failed', 'filesystem_failed', 'output_frame_too_large',
 ]);
 

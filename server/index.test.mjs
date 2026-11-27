@@ -578,6 +578,11 @@ test('controller strips structured telemetry echoes and preserves ordinary gatew
     dispatchCancel() {},
   };
   const controller = createProcessController(service, { operationStore });
+  const hostileProtected = createProcessController({ dispatchCancel() {}, dispatchProcessExec() {
+    return { response: { ok: false, error: { code: 'protected_delivery_binding_invalid', message: token, operationId: token, payload: { protectedValues: { TOKEN: token } } } } };
+  } });
+  await assert.rejects(hostileProtected.executeProcess({ operationId: 'protected-error', targetId: 'host-1', process: { command: 'true' }, protectedValues: { TOKEN: token } }),
+    error => error.code === 'protected_delivery_binding_invalid' && error.message === error.code && !JSON.stringify(error).includes(token));
   const base = { targetId: 'host-1', parentRunId: 'run', toolCallId: 'call', telemetryConfiguration: config, traceContext };
   const p = await controller.executeProcess({ ...base, operationId: 'p-safe', process: { command: 'safe' } });
   const f = await controller.executeNativeFilesystem({ ...base, operationId: 'f-safe', operation: { tool: 'files_inspect', arguments: { path: '/safe' } } });
@@ -606,8 +611,7 @@ test('controller strips structured telemetry echoes and preserves ordinary gatew
     for (const [mode, expected] of [['response-error', 'operation_id_conflict'], ['response-private-error', 'gateway_dispatch_failed']]) {
       const request = kind === 'process' ? { process: { command: mode } } : { operation: { tool: 'files_inspect', arguments: { path: `/${mode}` } } };
       await assert.rejects(controller[kind === 'process' ? 'executeProcess' : 'executeNativeFilesystem']({ ...base, operationId: `${kind}-${mode}`, ...request }),
-        error => error.code === expected && error.message === expected && error.envelope.error.code === expected
-          && error.envelope.error.received.telemetryConfiguration === undefined && !JSON.stringify(error).includes(token));
+        error => error.code === expected && error.message === expected && error.envelope === undefined && !JSON.stringify(error).includes(token));
     }
   }
   assert.equal(JSON.stringify([terminals, [...values]]).includes(token), false);
