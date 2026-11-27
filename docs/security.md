@@ -19,7 +19,7 @@ flowchart TB
 
 *On narrow screens, scroll the diagram horizontally to read all labels.*
 
-The manifest requests only the Core-owned `execution-provider-v1` capability. The system-mod marker does not grant unrelated Core access, and there is no extra per-agent Node Goblin capability grant. Core decides who may configure and use the provider. The mod manages gateway identity and routes execution. The gateway executes with its account's permissions. It does not introduce a container, VM, chroot, or mandatory filesystem allowlist.
+The manifest requests only the Core-owned `execution-provider-v1` capability. The system-mod marker does not grant unrelated Core access, and there is no extra per-agent Node Goblin capability grant for ordinary provider execution. The optional Windows `node_goblin_desktop` MCP tool requires a separate agent grant and a visible, locally enabled foreground helper; this is not a boundary on independently authorized shell execution. Core decides who may configure and use the provider. The mod manages gateway identity and routes execution. The gateway executes with its account's permissions. It does not introduce a container, VM, chroot, or mandatory filesystem allowlist.
 
 ## Deployment checklist
 

@@ -13,7 +13,13 @@ public static class NodeGoblinDesktop {
   [DllImport("user32.dll")] static extern bool CloseDesktop(IntPtr h);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern bool GetUserObjectInformation(IntPtr h, int index, StringBuilder value, uint bytes, out uint needed);
   [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+  delegate bool WindowCallback(IntPtr h, IntPtr data);
+  [DllImport("user32.dll")] static extern bool EnumWindows(WindowCallback callback, IntPtr data);
+  [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint command);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder value, int capacity);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int height, uint flags);
   [DllImport("user32.dll")] static extern int GetWindowThreadProcessId(IntPtr h, out int pid);
   [DllImport("advapi32.dll")] static extern bool GetTokenInformation(IntPtr token, int cls, out int result, int bytes, out int needed);
   [DllImport("advapi32.dll")] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
@@ -22,6 +28,18 @@ public static class NodeGoblinDesktop {
   [DllImport("wtsapi32.dll")] static extern bool WTSQuerySessionInformation(IntPtr server, int session, int cls, out IntPtr buffer, out int bytes);
   [DllImport("wtsapi32.dll")] static extern void WTSFreeMemory(IntPtr buffer);
   public static void SetupDpi() { SetProcessDPIAware(); }
+  public static void ShowIndicator(IntPtr h) { SetWindowPos(h, IntPtr.Zero, 0, 0, 0, 0, 0x0057); } // show, preserve position/size/z-order and activation
+  public static bool IsMainWindow(IntPtr h) { return IsWindowVisible(h) && GetWindow(h, 4) == IntPtr.Zero; } // no owner
+  public static IntPtr[] MainWindows() {
+    var windows = new System.Collections.Generic.List<IntPtr>();
+    EnumWindows((h, _) => { if (IsMainWindow(h)) windows.Add(h); return true; }, IntPtr.Zero);
+    return windows.ToArray();
+  }
+  public static string Caption(IntPtr h) {
+    var title = new StringBuilder(201);
+    GetWindowText(h, title, title.Capacity);
+    return title.ToString();
+  }
   public static int Owner(IntPtr h) { int pid; return GetWindowThreadProcessId(h, out pid) == 0 ? 0 : pid; }
   static bool Standard(IntPtr token) {
     int value, bytes;
@@ -73,21 +91,25 @@ public static class NodeGoblinDesktop {
 $session = [Diagnostics.Process]::GetCurrentProcess().SessionId
 function Get-DesktopState { [NodeGoblinDesktop]::State($session) }
 function Limit-Label([string]$value) { if ($value.Length -gt 200) { $value.Substring(0,200) } else { $value } }
+function Get-AvailableDesktop {
+  $state = Get-DesktopState
+  if ($state -ne 'available') { return $state }
+  if (-not $window.Visible -or -not [NodeGoblinDesktop]::IsWindowVisible($window.Handle) -or [NodeGoblinDesktop]::IsIconic($window.Handle)) { return 'desktop_indicator_unavailable' }
+  return 'available'
+}
 function Get-MainWindows {
-  foreach ($p in [Diagnostics.Process]::GetProcesses()) {
-    try {
-      if ($p.Id -eq $PID -or $p.SessionId -ne $session) { continue }
-      $h = $p.MainWindowHandle
-      if ($h -eq [IntPtr]::Zero -or -not [NodeGoblinDesktop]::IsWindowVisible($h) -or -not [NodeGoblinDesktop]::SameStandardUser($p.Id)) { continue }
-      @{ windowId=('{0}:{1}' -f $p.Id, $h.ToInt64()); title=(Limit-Label $p.MainWindowTitle) }
-    } catch [InvalidOperationException] { } catch [ComponentModel.Win32Exception] { }
-    finally { $p.Dispose() }
+  foreach ($h in [NodeGoblinDesktop]::MainWindows()) {
+    $processId = [NodeGoblinDesktop]::Owner($h)
+    if ($processId -le 0 -or $processId -eq $PID -or -not [NodeGoblinDesktop]::SameStandardUser($processId)) { continue }
+    # Check the HWND/PID association again after opening and checking the process token.
+    if ([NodeGoblinDesktop]::Owner($h) -ne $processId) { continue }
+    @{ windowId=('{0}:{1}' -f $processId, $h.ToInt64()); title=[NodeGoblinDesktop]::Caption($h) }
   }
 }
 function Get-InvokableElements($request, [bool]$Invoke) {
   if ($request.windowId -notmatch '^(\d{1,10}):(\d{1,19})$') { throw 'desktop_arguments_invalid' }
   $owner = [int]$matches[1]; $hwnd = [IntPtr]::new([long]$matches[2])
-  if ($owner -eq $PID -or [NodeGoblinDesktop]::Owner($hwnd) -ne $owner -or -not [NodeGoblinDesktop]::IsWindowVisible($hwnd)) { throw 'desktop_window_unavailable' }
+  if ($owner -eq $PID -or [NodeGoblinDesktop]::Owner($hwnd) -ne $owner -or -not [NodeGoblinDesktop]::IsMainWindow($hwnd)) { throw 'desktop_window_unavailable' }
   if (-not [NodeGoblinDesktop]::SameStandardUser($owner)) { throw 'desktop_window_access_denied' }
   $root = [Windows.Automation.AutomationElement]::FromHandle($hwnd)
   if ($null -eq $root -or $root.Current.ProcessId -ne $owner) { throw 'desktop_window_unavailable' }
@@ -100,7 +122,7 @@ function Get-InvokableElements($request, [bool]$Invoke) {
     $id = $item.GetRuntimeId() -join ':'
     if ($Invoke -and $id -ceq $request.controlId) {
       if (-not $item.Current.IsEnabled) { throw 'desktop_control_unavailable' }
-      $state = Get-DesktopState; if ($state -ne 'available') { throw $state }
+      $state = Get-AvailableDesktop; if ($state -ne 'available') { throw $state }
       $item.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
       return @{ invoked=$true }
     }
@@ -117,7 +139,7 @@ function Get-DesktopScreenshot {
   $graphics = [Drawing.Graphics]::FromImage($full)
   try {
     $graphics.CopyFromScreen($bounds.Location, [Drawing.Point]::Empty, $bounds.Size)
-    $state = Get-DesktopState; if ($state -ne 'available') { throw $state }
+    $state = Get-AvailableDesktop; if ($state -ne 'available') { throw $state }
     $scale = [Math]::Min(1, 1280 / [double][Math]::Max($bounds.Width,$bounds.Height))
     $width = [Math]::Max(1, [int]($bounds.Width * $scale)); $height = [Math]::Max(1, [int]($bounds.Height * $scale))
     $image = [Drawing.Bitmap]::new($full, $width, $height)
@@ -130,7 +152,7 @@ function Get-DesktopScreenshot {
   } finally { $graphics.Dispose(); $full.Dispose() }
 }
 function Handle-Request($request) {
-  $state = Get-DesktopState
+  $state = Get-AvailableDesktop
   if ($request.action -eq 'status') { return @{ available=($state -eq 'available'); state=$state; sessionId=$session } }
   if ($state -ne 'available') { throw $state }
   switch -CaseSensitive ($request.action) {
@@ -147,6 +169,8 @@ $window.ClientSize = [Drawing.Size]::new(320,54)
 $window.StartPosition = 'Manual'
 $window.Location = [Drawing.Point]::new(20,20)
 $window.TopMost = $true
+$window.MinimizeBox = $false
+$window.MaximizeBox = $false
 $stop = [Windows.Forms.Button]::new()
 $stop.Text = 'Stop Node Goblin desktop access'
 $stop.Dock = 'Fill'
@@ -157,13 +181,23 @@ $timer = [Windows.Forms.Timer]::new()
 $timer.Interval = 100
 $timer.Add_Tick({
   if ([NodeGoblinDesktop]::Closed) { [Windows.Forms.Application]::ExitThread(); return }
-  if (-not $window.Visible -and (Get-DesktopState) -eq 'available') { $window.Show() }
+  if (-not $window.Visible -and (Get-DesktopState) -eq 'available') {
+    $window.Show()
+    # A hidden subprocess startup flag can override the first ShowWindow call.
+    [NodeGoblinDesktop]::ShowIndicator($window.Handle)
+  }
   $line = $null
   if (-not [NodeGoblinDesktop]::Input.TryDequeue([ref]$line)) { return }
-  try { $reply = Handle-Request (ConvertFrom-Json -InputObject $line) }
+  $request = $null
+  try { $request = ConvertFrom-Json -InputObject $line; $reply = Handle-Request $request }
   catch {
     $code = $_.Exception.Message
-    $reply = @{ error= $(if ($code -cmatch '^desktop_[a-z_]+$') { $code } else { 'desktop_action_failed' }) }
+    if ($code -cmatch '^desktop_[a-z_]+$') { $reply = @{ error=$code } }
+    else {
+      $cause = $_.Exception.GetBaseException()
+      [Console]::Error.WriteLine(('Node Goblin desktop {0} failed: {1} (0x{2:X8})' -f $request.action, $cause.GetType().Name, $cause.HResult))
+      $reply = @{ error='desktop_action_failed' }
+    }
   }
   [Console]::WriteLine((ConvertTo-Json -InputObject $reply -Depth 8 -Compress))
 })

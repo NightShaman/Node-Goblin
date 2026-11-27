@@ -24,12 +24,12 @@ function checked(env, ...command) {
   return result.stdout;
 }
 
-test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a protected identity across restart', { skip: !windows, timeout: 80_000 }, async () => {
+test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a protected identity across restart', { skip: !windows, timeout: 95_000 }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'node-goblin-launcher-'));
   const env = { ...process.env, LOCALAPPDATA: root, BURROW_GATEWAY_STATE_DIR: path.join(root, 'must-not-create') };
   const state = path.join(root, 'NodeGoblin', 'state');
   const host = 'test-launcher';
-  let listener, child, childDone, startupError, app;
+  let listener, child, childDone, startupError, app, appDone;
   const diagnostic = () => startupError?.replace(/\b[A-F0-9]{4}(?:-[A-F0-9]{4}){2}\b/g, '[pairing code]');
   const open = (desktop) => {
     child = spawn('powershell.exe', args('run', ...(desktop ? ['-EnableDesktop'] : [])), { env, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
@@ -88,18 +88,29 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
       let status = await desktop('status');
       assert.equal(JSON.parse(status.content[0].text).available, true, status.content[0].text);
       const marker = path.join(root, 'desktop-action.txt');
-      app = spawn('powershell.exe', appArgs('-Marker', marker), { env, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+      const ready = path.join(root, 'desktop-app-ready.txt');
+      // Do not request SW_HIDE for the disposable process that owns the test window.
+      app = spawn('powershell.exe', appArgs('-Marker', marker, '-Ready', ready), { env, stdio: ['ignore', 'ignore', 'pipe'] });
+      appDone = once(app, 'exit');
+      appDone.catch(() => {});
       let appError = '';
       app.stderr.setEncoding('utf8').on('data', chunk => { appError = (appError + chunk).slice(-4000); });
-      let win;
+      for (let i = 0; !fs.existsSync(ready) && i < 40 && app.exitCode === null; i++) await delay(150);
+      assert.ok(fs.existsSync(ready), `fixture app did not open (exit ${app.exitCode}): ${appError}`);
+      const fixtureId = fs.readFileSync(ready, 'utf8');
+      assert.match(fixtureId, new RegExp(`^${app.pid}:\\d+$`));
+      let win, count;
       for (let i = 0; !win && i < 25; i++) {
         const result = await desktop('windows');
-        const windows = JSON.parse(result.content[0].text).windows || [];
+        assert.notEqual(result.isError, true, `${result.content[0].text}; ${diagnostic() || 'no helper stderr'}`);
+        const { windows } = JSON.parse(result.content[0].text);
+        assert.ok(Array.isArray(windows), 'desktop windows result did not contain a list');
+        count = windows.length;
         assert.ok(!windows.some(window => window.title === 'Node Goblin desktop access'), 'remote enumeration exposed the local Stop window');
-        win = windows.find(window => window.title === 'Node Goblin disposable application');
+        win = windows.find(window => window.windowId === fixtureId && window.title === 'Node Goblin disposable application');
         if (!win) await delay(150);
       }
-      assert.ok(win, `fixture window not visible: ${appError}`);
+      assert.ok(win, `owned fixture window not listed (${count} eligible windows, fixture ${fixtureId}, exit ${app.exitCode}): ${appError}`);
       const capture = await desktop('screenshot');
       assert.equal(capture.content[1]?.mimeType, 'image/jpeg', capture.content[0].text);
       assert.ok(Buffer.from(capture.content[1].data, 'base64').length > 1024);
@@ -129,9 +140,12 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
     const [connection] = await reconnected.catch(error => { throw new Error(`launcher did not reconnect: ${diagnostic() || 'no stderr'}`, { cause: error }); });
     assert.equal(connection.gatewayId, host);
     assert.equal((await write()).response.result.replay, true);
-    if (desktop) assert.equal(JSON.parse((await desktop('status')).content[0].text).state, 'desktop_disabled');
+    if (desktop) {
+      assert.equal(JSON.parse((await desktop('status')).content[0].text).state, 'desktop_disabled');
+      t.diagnostic('NG_WINDOWS_DESKTOP_E2E_VERIFIED: paired TLS, PowerShell/files, primary JPEG, owned app inspect/invoke marker, local Stop, files replay and opt-in reset on restart');
+    }
   } finally {
-    if (app?.pid && app.exitCode === null) { app.kill(); await once(app, 'exit'); }
+    if (app?.pid && app.exitCode === null && app.signalCode === null) { app.kill(); await appDone; }
     try { await halt(); } finally {
       await listener?.close();
       fs.rmSync(root, { recursive: true, force: true, maxRetries: 5 });

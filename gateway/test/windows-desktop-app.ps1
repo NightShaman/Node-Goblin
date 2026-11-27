@@ -1,5 +1,5 @@
 # Harmless same-user CI fixture, also used to exercise the local Stop control.
-param([string]$Marker, [switch]$StopHelper)
+param([string]$Marker, [string]$Ready, [switch]$StopHelper)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, UIAutomationClient, UIAutomationTypes
 if ($StopHelper) {
@@ -22,5 +22,9 @@ $button.Text = 'Write harmless proof'
 $button.Dock = 'Fill'
 $button.Add_Click({ [IO.File]::WriteAllText($Marker, 'invoked in the Windows app') })
 $form.Controls.Add($button)
+$form.Add_Shown({
+  $form.Refresh()
+  [IO.File]::WriteAllText($Ready, ('{0}:{1}' -f $PID, $form.Handle.ToInt64()))
+})
 try { [Windows.Forms.Application]::Run($form) }
 finally { $form.Dispose() }

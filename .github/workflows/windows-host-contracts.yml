@@ -25,8 +25,8 @@ jobs:
             $env:Path = "$env:ProgramFiles\Git\usr\bin;$env:Path"
           }
           node --test gateway/test/windows-host.test.mjs gateway/test/windows-bootstrap.test.mjs gateway/test/windows-launcher.test.mjs
-      - name: Try a disposable standard Windows user in the runner desktop
-        if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/hatchet/windows-node-goblin' }}
+      - name: Require the full desktop slice as a disposable standard Windows user
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/hatchet/windows-node-goblin' }}
         shell: pwsh
         run: |
           $owner = 'ngci' + [Guid]::NewGuid().ToString('N').Substring(0,12)
@@ -47,12 +47,15 @@ jobs:
             $cred = [PSCredential]::new("$env:COMPUTERNAME\$owner", $pw)
             $proc = Start-Process -PassThru -FilePath $winps -Credential $cred -LoadUserProfile -WorkingDirectory $work -ArgumentList @('-NoProfile','-NonInteractive','-Sta','-ExecutionPolicy','Bypass','-File','probe.ps1','-ResultPath','result.json','-ExerciseGateway') -ErrorAction Stop
             if (-not $proc.WaitForExit(120000)) { throw 'Standard-user probe timed out' }
-            if (Test-Path -LiteralPath $result) { Write-Output "Standard user desktop: $(Get-Content -LiteralPath $result -Raw)" }
-            else { Write-Output "Standard user desktop: no receipt (exit code: $($proc.ExitCode))" }
+            if (-not (Test-Path -LiteralPath $result)) { throw "Standard-user desktop did not record a receipt (exit $($proc.ExitCode))" }
+            $surface = Get-Content -LiteralPath $result -Raw
+            Write-Output "Standard user desktop: $surface"
             $desktopLog = Join-Path $work 'desktop-e2e.log'
             if (Test-Path -LiteralPath $desktopLog) { Get-Content -LiteralPath $desktopLog }
             if ($proc.ExitCode -ne 0) { throw "Desktop integration failed ($($proc.ExitCode))" }
-          } catch { Write-Output "Standard user desktop unavailable: $($_.Exception.Message)"; if ($proc -and $proc.HasExited -and $proc.ExitCode -ne 0) { throw } }
+            if (($surface | ConvertFrom-Json).state -ne 'interactive_non_elevated_capture_verified') { throw 'Standard-user app pixels were not verified' }
+            if (-not (Test-Path -LiteralPath $desktopLog) -or -not (Select-String -LiteralPath $desktopLog -SimpleMatch 'NG_WINDOWS_DESKTOP_E2E_VERIFIED' -Quiet)) { throw 'Full desktop integration proof missing' }
+          }
           finally {
             if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
             if ($user) { Remove-LocalUser -SID $user.Sid -ErrorAction SilentlyContinue }

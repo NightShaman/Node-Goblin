@@ -9,7 +9,7 @@ const limitError = code => Object.assign(new Error(code), { code });
 export const desktopErrorCodes = new Set([
   'desktop_arguments_invalid', 'desktop_disabled', 'desktop_helper_absent', 'desktop_busy',
   'desktop_timeout', 'desktop_transport_required', 'desktop_response_invalid',
-  'desktop_session_0', 'desktop_elevated', 'desktop_session_inactive', 'desktop_input_unavailable',
+  'desktop_session_0', 'desktop_elevated', 'desktop_session_inactive', 'desktop_input_unavailable', 'desktop_indicator_unavailable',
   'desktop_window_unavailable', 'desktop_window_access_denied', 'desktop_control_unavailable',
   'desktop_action_failed', 'desktop_screenshot_too_large',
 ]);
@@ -34,7 +34,7 @@ export class WindowsDesktop {
     const entry = fileURLToPath(new URL('../deploy/windows/desktop-helper.ps1', import.meta.url));
     // The foreground launcher opts in locally. No listener, durable switch, or restart on loss of consent.
     const child = this.child = spawnHelper(winps, ['-NoProfile', '-NonInteractive', '-Sta', '-ExecutionPolicy', 'Bypass', '-File', entry], {
-      windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'],
+      windowsHide: true, stdio: ['pipe', 'pipe', 'inherit'],
     });
     let reply = '';
     child.stdout.setEncoding('utf8');
