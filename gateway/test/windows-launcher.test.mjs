@@ -123,6 +123,7 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
       assert.equal(JSON.parse(invocation.content[0].text).invoked, true, invocation.content[0].text);
       for (let i = 0; !fs.existsSync(marker) && i < 30; i++) await delay(100);
       assert.equal(fs.readFileSync(marker, 'utf8'), 'invoked in the Windows app');
+      t.diagnostic('NG_WINDOWS_DESKTOP_APP_INVOKED: owned application wrote its marker after the primary JPEG and UIA invoke');
       const stopped = spawnSync('powershell.exe', appArgs('-StopHelper'), { env, encoding: 'utf8', timeout: 10_000, windowsHide: true });
       assert.equal(stopped.status, 0, stopped.error?.message || stopped.stderr);
       for (let i = 0; i < 15; i++) {

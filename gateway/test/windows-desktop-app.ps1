@@ -3,9 +3,21 @@ param([string]$Marker, [string]$Ready, [switch]$StopHelper)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, UIAutomationClient, UIAutomationTypes
 if ($StopHelper) {
-  $title = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, 'Node Goblin desktop access')
-  $window = [Windows.Automation.AutomationElement]::RootElement.FindFirst([Windows.Automation.TreeScope]::Children, $title)
-  if (-not $window) { throw 'Local stop window not found' }
+  # Verify the actual visible HWND on the owned CI desktop before operating the
+  # local button. UIA's global RootElement can omit windows on a borrowed session.
+  Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class FixtureStopWindow {
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string title);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  public static IntPtr FindStop() { return FindWindow(null, "Node Goblin desktop access"); }
+}
+'@
+  $hwnd = [FixtureStopWindow]::FindStop()
+  if ($hwnd -eq [IntPtr]::Zero -or -not [FixtureStopWindow]::IsWindowVisible($hwnd)) { throw 'Visible local stop HWND not found' }
+  $window = [Windows.Automation.AutomationElement]::FromHandle($hwnd)
+  if (-not $window) { throw 'Local stop HWND is not accessible through UIA' }
   $label = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, 'Stop Node Goblin desktop access')
   $button = $window.FindFirst([Windows.Automation.TreeScope]::Descendants, $label)
   if (-not $button) { throw 'Local stop button not found' }
