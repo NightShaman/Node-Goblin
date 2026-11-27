@@ -1,9 +1,13 @@
 # Owned CI fixture only: paint and sample a disposable window, never save a screenshot.
-param([Parameter(Mandatory=$true)][string]$ResultPath)
+param([Parameter(Mandatory=$true)][string]$ResultPath, [switch]$ExerciseGateway)
 $ErrorActionPreference = 'Stop'
 $state = 'probe_error'
 $session = [Diagnostics.Process]::GetCurrentProcess().SessionId
+[Environment]::CurrentDirectory = $PSScriptRoot
+Set-Location -LiteralPath $PSScriptRoot
+$env:TEMP = $PSScriptRoot; $env:TMP = $PSScriptRoot
 $stage = 'load'
+$problem = $null
 try {
   Add-Type -AssemblyName System.Windows.Forms, System.Drawing
   Add-Type @'
@@ -61,5 +65,12 @@ public static class DesktopProbe {
       else { $state = 'interactive_non_elevated_capture_verified' }
     } finally { $g.Dispose(); $bitmap.Dispose(); $form.Dispose() }
   }
-} catch { [Console]::Error.WriteLine("Desktop probe failed at ${stage}: $($_.Exception.GetType().Name): $($_.Exception.Message)") }
-[IO.File]::WriteAllText($ResultPath, (@{ state=$state; session=$session; stage=$stage } | ConvertTo-Json -Compress))
+} catch { $problem = "$($_.Exception.GetType().Name): $($_.Exception.Message)" }
+[IO.File]::WriteAllText($ResultPath, (@{ state=$state; session=$session; stage=$stage; error=$problem } | ConvertTo-Json -Compress))
+
+if ($ExerciseGateway -and $state -eq 'interactive_non_elevated_capture_verified') {
+  $env:NODE_GOBLIN_DESKTOP_E2E = '1'
+  $env:Path = "$PSScriptRoot;${env:ProgramFiles}\Git\usr\bin;$env:Path"
+  & (Join-Path $PSScriptRoot 'node.exe') --test gateway/test/windows-launcher.test.mjs *> (Join-Path $PSScriptRoot 'desktop-e2e.log')
+  exit $LASTEXITCODE
+}

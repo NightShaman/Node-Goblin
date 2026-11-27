@@ -4,7 +4,8 @@ param(
   [Parameter(Position=0)][ValidateSet('configure','run','pairing-code','confirm-pairing','help')][string]$Command = 'help',
   [Parameter(Position=1)][string]$Argument,
   [string]$Controller,
-  [string]$GatewayId
+  [string]$GatewayId,
+  [switch]$EnableDesktop
 )
 $ErrorActionPreference = 'Stop'
 if ($PSVersionTable.PSEdition -ne 'Desktop') { throw 'Run this script with Windows PowerShell (powershell.exe).' }
@@ -91,9 +92,11 @@ function Write-Config($Values) {
 }
 function Show-Help {
   Write-Output 'Usage: node-goblin.ps1 configure | run | pairing-code | confirm-pairing CODE'
+  Write-Output 'run -EnableDesktop opts in to the visible desktop helper for this launch only.'
   Write-Output 'run starts the foreground gateway in this console; Ctrl+C stops it. No service or automatic startup is configured.'
 }
 
+if ($EnableDesktop -and $Command -ne 'run') { throw '-EnableDesktop applies only to run.' }
 if ($Command -eq 'help') { Show-Help; return }
 Initialize-ProtectedPaths
 foreach ($entry in (Get-ChildItem -LiteralPath $script:StateDir -Force)) {
@@ -118,13 +121,14 @@ switch ($Command) {
     $values = Read-Config
     if (-not $values['BURROW_GATEWAY_CONTROLLER_URL'] -or -not $values['BURROW_GATEWAY_ID']) { throw 'Run configure first.' }
     if (-not (Test-Path -LiteralPath $script:EntryPoint -PathType Leaf)) { throw 'Node Goblin cli.mjs was not found next to this deployment.' }
-    $names = @('BURROW_GATEWAY_CONTROLLER_URL','BURROW_GATEWAY_ID','BURROW_GATEWAY_STATE_DIR','BURROW_GATEWAY_ENROLLMENT_TOKEN','BURROW_GATEWAY_CA_FILE','BURROW_GATEWAY_CERT_FILE','BURROW_GATEWAY_KEY_FILE')
+    $names = @('BURROW_GATEWAY_CONTROLLER_URL','BURROW_GATEWAY_ID','BURROW_GATEWAY_STATE_DIR','BURROW_GATEWAY_ENROLLMENT_TOKEN','BURROW_GATEWAY_CA_FILE','BURROW_GATEWAY_CERT_FILE','BURROW_GATEWAY_KEY_FILE','BURROW_GATEWAY_WINDOWS_DESKTOP')
     $prior = @{}; foreach ($name in $names) { $prior[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
     try {
       foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name,$null,'Process') }
       $env:BURROW_GATEWAY_CONTROLLER_URL = $values['BURROW_GATEWAY_CONTROLLER_URL']
       $env:BURROW_GATEWAY_ID = $values['BURROW_GATEWAY_ID']
       $env:BURROW_GATEWAY_STATE_DIR = $script:StateDir
+      if ($EnableDesktop) { $env:BURROW_GATEWAY_WINDOWS_DESKTOP = '1' }
       $nodeApplication = Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1
       & $nodeApplication.Path $script:EntryPoint
       if ($LASTEXITCODE -ne 0) { throw "Gateway exited with code $LASTEXITCODE" }

@@ -173,9 +173,11 @@ export class OutboundGatewayTransport extends EventEmitter {
       clearTimeout(this.authTimer);
       this.authTimer = null;
       this.daemon.output = CLOSED_OUTPUT;
+      const wasAuthenticated = this.authenticated;
       this.authenticated = false;
       this.connectionId = null;
       this.daemon.codex?.closeAll();
+      if (wasAuthenticated) this.daemon.desktop?.stop();
       this.daemon.secureTransportContext = null;
       this.emit('disconnected');
       this.scheduleReconnect();
@@ -305,6 +307,7 @@ export class OutboundGatewayTransport extends EventEmitter {
 
   async stop({ flushTelemetry = true } = {}) {
     this.stopped = true;
+    this.daemon.desktop?.stop();
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     clearTimeout(this.authTimer);

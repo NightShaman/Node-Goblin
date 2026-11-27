@@ -40,14 +40,19 @@ jobs:
             $user = New-LocalUser -Name $owner -Password $pw -ErrorAction Stop
             New-Item -Path $work -ItemType Directory -ErrorAction Stop | Out-Null
             Copy-Item -LiteralPath $source -Destination (Join-Path $work 'probe.ps1')
+            Copy-Item -LiteralPath (Get-Command node.exe -CommandType Application | Select-Object -First 1).Path -Destination (Join-Path $work 'node.exe')
+            Copy-Item -Path gateway,server -Recurse -Destination $work
             & icacls.exe $work '/inheritance:r' '/grant:r' ('*' + $user.Sid.Value + ':(OI)(CI)(M)') '*S-1-5-32-544:(OI)(CI)(F)' '*S-1-5-18:(OI)(CI)(F)' | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'Could not protect fixture directory' }
             $cred = [PSCredential]::new("$env:COMPUTERNAME\$owner", $pw)
-            $proc = Start-Process -PassThru -FilePath $winps -Credential $cred -WorkingDirectory $work -ArgumentList @('-NoProfile','-NonInteractive','-Sta','-ExecutionPolicy','Bypass','-File','probe.ps1','-ResultPath','result.json') -ErrorAction Stop
-            if (-not $proc.WaitForExit(15000)) { throw 'Standard-user probe timed out' }
+            $proc = Start-Process -PassThru -FilePath $winps -Credential $cred -LoadUserProfile -WorkingDirectory $work -ArgumentList @('-NoProfile','-NonInteractive','-Sta','-ExecutionPolicy','Bypass','-File','probe.ps1','-ResultPath','result.json','-ExerciseGateway') -ErrorAction Stop
+            if (-not $proc.WaitForExit(120000)) { throw 'Standard-user probe timed out' }
             if (Test-Path -LiteralPath $result) { Write-Output "Standard user desktop: $(Get-Content -LiteralPath $result -Raw)" }
             else { Write-Output "Standard user desktop: no receipt (exit code: $($proc.ExitCode))" }
-          } catch { Write-Output "Standard user desktop unavailable: $($_.Exception.Message)" }
+            $desktopLog = Join-Path $work 'desktop-e2e.log'
+            if (Test-Path -LiteralPath $desktopLog) { Get-Content -LiteralPath $desktopLog }
+            if ($proc.ExitCode -ne 0) { throw "Desktop integration failed ($($proc.ExitCode))" }
+          } catch { Write-Output "Standard user desktop unavailable: $($_.Exception.Message)"; if ($proc -and $proc.HasExited -and $proc.ExitCode -ne 0) { throw } }
           finally {
             if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
             if ($user) { Remove-LocalUser -SID $user.Sid -ErrorAction SilentlyContinue }

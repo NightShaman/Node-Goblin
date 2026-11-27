@@ -198,7 +198,7 @@ class GatewayConnection extends EventEmitter {
     }
     if (message.type === 'response' && message.requestId != null) {
       const pending = this.pendingRequests.get(message.requestId);
-      const privateCodex = /^(codex|claude|gemini)\./.test(pending?.method || '');
+      const privateResponse = /^(codex|claude|gemini|desktop)\./.test(pending?.method || '');
       if (pending) {
         this.pendingRequests.delete(message.requestId);
         const operationId = pending.operationId;
@@ -208,18 +208,18 @@ class GatewayConnection extends EventEmitter {
         pending.resolve({ accepted: pending.accepted ?? null, response: message, events: [...pending.events] });
       }
       if (message?.result?.activeOperations) this.health = message.result;
-      if (!privateCodex) this.listener.emit('gatewayResponse', { gatewayId: this.gatewayId, message });
+      if (!privateResponse && pending) this.listener.emit('gatewayResponse', { gatewayId: this.gatewayId, message });
       return;
     }
     if (message.type === 'error' && message.requestId != null) {
       const pending = this.pendingRequests.get(message.requestId);
-      const privateCodex = /^(codex|claude|gemini)\./.test(pending?.method || '');
+      const privateResponse = /^(codex|claude|gemini|desktop)\./.test(pending?.method || '');
       if (pending) {
         this.pendingRequests.delete(message.requestId);
         this.listener.recordResponse(this.gatewayId, pending, message);
         pending.reject(Object.assign(new Error(message?.error?.code || 'gateway_error'), { code: message?.error?.code || 'gateway_error', envelope: message }));
       }
-      if (!privateCodex) this.listener.emit('gatewayProtocolError', { gatewayId: this.gatewayId, message });
+      if (!privateResponse && pending) this.listener.emit('gatewayProtocolError', { gatewayId: this.gatewayId, message });
       return;
     }
     if (typeof message.operationId === 'string') {
@@ -473,6 +473,24 @@ export class GatewayControllerListener extends EventEmitter {
     const connection = this.liveGateway(gatewayId);
     if (!connection) throw new Error('gateway_not_connected');
     return connection.dispatch(method, params);
+  }
+
+  async dispatchDesktop(gatewayId, params) {
+    const connection = this.liveGateway(gatewayId);
+    if (!connection) throw Object.assign(new Error('gateway_not_connected'), { code: 'gateway_not_connected' });
+    const pending = connection.dispatch('desktop.execute', params);
+    const requestId = [...connection.pendingRequests.keys()].at(-1);
+    let timer;
+    try {
+      timer = setTimeout(() => {
+        const request = connection.pendingRequests.get(requestId);
+        if (!request || request.method !== 'desktop.execute') return;
+        connection.pendingRequests.delete(requestId);
+        request.reject(Object.assign(new Error('desktop_timeout'), { code: 'desktop_timeout' }));
+      }, 7000);
+      timer.unref?.();
+      return await pending;
+    } finally { clearTimeout(timer); }
   }
 
   dispatchProcessExec(gatewayId, params = {}) {

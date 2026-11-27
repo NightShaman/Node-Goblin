@@ -11,10 +11,11 @@ import { runProcess } from './process-runner.mjs';
 import { runFilesystem } from './filesystem-runner.mjs';
 import { createGatewayTelemetry } from './otel-runtime.mjs';
 import { normalizePrivateTelemetryConfiguration } from './telemetry-configuration.mjs';
+import { desktopErrorCodes, desktopRequest } from './windows-desktop.mjs';
 import { collectHostMetadata } from './host-metadata.mjs';
 
 export class GatewayDaemon {
-  constructor({ input = process.stdin, output = process.stdout, error = process.stderr, now = () => Date.now(), journal = new OperationJournal(), identity = {}, telemetry = null } = {}) {
+  constructor({ input = process.stdin, output = process.stdout, error = process.stderr, now = () => Date.now(), journal = new OperationJournal(), identity = {}, telemetry = null, desktop = null } = {}) {
     this.input = input;
     this.output = output;
     this.error = error;
@@ -30,6 +31,7 @@ export class GatewayDaemon {
     this.telemetry = telemetry || createGatewayTelemetry({ version: RELEASE_VERSION });
     this.controllers = new Map();
     this.codex = new CodexProcesses();
+    this.desktop = desktop;
     this.rl = null;
     this.stopping = false;
   }
@@ -51,6 +53,17 @@ export class GatewayDaemon {
         const result = await this.codex.handle(method, params, this.secureTransportContext);
         send({ type: 'response', requestId: message.id ?? null, ok: true, result });
       } catch { this.sendProtocolError(message.id ?? null, 'codex_transport_failed', {}, send); }
+      return;
+    }
+    if (method === 'desktop.execute') {
+      try {
+        if (!this.secureTransportContext) throw new Error('desktop_transport_required');
+        if (this.stopping) throw new Error('desktop_helper_absent');
+        const request = desktopRequest(params);
+        if (!this.desktop && request.action !== 'status') throw new Error('desktop_disabled');
+        const result = this.desktop ? await this.desktop.execute(request) : { available: false, state: 'desktop_unsupported' };
+        send({ type: 'response', requestId: message.id ?? null, ok: true, result });
+      } catch (error) { this.sendProtocolError(message.id ?? null, desktopErrorCodes.has(error.message) ? error.message : 'desktop_action_failed', {}, send); }
       return;
     }
     if (method === 'hello') {

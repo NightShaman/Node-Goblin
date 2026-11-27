@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import process from 'node:process';
+import { WindowsDesktop } from './lib/windows-desktop.mjs';
 import { GatewayDaemon } from './lib/daemon.mjs';
 import { OperationJournal } from './lib/journal.mjs';
 import { OutboundGatewayTransport, writePairingCode } from './lib/network-transport.mjs';
@@ -19,8 +20,11 @@ if (process.env.BURROW_GATEWAY_CONTROLLER_URL) {
   if (!process.env.BURROW_GATEWAY_ID?.trim()) throw new Error('BURROW_GATEWAY_ID is required for Node Goblin network transport');
   const daemon = new GatewayDaemon({
     journal: new OperationJournal({ stateDir }),
+    desktop: process.platform === 'win32' ? new WindowsDesktop({ enabled: process.env.BURROW_GATEWAY_WINDOWS_DESKTOP === '1' }) : null,
     identity: { transport: 'tls-jsonl-outbound' },
   });
+  // Do not pass the launch flag to remotely spawned child processes.
+  delete process.env.BURROW_GATEWAY_WINDOWS_DESKTOP;
   service = new OutboundGatewayTransport({
     host: controller.hostname,
     port: Number(controller.port || 443),
@@ -57,6 +61,7 @@ const shutdown = async () => {
   clearInterval(confirmationTimer);
   service.stopping = true;
   const daemon = service.daemon || service;
+  daemon.desktop?.stop();
   for (const entry of daemon.controllers.values()) entry.controller.abort();
   await service.stop();
 };

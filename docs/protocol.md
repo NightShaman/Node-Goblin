@@ -63,7 +63,7 @@ or a shell command string. `command` uses `shell: true`; `executable` with an ar
 
 Do not interpolate untrusted text into a shell command. Prefer explicit executable/argument arrays when shell syntax is unnecessary.
 
-These are daemon protocol options. The [Core adapter](architecture.md#manifest-and-activation) forwards a narrower subset and does not forward `deadlineMs` or `maxOutputBytes` in this baseline. Output overflow sends SIGTERM; it does not by itself schedule the one-second SIGKILL escalation used for cancellation and timeouts.
+These are daemon protocol options. The [Core adapter](architecture.md#manifest-and-activation) forwards a narrower subset and does not forward `deadlineMs` or `maxOutputBytes` in this baseline. Windows uses best-effort tree termination for a still-live leader instead of Unix signals.
 
 ## Events and terminal evidence
 
