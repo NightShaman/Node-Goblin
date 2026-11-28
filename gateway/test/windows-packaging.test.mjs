@@ -95,7 +95,7 @@ test('native Windows install/update/uninstall preserve data, reject unsafe input
     fs.writeFileSync(path.join(state, 'operations.json'), 'retained journal fixture');
     const data = [config, ...fs.readdirSync(state).map(name => path.join(state, name))];
     const snapshots = data.map(file => fs.readFileSync(file));
-    const acl = file => execFileSync(powershell, [...psArgs, '-Command', `(Get-Acl -LiteralPath ${quoted(file)}).Sddl`], { encoding: 'utf8' }).trim();
+    const acl = file => execFileSync(powershell, [...psArgs, '-Command', `[IO.File]::GetAccessControl(${quoted(file)}).Sddl`], { encoding: 'utf8' }).trim();
     const acls = data.map(acl);
     rejected(run(f.env, 'install.ps1', '-Source', f.source), /already exists/);
     rejected(run(f.env, 'update.ps1', '-Source', f.runtime), /must not overlap/);
