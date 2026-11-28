@@ -71,11 +71,13 @@ exclude_docs: |
   audit-repair-pass-5.md
   remote-codex-acceptance-brief.md
   repairs/
+  audit-receipts/
 
 nav:
   - Home: index.md
   - User guide:
       - Install Node Goblin: installation.md
+      - Windows development host: windows-host-development.md
       - Pair and assign a host: pairing.md
       - Settings: settings.md
       - Operations and troubleshooting: operations.md
