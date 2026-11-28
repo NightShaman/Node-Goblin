@@ -98,7 +98,7 @@ export async function createSettingsContribution(context) {
       fields: [
         { id: `assignment-kind:${agent.id}`, label: 'Runs on', control: 'select', value: kind, options: [{ value: 'local', label: 'Local controller' }, { value: 'remote', label: 'Configured gateway' }] },
         { id: `assignment-gateway:${agent.id}`, label: 'Gateway', control: 'select', value: targetId, options: gatewayOptions, description: 'Required when using a gateway.' },
-        { id: `assignment-workspace:${agent.id}`, label: 'Default workspace root', control: 'text', value: String(current.workspaceRoot || ''), description: 'Use an absolute workspace path.' },
+        { id: `assignment-workspace:${agent.id}`, label: 'Default workspace root', control: 'text', value: String(current.workspaceRoot || ''), description: 'Use an absolute path on the selected host.' },
       ],
       actions: [{ id: `save-assignment:${agent.id}`, label: 'Save assignment', tone: 'primary' }],
     };
@@ -184,6 +184,20 @@ async function settingsActionError(response, fallback) {
   return new Error(body || `${fallback} (${response.status}).`);
 }
 
+// Match Core's isAbsoluteRemotePath without normalizing for the browser's OS.
+function isAbsoluteRemoteWorkspacePath(value) {
+  if (value.includes('\0')) return false;
+  if (/^[a-z]:[\\/]/i.test(value)) return true;
+  if (/^[\\/]{2}/.test(value)) {
+    const [server, share, ...components] = value.slice(2).split(/[\\/]/);
+    const invalidName = /[<>:"|?*\x00-\x1f]/;
+    if ([server, share].some(name => !name || invalidName.test(name) || /[. ]$/.test(name))) return false;
+    return !components.some((name, index) =>
+      invalidName.test(name) || (!name && index !== components.length - 1));
+  }
+  return value.startsWith('/');
+}
+
 export async function handleSettingsAction(actionId, values) {
   if (actionId.startsWith('revoke-gateway:')) {
     const gatewayId = actionId.slice('revoke-gateway:'.length);
@@ -202,9 +216,17 @@ export async function handleSettingsAction(actionId, values) {
   if (actionId.startsWith('save-assignment:')) {
     const agentId = actionId.slice('save-assignment:'.length);
     const kind = String(values[`assignment-kind:${agentId}`] || 'local');
-    const workspaceRoot = String(values[`assignment-workspace:${agentId}`] || '').trim();
+    const workspaceValue = String(values[`assignment-workspace:${agentId}`] ?? '');
+    const workspaceRoot = kind === 'remote' ? workspaceValue : workspaceValue.trim();
     const targetId = String(values[`assignment-gateway:${agentId}`] || '').trim();
-    if (!workspaceRoot.startsWith('/') || (kind === 'remote' && !targetId)) throw new Error('Execution environment needs an absolute workspace root and gateway.');
+    if (kind === 'remote') {
+      if (!targetId) throw new Error('Select a gateway.');
+      if (!isAbsoluteRemoteWorkspacePath(workspaceRoot)) {
+        throw new Error(String.raw`Enter an absolute workspace path, such as /workspace, C:\workspace, or \\server\share.`);
+      }
+    } else if (!workspaceRoot.startsWith('/')) {
+      throw new Error('Enter an absolute workspace path starting with /.');
+    }
     await fetch(`/api/agents/${encodeURIComponent(agentId)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ executionEnvironment: { kind, workspaceRoot, ...(kind === 'remote' ? { providerId: 'node-goblin', targetId } : {}) } }) }).then(async (response) => { if (!response.ok) throw new Error((await response.text()) || `Assignment save failed (${response.status}).`); });
     return;
   }

@@ -73,6 +73,65 @@ test('method-specific Ed25519 conflict is displayed as a clean credential explan
 });
 
 
+test('remote assignments display and save absolute paths without rewriting them', async () => {
+  const workspaceRoots = [
+    '/var/lib/Agent Work/../Workspace ', '/', String.raw`D:\Agent Work\..\Workspace`, 'e:/',
+    String.raw`\\build-host\Agent Share\Projects`, '//build-host/agent-share/',
+  ];
+  const context = {
+    ...settingsContext([{ gatewayId: 'Hatchet', approved: true }]),
+    agents: [{ id: 'sma/tchet', executionEnvironment: {
+      kind: 'remote', providerId: 'node-goblin', targetId: 'Hatchet', workspaceRoot: workspaceRoots[2],
+    } }],
+  };
+  const { items: [assignment] } = (await createSettingsContribution(context)).sections.find(section => section.id === 'assignments');
+  const workspaceField = assignment.fields.find(field => field.id === 'assignment-workspace:sma/tchet');
+  assert.equal(workspaceField.value, workspaceRoots[2]);
+  assert.match(workspaceField.description, /selected host/);
+
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options) => { calls.push({ url, options }); return { ok: true }; };
+  try {
+    for (const workspaceRoot of workspaceRoots) {
+      await handleSettingsAction('save-assignment:sma/tchet', {
+        'assignment-kind:sma/tchet': 'remote', 'assignment-gateway:sma/tchet': 'Hatchet',
+        'assignment-workspace:sma/tchet': workspaceRoot,
+      });
+    }
+    assert.deepEqual(calls.map(({ url, options }) => [url, options.method, JSON.parse(options.body)]),
+      workspaceRoots.map(workspaceRoot => ['/api/agents/sma%2Ftchet', 'PATCH', {
+        executionEnvironment: { kind: 'remote', providerId: 'node-goblin', targetId: 'Hatchet', workspaceRoot },
+      }]));
+  } finally { globalThis.fetch = original; }
+});
+
+test('assignment validation rejects malformed remote roots and keeps local roots POSIX-only', async () => {
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (_url, options) => { calls.push(JSON.parse(options.body)); return { ok: true }; };
+  const save = (kind, workspaceRoot, targetId = 'Hatchet') => handleSettingsAction('save-assignment:smatchet', {
+    'assignment-kind:smatchet': kind, 'assignment-gateway:smatchet': targetId, 'assignment-workspace:smatchet': workspaceRoot,
+  });
+  try {
+    for (const root of [
+      '', 'C:relative', String.raw`\root-relative`, String.raw`\\server`, String.raw`\\server.\share`,
+      String.raw`\\server\share.`, String.raw`\\server\share `, String.raw`\\server \share`,
+      '///server/share', '//server//share', '//server/share//dir', '//server/share/dir?',
+      '//?/C:/root', '//./pipe/name', String.raw`\\?\UNC\server\share`, '/root\0child',
+    ]) {
+      await assert.rejects(save('remote', root), /Enter an absolute workspace path/, JSON.stringify(root));
+    }
+    await assert.rejects(save('remote', '/workspace', ''), /Select a gateway/);
+    await assert.rejects(save('local', String.raw`C:\workspace`), /starting with \//);
+    await assert.rejects(save('local', String.raw`\\server\share`), /starting with \//);
+    assert.deepEqual(calls, [], 'invalid values do not send a request');
+    await save('local', ' /workspace ', '');
+    assert.deepEqual(calls, [{ executionEnvironment: { kind: 'local', workspaceRoot: '/workspace' } }]);
+  } finally { globalThis.fetch = original; }
+});
+
+
 test('settings omit operation activity and refresh only controller configuration data', async () => {
   const expectedIds = ['controller', 'pairings', 'gateways', 'assignments'];
   assert.deepEqual(settingsSections.map(section => section.id), expectedIds);
