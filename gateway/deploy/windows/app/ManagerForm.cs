@@ -43,6 +43,7 @@ namespace NodeGoblin
         int connection;
         string confirmedCode;
         bool fatalReported;
+        bool resourcesDisposed;
 
         static T Named<T>(T control, string id, string name) where T : Control
         {
@@ -209,8 +210,11 @@ namespace NodeGoblin
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing)
+            // Closing a modeless Form disposes it before Program's using does.
+            // NotifyIcon.Dispose clears ContextMenuStrip; never clean it twice.
+            if (disposing && !resourcesDisposed)
             {
+                resourcesDisposed = true;
                 SystemEvents.SessionSwitch -= SessionSwitch;
                 timer.Dispose();
                 if (tray != null)

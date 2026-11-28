@@ -12,6 +12,19 @@ function Assert-Rejected([scriptblock]$Action, [string]$Reason) {
     throw "Expected rejection: $Reason"
 }
 
+# Modeless Close and Program's using can both call Dispose. Exercise the
+# actual built form, not a source-text approximation of native cleanup.
+$instance = [NodeGoblin.ManagerInstance]::new()
+try {
+    $form = [NodeGoblin.ManagerForm]::new($instance)
+    try {
+        $form.Dispose()
+        $form.Dispose()
+        if (-not $form.IsDisposed) { throw 'The manager form was not disposed.' }
+    } finally { $form.Dispose() }
+} finally { $instance.Dispose() }
+Write-Output 'Node Goblin repeated native form disposal passed.'
+
 $profileRoot = Join-Path ([IO.Path]::GetTempPath()) ('node-goblin-manager-' + [Guid]::NewGuid().ToString('N'))
 try {
     $store = [NodeGoblin.ManagerSettings]::new($profileRoot)

@@ -20,14 +20,14 @@ try {
   $profileKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\' + $identity.User.Value
   $profile = [Environment]::ExpandEnvironmentVariables((Get-ItemProperty -LiteralPath $profileKey -Name ProfileImagePath).ProfileImagePath)
   if (-not [IO.Directory]::Exists($profile)) { throw 'The standard-user profile was not loaded' }
-  Add-Content -LiteralPath $log "Standard-user token: $($identity.Name); profile: $profile; launch profile: $env:USERPROFILE"
+  Add-Content -Encoding UTF8 -LiteralPath $log "Standard-user token: $($identity.Name); profile: $profile; launch profile: $env:USERPROFILE"
   if (-not $env:USERPROFILE -or -not $env:USERPROFILE.Equals($profile, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'The launch environment does not belong to the standard-user token'
   }
   # A fresh logon does not run Explorer's first-sign-in folder initialization.
   foreach ($folder in 'LocalApplicationData', 'ApplicationData', 'Programs', 'DesktopDirectory') {
     $path = [Environment]::GetFolderPath($folder, [Environment+SpecialFolderOption]::DoNotVerify)
-    Add-Content -LiteralPath $log "Known folder ${folder}: $path"
+    Add-Content -Encoding UTF8 -LiteralPath $log "Known folder ${folder}: $path"
     if (-not $path -or -not $path.StartsWith($profile + '\', [StringComparison]::OrdinalIgnoreCase)) {
       throw "Windows resolved $folder outside the standard-user profile: $path"
     }
@@ -43,17 +43,17 @@ try {
     -Setup (Join-Path $root 'gateway\dist\fixture\node-goblin-2026.11.27-windows-x64-setup.exe') `
     -UpgradeSetup (Join-Path $root "gateway\dist\node-goblin-$Version-windows-x64-setup.exe") `
     -ExpectedSourceRevision $SourceRevision `
-    -GatewayExercise (Join-Path $root 'gateway\test\windows-installer-e2e.test.mjs') *>> $log
-  Add-Content -LiteralPath $log 'NG_WINDOWS_INSTALLER_LIFECYCLE_VERIFIED: standard-user bundled install, GUI pairing, upgrade, removal and retained data'
+    -GatewayExercise (Join-Path $root 'gateway\test\windows-installer-e2e.test.mjs') *>&1 | Out-File -LiteralPath $log -Append -Encoding UTF8
+  Add-Content -Encoding UTF8 -LiteralPath $log 'NG_WINDOWS_INSTALLER_LIFECYCLE_VERIFIED: standard-user bundled install, GUI pairing, upgrade, removal and retained data'
   exit 0
 } catch {
-  ($_ | Out-String) | Add-Content -LiteralPath $log
-  Add-Content -LiteralPath $log $_.ScriptStackTrace
-  Add-Content -LiteralPath $log $_.InvocationInfo.PositionMessage
+  ($_ | Out-String) | Add-Content -Encoding UTF8 -LiteralPath $log
+  Add-Content -Encoding UTF8 -LiteralPath $log $_.ScriptStackTrace
+  Add-Content -Encoding UTF8 -LiteralPath $log $_.InvocationInfo.PositionMessage
   foreach ($item in Get-ChildItem -LiteralPath $root -Directory -Filter 'node-goblin-setup-test-*') {
     foreach ($setupLog in Get-ChildItem -LiteralPath $item.FullName -File -Filter '*.log') {
-      Add-Content -LiteralPath $log "Installer diagnostics: $($setupLog.Name)"
-      Get-Content -LiteralPath $setupLog.FullName -Tail 55 | Add-Content -LiteralPath $log
+      Add-Content -Encoding UTF8 -LiteralPath $log "Installer diagnostics: $($setupLog.Name)"
+      Get-Content -LiteralPath $setupLog.FullName -Tail 55 | Add-Content -Encoding UTF8 -LiteralPath $log
     }
   }
   exit 1

@@ -133,6 +133,10 @@ Require (-not (Test-Path -LiteralPath "HKLM:\$arpSuffix")) 'Setup registered an 
 Require ($null -eq (Get-ItemProperty -LiteralPath $run -Name NodeGoblin -ErrorAction SilentlyContinue)) 'Setup opted the user into sign-in launch.'
 
 $managerProcess = Open-Manager
+$shutdown = Start-Process -FilePath $managerExe -WorkingDirectory $app -ArgumentList '--shutdown' -PassThru
+Require ($shutdown.WaitForExit(15000) -and $shutdown.ExitCode -eq 0) 'Manager shutdown request failed.'
+Require ($managerProcess.WaitForExit(5000) -and $managerProcess.ExitCode -eq 0) 'The foreground manager did not exit cleanly after shutdown.'
+$managerProcess = Open-Manager
 $config = Join-Path $root 'config'
 $state = Join-Path $root 'state'
 $startupCommand = "`"$managerExe`" --background"
