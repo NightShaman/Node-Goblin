@@ -199,6 +199,16 @@ $savedData = @{}
 foreach ($file in Get-ChildItem -LiteralPath $config, $state -File -Force) {
     $savedData[$file.FullName] = @{ Hash = (Hash $file.FullName); Acl = (Get-Acl -LiteralPath $file.FullName).Sddl }
 }
+# Also replace the app while it has REAL paired identity/trust/journal data,
+# rather than relying only on the earlier sentinel/config upgrade fixture.
+if ($GatewayExercise) {
+    Run-Installer $UpgradeSetup 'refresh-paired' '/TASKS=desktopicon'
+    Require ($managerProcess.WaitForExit(5000)) 'Paired refresh did not request manager shutdown.'
+    Require ((Verify-InstalledPayload $UpgradeSetup).sourceRevision -ceq $ExpectedSourceRevision) 'Paired refresh changed the intended payload.'
+    Assert-RetainedData
+    Require ((Get-ItemPropertyValue -LiteralPath $run -Name NodeGoblin) -ceq $startupCommand) 'Paired refresh changed the sign-in choice.'
+    $managerProcess = Open-Manager
+}
 $uninstaller = (Get-ItemPropertyValue -LiteralPath $arp -Name UninstallString).Trim('"')
 Require ([IO.Path]::GetDirectoryName($uninstaller) -eq $app) 'Registered uninstaller has an unexpected path.'
 $junction = Join-Path $app 'unsafe-test-junction'
