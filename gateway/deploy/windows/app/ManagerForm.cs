@@ -102,10 +102,10 @@ namespace NodeGoblin
             Controls.Add(panel);
 
             Add(panel, new Label { Text = "Connect Node Goblin to Burrow", Font = new Font(Font, FontStyle.Bold) });
-            Add(panel, Caption("Controller address (tls://host:port)"));
+            Add(panel, Caption("Node Goblin listener address (host:port — not the Burrow website)"));
             controller.MaxLength = 512;
             Add(panel, controller);
-            Add(panel, Caption("Gateway ID from Burrow"));
+            Add(panel, Caption("Unique name for this Windows computer (Gateway ID)"));
             gatewayId.MaxLength = 255;
             Add(panel, gatewayId);
             var explanation = Caption("Pairing lets Burrow run shell commands and access files as your Windows user. " +
@@ -171,7 +171,7 @@ namespace NodeGoblin
                 var values = store.ReadConfig();
                 string value;
                 if (values.TryGetValue(GatewaySettings.ControllerKey, out value)) controller.Text = value;
-                if (values.TryGetValue(GatewaySettings.IdKey, out value)) gatewayId.Text = value;
+                gatewayId.Text = values.TryGetValue(GatewaySettings.IdKey, out value) ? value : Environment.MachineName;
                 consent.Checked = SavedConsentForFields();
                 updatingSignIn = true;
                 try { signIn.Checked = store.StartsOnSignIn(); }

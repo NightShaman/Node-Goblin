@@ -118,6 +118,12 @@ Run-Installer $Setup 'reject-redirect' "/DIR=`"$wrongPath`"" -Reject
 Require (-not (Test-Path -LiteralPath $wrongPath) -and -not (Test-Path -LiteralPath $root)) 'Setup wrote to an unexpected location.'
 Run-Installer $Setup 'install' '/TASKS=""'
 $firstBuild = Verify-InstalledPayload $Setup
+$settingsExercise = Join-Path $PSScriptRoot '..\..\..\test\windows-manager-settings.ps1'
+if ($GatewayExercise) {
+    # Reflection holds an image lock until process exit; isolate this check from upgrade.
+    & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $settingsExercise -ManagerExe $managerExe
+    Require ($LASTEXITCODE -eq 0) 'Installed manager settings validation failed.'
+}
 Require (Test-Path -LiteralPath $startMenu -PathType Leaf) 'Per-user Start Menu shortcut is missing.'
 Require (-not (Test-Path -LiteralPath $desktop)) 'Setup created an unselected desktop shortcut.'
 Require ((Get-Acl -LiteralPath $root).AreAccessRulesProtected) 'Setup did not protect the application/data parent.'

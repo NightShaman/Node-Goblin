@@ -1,55 +1,56 @@
-# Windows host development
+# Windows installation
 
-This is a Windows execution-host candidate, not the supported Linux installer and not the Burrow desktop app. Run on an owned test Windows system with Node.js 24 and PowerShell 5.1. Start it explicitly as the test user, not Administrator. No service, startup task, or inbound listener is installed.
+Mini Node Goblin has a **per-user Windows x64 Setup.exe**. It bundles Node.js 24 and a graphical setup/tray manager. You do not need to install Node, paste commands, change PowerShell execution policy, or leave a terminal open. This is the standalone execution host, not the separate Burrow desktop chat application.
 
-## Per-user installation, update and removal
+## Install and pair
 
-This first packaging slice installs code for the existing foreground candidate. Use Windows PowerShell 5.1 (`powershell.exe`) as the non-elevated account that will run it. Install Node.js **24.x** separately and make `node.exe` available on PATH; install/update check that version and never install dependencies. Use a trusted source checkout or unpacked release **gateway folder**, outside `%LOCALAPPDATA%\NodeGoblin`. No secrets or state should be bundled in that folder.
+1. Download **`node-goblin-VERSION-windows-x64-setup.exe`** from the selected [Node Goblin Development release](https://github.com/NightShaman/Node-Goblin/releases). Choose the Setup.exe, not the Linux `.tar.gz`. The checksum sidecar is published alongside it. The installer is currently **unsigned**; Windows may display an unknown-publisher or SmartScreen warning. Download only from the intended release; a checksum is not a publisher signature.
+2. Run Setup normally as the Windows account that will use Node Goblin—not **Run as administrator**. Finish the wizard and launch **Node Goblin**. Setup adds a Start Menu entry and Windows Installed Apps entry; the desktop shortcut is optional.
+3. In the setup window, enter the **Node Goblin controller listener address** (`host:port` or `tls://host:port`). This comes from **Node Goblin → Controller & TLS** in Burrow. It is **not** the Burrow website/reverse-proxy URL. The controller must already be enabled and reachable; its default TLS port is 7443. Leave the proposed computer name or choose a unique stable Gateway ID.
+4. Read the PC-access explanation, tick the consent box, and choose **Save consent and start**.
+5. In Burrow's **Pending pairings**, find the same Gateway ID. Compare its **current** code with the code in the Windows window. If they match, tick **This code matches the current code in Burrow**, choose **Confirm pairing on this computer**, and approve the intended request in Burrow. Reconnecting may replace the code; never approve an unexpected request.
+6. Wait for **Connected and authenticated with Burrow**. In Burrow, assign the intended agent to this approved gateway and choose an absolute Windows workspace path. Assignments apply to subsequent turns. Verify a harmless command or file read on a new turn.
 
-From the repository root (or adjust the script path to your release folder):
+Pairing grants shell and filesystem access **as this signed-in Windows account**. A workspace is a working location, not a sandbox. Setup does not elevate this account or change Core authentication.
 
-```powershell
-.\gateway\deploy\windows\install.ps1 -Source (Resolve-Path .\gateway).Path
-$launcher = Join-Path $env:LOCALAPPDATA 'NodeGoblin\runtime\deploy\windows\node-goblin.ps1'
-& $launcher configure
-& $launcher run
-```
+## Background operation and sign-in
 
-The installed launcher's absolute path is **`%LOCALAPPDATA%\NodeGoblin\runtime\deploy\windows\node-goblin.ps1`** (expand `%LOCALAPPDATA%` for the current account). It is also printed by the installer. No PATH change, elevation, service, startup task, listener or automatic desktop opt-in is added. `run` uses the same paired outbound gateway. In a second console, invoke this installed script with `pairing-code` and `confirm-pairing CODE`; compare the active code with the existing controller before approval. Ctrl+C stops the foreground gateway. Pairing allows the existing controller to run commands and read or write files as that Windows user. A workspace is not a sandbox.
+Closing the window leaves Node Goblin in the notification area. Reopen it from the tray or Start Menu. **Stop gateway** stops the connection and its owned work; **Exit Node Goblin** exits the manager as well. Connection and authentication are shown separately, with useful sanitized failure codes rather than an assumed success state.
 
-Stop the foreground gateway locally and drain its work before updating. Run the update script **from the new source/release**, outside the installation:
+**Start Node Goblin on Windows sign-in** is an explicit choice. It starts the background manager and saved, consented connection after this user signs in. Installation alone does not start a connection or opt into sign-in startup. The setting never grants consent for a different controller/Gateway ID.
 
-```powershell
-.\gateway\deploy\windows\update.ps1 -Source (Resolve-Path .\gateway).Path
-# Start explicitly when ready:
-& $launcher run
-# Later, stop it locally before removing code:
-& (Join-Path $env:LOCALAPPDATA 'NodeGoblin\runtime\deploy\windows\uninstall.ps1')
-```
+This is **logged-in user-session background operation**, not a machine-wide Windows service. It does not promise availability before sign-in or after sign-out. There is no service in Session 0 claiming access to the interactive desktop.
 
-Updates validate and stage an explicit runtime file inventory, then rename it into the fixed `runtime` directory. They refuse a detected Node process referencing that runtime and never kill it. Process inspection failure for a current-user Node process also refuses packaging; unrelated processes owned by other accounts do not block a per-user installation. Keep other consoles from launching the gateway during packaging: the packaging mutex serializes installers, but the existing foreground launcher does not participate in it. Replacement failure attempts to restore the prior runtime. A crash/power loss, rollback failure or cleanup failure can leave an explicitly named `.stage-*` or `.backup-*` directory; preserve it for inspection and recovery rather than recursively deleting the NodeGoblin directory.
+## Optional desktop access
 
-Config remains in `%LOCALAPPDATA%\NodeGoblin\config`; identity, trust and journal remain in `state`. Update and uninstall preserve these files and their ACLs. Uninstall removes only the inventoried runtime, retains the parent directory and all other data, and refuses unexpected runtime files/directories rather than deleting them. There is no purge option. Reinstall can reuse the preserved pairing. Packaging copies only runtime modules, metadata and Windows deployment scripts; it does not copy tests, arbitrary source subdirectories or bundled configuration. Reparse points in selected paths and destination ancestors are refused, and neither nesting direction between source and installation is allowed.
+Desktop access is **off** on every manager start and after a controller disconnect. While authenticated, choose **Enable desktop for this connection** locally to opt in. The existing separate desktop helper shows a visible **Stop Node Goblin desktop access** control. Closing that helper or pressing its Stop revokes desktop access while ordinary shell/files access can continue.
 
-The runtime inherits the same current-user/SYSTEM/Administrators ACL policy as the launcher. Unexpected owners or ACL identities in existing code, config or state are refused. This is a Windows host-OS boundary, not protection against the owning account, Administrators, concurrent privileged filesystem changes or arbitrary commands already authorized as that account. No additional workspace/runtime restrictions are imposed. This packaging slice does not establish blanket Windows control, service support or interactive desktop availability.
+The manager also offers **Stop desktop access** and reports readiness/revocation. A locked, disconnected, elevated, or secure Windows desktop is not a blanket supported control target. Unlocking does not silently re-enable access. The helper reports actual Windows accessibility failures; it does not claim to distinguish every UAC/lock-screen cause.
 
-Verification: `node --test gateway/test/windows-packaging.test.mjs` runs static contract checks on Linux and native filesystem/ACL/process/transaction cases on a non-elevated Windows host with Node 24 and PowerShell 5.1. Skipped native cases or mocked PowerShell results are not Windows proof.
+Grant the intended agent **Mod: Node Goblin → node_goblin_desktop** in Burrow. Existing desktop actions cover status, a primary-display JPEG screenshot, eligible window enumeration, UI Automation inspection and invocation of supported controls. A screenshot may contain anything visible on the primary display; it is returned using Burrow's existing attachment route, not saved as a screenshot on the host or in its operation journal. An interrupted invoke is not replayable: inspect before retrying. This is not a live remote-desktop viewer or a promise to automate arbitrary/elevated applications.
 
-The gateway protocol accepts `commandShell: powershell` or `commandShell: cmd` with a command on Windows. Omitted shell selection still uses the platform default. Windows CI tests the command/file path through the actual pairing transport, and tests a Windows process-tree cancellation fixture. No approval for elevated control, startup or logging configuration is implied by this candidate. Shell/file success does not establish access to an interactive desktop.
+Local desktop controls govern the desktop tool; they are not a command-denylist for separately authorized shell access as the same account.
 
+## Update and uninstall
 
-## Opt in to the desktop slice
+Drain active work, then run the newer **Setup.exe** normally. Setup asks the owning manager to stop, checks that installed executables are no longer in use, and replaces its application files. It refuses an unrelated process still using the bundled Node instead of silently killing it. Reopen Node Goblin from Start Menu after updating. Desktop consent is not carried across a restart.
 
-Run this **from the logged-in, non-elevated Windows account** owning the test application:
+Remove **Node Goblin** through Windows **Installed Apps**. Uninstall stops its manager, removes its application/shortcuts and owned sign-in entry, and **preserves configuration, pairing identity and operation history** for reinstall. It is not a credential purge.
 
-```powershell
-& $launcher run -EnableDesktop
-```
+Locations under your account:
 
-The opt-in applies only to this foreground launch. The helper displays a **Stop Node Goblin desktop access** button when the input desktop is available. Clicking Stop, closing that window, or losing the authenticated controller connection revokes desktop access without stopping ordinary shell/files access. Restart locally with `-EnableDesktop` to opt in again. Session 0, elevated processes, disconnected desktop sessions, and a locked or secure input desktop do not qualify. The tool reports `desktop_input_unavailable` when Windows does not expose an accessible default input desktop; it does not claim to know which of lock, UAC, or another desktop caused that denial.
+- `%LOCALAPPDATA%\NodeGoblin\app`: installed manager, bundled Node and gateway runtime.
+- `%LOCALAPPDATA%\NodeGoblin\config`: connection settings and consent bound to those settings.
+- `%LOCALAPPDATA%\NodeGoblin\state`: identity, controller trust and operation journal.
 
-Grant the agent `Mod: Node Goblin` → `node_goblin_desktop` in Burrow. Send the exact approved gateway ID as `targetId`. Actions: `status`, `screenshot` (primary display), `windows` (same-user, non-elevated main windows), `inspect` (use `windowId`), and `invoke` (use the exact `windowId` and `controlId` from inspection). The screenshot captures the visible primary desktop in JPEG and is returned through Burrow’s usual MCP attachment path. It can contain anything visible there. No screenshot is saved on the gateway or added to its operation journal. A lost invoke is **not replayable**; inspect the application before trying again.
+Treat configuration, state and their backups as sensitive. Existing unexpected ACL owners/identities or reparse points are reported rather than followed. These checks do not protect against the owning account, administrators, privileged concurrent changes, or an already-authorized process with equivalent rights.
 
-The desktop grant and local switch control the desktop tool, not what a separately authorized command can do as that Windows account. This slice does not install a service, automate arbitrary apps or elevated dialogs, or provide a live viewer. It reuses the existing paired outbound connection.
+## Existing foreground developer installs
 
-The desktop helper reports `desktop_starting` while Windows loads its assemblies and compiles its native interop. Status is immediate and desktop actions are rejected (not queued) until initialization completes. Startup has a separate 30-second deadline; ordinary actions retain their five-second helper deadline. Readiness alone does not grant access: every action still checks the active standard-user desktop and visible local Stop indicator. A startup timeout or transport loss ends this launch’s consent; retrying an action does not restart the helper.
+The old PowerShell scripts remain for compatibility and development; they are **not the normal installation path**. Stop any old foreground `run` console before moving to Setup.exe. Setup uses a separate `app` directory and reuses existing protected `config`/`state`; existing pairing can be retained, but the GUI still requires explicit consent before it starts the connection. Old manually installed `runtime` files are not silently deleted.
+
+## Verification boundary
+
+The native installer acceptance job exercises the actual downloadable installer under a disposable standard Windows account: installation without Node on PATH, GUI configuration/current-code pairing, authenticated PowerShell/files, desktop opt-in and revocation, tray/singleton behavior, saved-trust sign-in-command restart, process cancellation/owned-child shutdown, update, uninstall, and data/ACL preservation. Installed payload hashes and version/source metadata are checked. These checks use Windows Server 2025's interactive desktop; they are not evidence of testing every Windows laptop, a literal machine reboot, UAC elevation, or arbitrary applications.
+
+For development, build on Windows using `gateway/deploy/windows/installer/build.ps1`. The build machine needs Node 24 and Inno Setup 6.7.x; those are **build dependencies**, not end-user setup chores. The bundled Node archive is pinned by SHA-256 and its license is included. Linux packaging and the existing outbound pairing protocol are unchanged.

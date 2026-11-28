@@ -1,6 +1,6 @@
 # Installation
 
-Install the mod on the controller and the host runtime on each execution host. The checked-in package installer targets **Linux with systemd**. The JavaScript runtime uses Node built-ins and has no declared third-party runtime dependencies. The host package declares **Node 24.x** (`>=24 <25`) in `engines`.
+Install the mod on the controller and the host runtime on each execution host. **Windows x64** uses the self-contained Setup.exe and graphical pairing/tray manager—see [Windows installation](windows-host-development.md). The following package instructions target **Linux with systemd**. The JavaScript runtime uses Node built-ins and has no declared third-party runtime dependencies. The host package declares **Node 24.x** (`>=24 <25`) in `engines`.
 
 !!! tip "Strongly recommended: enable Backdoor in your home Burrow"
     As part of setup, [install and enable Burrow Backdoor](https://docs.goblin-kingdom.com/burrow-backdoor/installation/) in the **Burrow instance hosting your agent**. Node Goblin routes shell and filesystem execution to your selected remote host. Backdoor keeps home-Burrow diagnostics and authorized mod administration available regardless of which execution host you select.

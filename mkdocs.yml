@@ -77,7 +77,7 @@ nav:
   - Home: index.md
   - User guide:
       - Install Node Goblin: installation.md
-      - Windows development host: windows-host-development.md
+      - Windows installation: windows-host-development.md
       - Pair and assign a host: pairing.md
       - Settings: settings.md
       - Operations and troubleshooting: operations.md

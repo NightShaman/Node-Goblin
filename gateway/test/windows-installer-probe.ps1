@@ -9,6 +9,8 @@ Set-Location -LiteralPath $root
 [Environment]::CurrentDirectory = $root
 $env:TEMP = $root; $env:TMP = $root
 $env:Path = "$env:SystemRoot\System32;$env:SystemRoot\System32\WindowsPowerShell\v1.0;${env:ProgramFiles}\Git\usr\bin"
+# The parent runner uses PowerShell 7; its module path is not Windows PowerShell's.
+$env:PSModulePath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules;${env:ProgramFiles}\WindowsPowerShell\Modules"
 $log = Join-Path $root 'installer-e2e.log'
 try {
   & (Join-Path $root 'gateway\deploy\windows\installer\test-installed.ps1') `

@@ -20,6 +20,7 @@ namespace NodeGoblin
         public GatewaySettings(string controller, string gatewayId)
         {
             controller = (controller ?? "").Trim();
+            if (controller.IndexOf("://", StringComparison.Ordinal) < 0) controller = "tls://" + controller;
             gatewayId = (gatewayId ?? "").Trim();
             var match = Regex.Match(controller, @"\Atls://(\[[a-f0-9:.]+\]|[a-z0-9._-]+):([0-9]{1,5})/?\z",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);

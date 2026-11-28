@@ -16,12 +16,14 @@ Node Goblin lets Burrow agents run commands and work with files on other machine
 You need:
 
 - A working Burrow installation that supports the `execution-provider-v1` mod capability.
-- A **Linux host with systemd**, **Node.js 24.x** available to the service, and **Python 3** for the host pairing command.
-- Root/sudo access on the host, plus `curl`, `tar`, `sha256sum`, and standard Linux installation/account utilities.
+- An execution host: **Windows x64** using the bundled Setup.exe, or **Linux with systemd**, Node.js 24.x and Python 3.
+- For Linux installation: root/sudo access, `curl`, `tar`, `sha256sum`, and standard account utilities. Windows Setup runs as your normal signed-in user.
 - A controller address and TLS port reachable from the host. The default port is **7443**.
 - OpenSSL on the controller if Node Goblin will generate its TLS certificate automatically.
 
-The packaged installer targets Linux/systemd. See the [installation guide](docs/installation.md) for package details and alternatives.
+**Windows:** download the versioned **windows-x64-setup.exe** from [Development releases](https://github.com/NightShaman/Node-Goblin/releases), run Setup, and connect/pair in its window. Node is bundled; no terminal is needed. See [Windows installation](docs/windows-host-development.md) for the complete path.
+
+**Linux:** the existing systemd installer is unchanged; the following quick start covers Linux. See the [installation guide](docs/installation.md).
 
 > Pairing gives Burrow access to run processes and read or change files as the host's `burrow` service account. Choose hosts and accounts you trust. A workspace path is a working location, not a sandbox.
 
