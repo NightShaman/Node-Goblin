@@ -37,7 +37,9 @@ function fixture() {
   }
   fs.cpSync(path.join(gateway, 'lib'), path.join(source, 'lib'), { recursive: true });
   fs.mkdirSync(path.join(source, 'deploy', 'windows'), { recursive: true });
-  for (const name of fs.readdirSync(scripts)) fs.copyFileSync(path.join(scripts, name), path.join(source, 'deploy', 'windows', name));
+  for (const entry of fs.readdirSync(scripts, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith('.ps1')) fs.copyFileSync(path.join(scripts, entry.name), path.join(source, 'deploy', 'windows', entry.name));
+  }
   const local = path.join(root, 'local');
   fs.mkdirSync(local);
   const base = path.join(local, 'NodeGoblin');

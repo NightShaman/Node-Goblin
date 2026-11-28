@@ -1,0 +1,95 @@
+name: Windows installer acceptance
+
+on:
+  push:
+    branches: [fix/windows-installer-20261128]
+  pull_request:
+    paths: ['gateway/**', 'server/**', '.github/workflows/windows-installer.yml']
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      source_ref:
+        description: Exact version-stamped source commit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Build the exact release and a previous-version fixture
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content gateway/VERSION -Raw).Trim()
+          & .\gateway\deploy\windows\installer\build.ps1 -OutputDirectory .\gateway\dist
+          if ($LASTEXITCODE -ne 0) { throw 'Release installer build failed' }
+          try {
+            # Disposable upgrade fixture, never tagged or published.
+            node gateway/deploy/set-release-version.mjs 2026.11.27
+            if ($LASTEXITCODE -ne 0) { throw 'Could not stamp upgrade fixture' }
+            & .\gateway\deploy\windows\installer\build.ps1 -OutputDirectory .\gateway\dist\fixture
+            if ($LASTEXITCODE -ne 0) { throw 'Previous-version fixture build failed' }
+          } finally {
+            node gateway/deploy/set-release-version.mjs $version
+          }
+      - name: Install, pair through the GUI, restart, update and uninstall as a standard user
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $owner = 'ngci' + [Guid]::NewGuid().ToString('N').Substring(0,12)
+          $work = Join-Path $env:PUBLIC $owner
+          $winps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $version = (Get-Content gateway/VERSION -Raw).Trim()
+          $sha = (git rev-parse HEAD).Trim()
+          $pw = ('Ng9!' + [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')) | ConvertTo-SecureString -AsPlainText -Force
+          $user = $null; $proc = $null
+          try {
+            $user = New-LocalUser -Name $owner -Password $pw -ErrorAction Stop
+            New-Item -Path $work -ItemType Directory -ErrorAction Stop | Out-Null
+            Copy-Item -Path gateway,server -Recurse -Destination $work
+            & icacls.exe $work '/inheritance:r' '/grant:r' ('*' + $user.Sid.Value + ':(OI)(CI)(M)') '*S-1-5-32-544:(OI)(CI)(F)' '*S-1-5-18:(OI)(CI)(F)' | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Could not protect disposable Windows fixture' }
+            $cred = [PSCredential]::new("$env:COMPUTERNAME\$owner", $pw)
+            $arguments = @('-NoProfile','-NonInteractive','-Sta','-ExecutionPolicy','Bypass','-File',
+              'gateway\test\windows-installer-probe.ps1','-Version',$version,'-SourceRevision',$sha)
+            $proc = Start-Process -PassThru -FilePath $winps -Credential $cred -LoadUserProfile -WorkingDirectory $work -ArgumentList $arguments -ErrorAction Stop
+            if (-not $proc.WaitForExit(480000)) { throw 'Standard-user installer acceptance timed out' }
+            $log = Join-Path $work 'installer-e2e.log'
+            if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log }
+            if ($proc.ExitCode -ne 0) { throw "Installer acceptance failed (exit $($proc.ExitCode))" }
+            foreach ($marker in 'NG_WINDOWS_MANAGER_PAIRING_VERIFIED', 'NG_WINDOWS_MANAGER_DESKTOP_VERIFIED', 'NG_WINDOWS_MANAGER_LIFECYCLE_VERIFIED', 'NG_WINDOWS_INSTALLER_LIFECYCLE_VERIFIED') {
+              if (-not (Select-String -LiteralPath $log -SimpleMatch $marker -Quiet)) { throw "Missing native proof: $marker" }
+            }
+          } finally {
+            if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+            # Only task-owned test accounts, processes and files are removed.
+            if ($user) {
+              Get-CimInstance Win32_Process | ForEach-Object {
+                $processOwner = Invoke-CimMethod -InputObject $_ -MethodName GetOwnerSid -ErrorAction SilentlyContinue
+                if ($processOwner.ReturnValue -eq 0 -and $processOwner.Sid -eq $user.Sid.Value) { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+              }
+              Remove-LocalUser -SID $user.Sid -ErrorAction SilentlyContinue
+            }
+            if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
+          }
+      - name: Retain the exact tested installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-goblin-windows-installer
+          path: |
+            gateway/dist/*-windows-x64-setup.exe
+            gateway/dist/*-windows-x64-setup.exe.sha256
+          if-no-files-found: error
+          retention-days: 7
