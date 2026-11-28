@@ -1,7 +1,8 @@
 # Run with Windows PowerShell 5.1 using the built WinForms manager.
 param([Parameter(Mandatory=$true)][string]$ManagerExe)
 $ErrorActionPreference = 'Stop'
-[void][Reflection.Assembly]::LoadFrom((Resolve-Path -LiteralPath $ManagerExe).Path)
+Add-Type -AssemblyName System.Windows.Forms
+$assembly = [Reflection.Assembly]::LoadFrom((Resolve-Path -LiteralPath $ManagerExe).Path)
 
 function Assert-Rejected([scriptblock]$Action, [string]$Reason) {
     try { & $Action }
@@ -14,9 +15,15 @@ function Assert-Rejected([scriptblock]$Action, [string]$Reason) {
 
 # Modeless Close and Program's using can both call Dispose. Exercise the
 # actual built form, not a source-text approximation of native cleanup.
-$instance = [NodeGoblin.ManagerInstance]::new()
+# These types are intentionally internal; PowerShell's type resolver exposes
+# public types only. Reflection exercises the shipped implementation without
+# widening the manager's production API just for a regression fixture.
+$instanceType = $assembly.GetType('NodeGoblin.ManagerInstance', $true)
+$instance = [IDisposable][Activator]::CreateInstance($instanceType, $true)
 try {
-    $form = [NodeGoblin.ManagerForm]::new($instance)
+    $formType = $assembly.GetType('NodeGoblin.ManagerForm', $true)
+    $constructor = $formType.GetConstructor([Type[]]@($instanceType))
+    $form = [Windows.Forms.Form]$constructor.Invoke([object[]]@($instance))
     try {
         $form.Dispose()
         $form.Dispose()
