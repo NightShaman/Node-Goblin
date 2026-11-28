@@ -9,7 +9,7 @@ permissions:
   contents: read
 jobs:
   windows:
-    timeout-minutes: 10
+    timeout-minutes: 15
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@v4
@@ -46,15 +46,17 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'Could not protect fixture directory' }
             $cred = [PSCredential]::new("$env:COMPUTERNAME\$owner", $pw)
             $proc = Start-Process -PassThru -FilePath $winps -Credential $cred -LoadUserProfile -WorkingDirectory $work -ArgumentList @('-NoProfile','-NonInteractive','-Sta','-ExecutionPolicy','Bypass','-File','probe.ps1','-ResultPath','result.json','-ExerciseGateway') -ErrorAction Stop
-            if (-not $proc.WaitForExit(120000)) { throw 'Standard-user probe timed out' }
+            if (-not $proc.WaitForExit(360000)) { throw 'Standard-user probe timed out' }
             if (-not (Test-Path -LiteralPath $result)) { throw "Standard-user desktop did not record a receipt (exit $($proc.ExitCode))" }
             $surface = Get-Content -LiteralPath $result -Raw
             Write-Output "Standard user desktop: $surface"
+            $packageLog = Join-Path $work 'packaging-e2e.log'
+            if (Test-Path -LiteralPath $packageLog) { Get-Content -LiteralPath $packageLog }
             $desktopLog = Join-Path $work 'desktop-e2e.log'
             if (Test-Path -LiteralPath $desktopLog) { Get-Content -LiteralPath $desktopLog }
             if ($proc.ExitCode -ne 0) { throw "Desktop integration failed ($($proc.ExitCode))" }
             if (($surface | ConvertFrom-Json).state -ne 'interactive_non_elevated_capture_verified') { throw 'Standard-user app pixels were not verified' }
-            foreach ($marker in 'NG_WINDOWS_DESKTOP_APP_INVOKED', 'NG_WINDOWS_DESKTOP_STOP_VERIFIED', 'NG_WINDOWS_DESKTOP_DISCONNECT_VERIFIED', 'NG_WINDOWS_DESKTOP_E2E_VERIFIED') {
+            foreach ($marker in 'NG_WINDOWS_INSTALLED_LAUNCHER_VERIFIED', 'NG_WINDOWS_DESKTOP_APP_INVOKED', 'NG_WINDOWS_DESKTOP_STOP_VERIFIED', 'NG_WINDOWS_DESKTOP_DISCONNECT_VERIFIED', 'NG_WINDOWS_DESKTOP_E2E_VERIFIED') {
               if (-not (Test-Path -LiteralPath $desktopLog) -or -not (Select-String -LiteralPath $desktopLog -Pattern "^# ${marker}: " -Quiet)) { throw "Desktop integration proof missing: $marker" }
             }
           }

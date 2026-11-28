@@ -27,6 +27,14 @@ function checked(env, ...command) {
 test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a protected identity across restart', { skip: !windows, timeout: 95_000 }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'node-goblin-launcher-'));
   const env = { ...process.env, LOCALAPPDATA: root, BURROW_GATEWAY_STATE_DIR: path.join(root, 'must-not-create') };
+  const installed = process.env.NODE_GOBLIN_INSTALLED_E2E === '1';
+  const launchScript = installed ? path.join(root, 'NodeGoblin', 'runtime', 'deploy', 'windows', 'node-goblin.ps1') : script;
+  const args = (...command) => ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', launchScript, ...command];
+  const checked = (env, ...command) => {
+    const result = spawnSync('powershell.exe', args(...command), { env, encoding: 'utf8', timeout: 15_000 });
+    assert.equal(result.status, 0, result.error?.message || result.stderr || result.stdout);
+    return result.stdout;
+  };
   const state = path.join(root, 'NodeGoblin', 'state');
   const host = 'test-launcher';
   let listener, child, childDone, gatewayPid, startupError, app, appDone, primaryError;
@@ -60,6 +68,13 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
     const listening = once(listener, 'listening', { signal: AbortSignal.timeout(5_000) });
     listener.listen(0, '127.0.0.1');
     await listening;
+    if (installed) {
+      const installer = fileURLToPath(new URL('../deploy/windows/install.ps1', import.meta.url));
+      const gatewaySource = fileURLToPath(new URL('..', import.meta.url));
+      const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', installer, '-Source', gatewaySource], { env, encoding: 'utf8', timeout: 60_000 });
+      assert.equal(result.status, 0, result.error?.message || result.stderr || result.stdout);
+      assert.ok(fs.existsSync(launchScript), 'installed launcher missing');
+    }
     checked(env, 'configure', '-Controller', `tls://127.0.0.1:${listener.server.address().port}`, '-GatewayId', host);
     const pending = once(listener, 'gatewayPairingPending', { signal: AbortSignal.timeout(10_000) });
     open(verifyDesktop);
@@ -90,6 +105,7 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
     const executed = await controller.executeProcess({ targetId: host, operationId: 'launcher-smoke', process: { commandShell: 'powershell', cwd: root, command: "Get-Content -LiteralPath 'launcher proof.txt'" } });
     assert.equal(executed.ok, true);
     assert.equal(executed.stdout.trim(), 'launcher');
+    if (installed) t.diagnostic('NG_WINDOWS_INSTALLED_LAUNCHER_VERIFIED: installed runtime paired and executed PowerShell/files');
     assert.ok(!fs.existsSync(env.BURROW_GATEWAY_STATE_DIR), 'launcher honored inherited state override');
     const identity = path.join(state, 'node-identity.json');
     assert.ok(fs.existsSync(identity));
@@ -151,7 +167,13 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
       assert.equal(JSON.parse(status.content[0].text).state, 'desktop_helper_absent');
       assert.equal((await desktop('screenshot')).isError, true);
       assert.equal((await write()).response.result.replay, true, 'desktop stop did not preserve shell/files transport');
-      t.diagnostic('NG_WINDOWS_DESKTOP_STOP_VERIFIED: local Stop revoked desktop access while file replay stayed connected');
+      const freshFile = await listener.dispatchFilesystem(host, { operationId: 'after-stop-fresh-write', tool: 'files_write', arguments: { filePath: path.join(root, 'after-stop.txt'), content: 'after stop' } });
+      assert.equal(freshFile.response.result.outcome.ok, true);
+      assert.notEqual(freshFile.response.result.replay, true);
+      const freshProcess = await controller.executeProcess({ targetId: host, operationId: 'after-stop-fresh-process', process: { commandShell: 'powershell', cwd: root, command: "Get-Content -LiteralPath 'after-stop.txt'" } });
+      assert.equal(freshProcess.ok, true);
+      assert.equal(freshProcess.stdout.trim(), 'after stop');
+      t.diagnostic('NG_WINDOWS_DESKTOP_STOP_VERIFIED: local Stop revoked desktop access while fresh PowerShell/files and file replay stayed connected');
     }
     const disconnected = once(listener, 'gatewayDisconnected', { signal: AbortSignal.timeout(10_000) });
     await halt();
@@ -204,7 +226,13 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
       assert.equal(denied.isError, true);
       assert.equal(JSON.parse(denied.content[0].text).error, 'desktop_helper_absent');
       assert.equal((await write()).response.result.replay, true, 'desktop revocation prevented file replay on reconnect');
-      t.diagnostic('NG_WINDOWS_DESKTOP_DISCONNECT_VERIFIED: authenticated transport loss revoked desktop across same-process reconnect; file replay resumed');
+      const freshFile = await listener.dispatchFilesystem(host, { operationId: 'after-reconnect-fresh-write', tool: 'files_write', arguments: { filePath: path.join(root, 'after-reconnect.txt'), content: 'after reconnect' } });
+      assert.equal(freshFile.response.result.outcome.ok, true);
+      assert.notEqual(freshFile.response.result.replay, true);
+      const freshProcess = await controller.executeProcess({ targetId: host, operationId: 'after-reconnect-fresh-process', process: { commandShell: 'powershell', cwd: root, command: "Get-Content -LiteralPath 'after-reconnect.txt'" } });
+      assert.equal(freshProcess.ok, true);
+      assert.equal(freshProcess.stdout.trim(), 'after reconnect');
+      t.diagnostic('NG_WINDOWS_DESKTOP_DISCONNECT_VERIFIED: authenticated transport loss revoked desktop across same-process reconnect; fresh PowerShell/files and file replay resumed');
       t.diagnostic('NG_WINDOWS_DESKTOP_E2E_VERIFIED: paired TLS, PowerShell/files, primary JPEG, owned app inspect/invoke marker, local Stop, files replay and opt-in reset on restart');
     }
   } catch (error) {
