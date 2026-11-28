@@ -184,12 +184,19 @@ $dispatcher = [Windows.Threading.Dispatcher]::CurrentDispatcher
 $window.Add_Closed({ $dispatcher.BeginInvokeShutdown([Windows.Threading.DispatcherPriority]::Send) })
 $timer = [Windows.Threading.DispatcherTimer]::new()
 $timer.Interval = [TimeSpan]::FromMilliseconds(100)
+$script:ReadySent = $false
 $timer.Add_Tick({
   if ([NodeGoblinDesktop]::Closed) { $window.Close(); return }
   if (-not $window.IsVisible -and (Get-DesktopState) -eq 'available') {
     $window.Show()
     # A hidden subprocess startup flag can override the first ShowWindow call.
     [NodeGoblinDesktop]::ShowIndicator([Windows.Interop.WindowInteropHelper]::new($window).Handle)
+  }
+  # Initialization is complete and the dispatcher is processing requests. This
+  # is readiness only; every action still checks the live session and indicator.
+  if (-not $script:ReadySent) {
+    [Console]::WriteLine('{"ready":true}')
+    $script:ReadySent = $true
   }
   $line = $null
   if (-not [NodeGoblinDesktop]::Input.TryDequeue([ref]$line)) { return }

@@ -24,7 +24,7 @@ function checked(env, ...command) {
   return result.stdout;
 }
 
-test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a protected identity across restart', { skip: !windows, timeout: 95_000 }, async t => {
+test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a protected identity across restart', { skip: !windows, timeout: 160_000 }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'node-goblin-launcher-'));
   const env = { ...process.env, LOCALAPPDATA: root, BURROW_GATEWAY_STATE_DIR: path.join(root, 'must-not-create') };
   const installed = process.env.NODE_GOBLIN_INSTALLED_E2E === '1';
@@ -112,14 +112,27 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
     const acl = execFileSync('icacls.exe', [identity], { encoding: 'utf8', timeout: 5_000 });
     assert.match(acl, /\(F\)/, 'missing full-control ACL on generated identity');
     assert.doesNotMatch(acl, /\b(?:Everyone|Authenticated Users|BUILTIN\\Users):/i);
-    let desktop;
+    let desktop, waitForDesktop;
     if (verifyDesktop) {
       let tool;
       registerDesktopTool({ register(spec) { tool = spec; } }, listener);
       assert.equal(tool.availability, 'grant-required');
       desktop = (action, options = {}) => tool.handler({ targetId: host, action, ...options }, {});
-      let status = await desktop('status');
-      assert.equal(JSON.parse(status.content[0].text).available, true, status.content[0].text);
+      waitForDesktop = async () => {
+        const deadline = Date.now() + 35_000;
+        let reply;
+        do {
+          reply = await desktop('status');
+          const state = JSON.parse(reply.content[0].text);
+          if (state.state !== 'desktop_starting') {
+            assert.equal(state.available, true, `${reply.content[0].text}; ${diagnostic() || 'no helper stderr'}`);
+            return reply;
+          }
+          await delay(150);
+        } while (Date.now() < deadline);
+        assert.fail(`desktop did not finish startup: ${reply.content[0].text}; ${diagnostic() || 'no helper stderr'}`);
+      };
+      let status = await waitForDesktop();
       const marker = path.join(root, 'desktop-action.txt');
       const ready = path.join(root, 'desktop-app-ready.txt');
       // Do not request SW_HIDE for the disposable process that owns the test window.
@@ -198,12 +211,7 @@ test('Windows foreground launcher pairs over TLS, runs PowerShell and persists a
       assert.equal(listener.liveGateway(host), beforeDrop);
       await identifyGateway('launcher-opted-back-in-pid');
       const beforeDropPid = gatewayPid;
-      let status;
-      for (let i = 0; i < 20; i++) {
-        status = JSON.parse((await desktop('status')).content[0].text);
-        if (status.available === true) break;
-        await delay(150);
-      }
+      let status = JSON.parse((await waitForDesktop()).content[0].text);
       assert.equal(status.available, true, `local re-opt-in did not enable desktop: ${JSON.stringify(status)}`);
       const droppedAndReauthenticated = Promise.all([
         once(listener, 'gatewayDisconnected', { signal: AbortSignal.timeout(10_000) }),

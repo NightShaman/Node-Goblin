@@ -7,9 +7,11 @@ import { WindowsDesktop } from './lib/windows-desktop.mjs';
 import { registerDesktopTool } from '../server/desktop-tool.mjs';
 
 const status = { action: 'status' };
-const simulate = (timeout = 5000) => {
+const simulate = (timeout = 5000, ready = true, startupTimeout = 30_000) => {
   const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), kill() { this.stopped = true; } });
-  return { child, desktop: new WindowsDesktop({ enabled: true, systemRoot: 'fixture', spawnHelper: () => child, timeout }) };
+  const desktop = new WindowsDesktop({ enabled: true, systemRoot: 'fixture', spawnHelper: () => child, timeout, startupTimeout });
+  if (ready) child.stdout.write('{"ready":true}\n');
+  return { child, desktop };
 };
 
 test('desktop helper is optional, single-flight, and does not restart once consent ends', async () => {
@@ -64,4 +66,37 @@ test('desktop MCP tool is explicitly granted, reports disconnection and preserve
   assert.deepEqual(JSON.parse((await spec.handler({ targetId: 'host', ...status }, {})).content[0].text), { targetId: 'host', connected: false, available: false, state: 'gateway_not_connected' });
   connected = true;
   assert.deepEqual((await spec.handler({ targetId: 'host', action: 'screenshot' }, {})).content[1], { type: 'image', mimeType: 'image/jpeg', data: image });
+});
+
+
+test('cold helper startup is reported without queuing actions or spending their deadline', async () => {
+  const { child, desktop } = simulate(30, false);
+  let writes = 0;
+  child.stdin.on('data', () => writes++);
+  assert.deepEqual(await desktop.execute(status), { available: false, state: 'desktop_starting' });
+  await assert.rejects(desktop.execute({ action: 'invoke', windowId: '1:2', controlId: '3' }), { code: 'desktop_starting' });
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.equal(child.stopped, undefined, 'action deadline was applied during startup');
+  assert.equal(writes, 0, 'pre-ready requests must not reach helper');
+  child.stdout.write('{"ready":true}\n');
+  const request = desktop.execute(status);
+  child.stdout.write('{"available":true,"state":"available"}\n');
+  assert.equal((await request).available, true);
+  assert.equal(writes, 1);
+  desktop.stop();
+});
+
+test('startup is bounded and Stop or late readiness never restores consent', async () => {
+  const hung = simulate(5000, false, 30);
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.equal(hung.child.stopped, true);
+  assert.deepEqual(await hung.desktop.execute(status), { available: false, state: 'desktop_timeout' });
+  const stopped = simulate(5000, false);
+  stopped.desktop.stop();
+  stopped.child.stdout.write('{"ready":true}\n');
+  assert.deepEqual(await stopped.desktop.execute(status), { available: false, state: 'desktop_helper_absent' });
+  const invalid = simulate(5000, false);
+  invalid.child.stdout.write('{"ready":true,"available":true}\n');
+  assert.equal(invalid.child.stopped, true);
+  assert.deepEqual(await invalid.desktop.execute(status), { available: false, state: 'desktop_response_invalid' });
 });

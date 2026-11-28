@@ -8,7 +8,7 @@ const actions = ['status', 'screenshot', 'windows', 'inspect', 'invoke'];
 const limitError = code => Object.assign(new Error(code), { code });
 export const desktopErrorCodes = new Set([
   'desktop_arguments_invalid', 'desktop_disabled', 'desktop_helper_absent', 'desktop_busy',
-  'desktop_timeout', 'desktop_transport_required', 'desktop_response_invalid',
+  'desktop_starting', 'desktop_timeout', 'desktop_transport_required', 'desktop_response_invalid',
   'desktop_session_0', 'desktop_elevated', 'desktop_session_inactive', 'desktop_input_unavailable', 'desktop_indicator_unavailable',
   'desktop_window_unavailable', 'desktop_window_access_denied', 'desktop_control_unavailable',
   'desktop_action_failed', 'desktop_screenshot_too_large',
@@ -26,7 +26,7 @@ export function desktopRequest(value) {
 }
 
 export class WindowsDesktop {
-  constructor({ enabled, spawnHelper = spawn, systemRoot = process.env.SystemRoot, timeout = 5000 } = {}) {
+  constructor({ enabled, spawnHelper = spawn, systemRoot = process.env.SystemRoot, timeout = 5000, startupTimeout = 30_000 } = {}) {
     this.reason = enabled ? 'desktop_helper_absent' : 'desktop_disabled';
     this.timeout = timeout;
     if (!enabled || !systemRoot) return;
@@ -36,6 +36,10 @@ export class WindowsDesktop {
     const child = this.child = spawnHelper(winps, ['-NoProfile', '-NonInteractive', '-Sta', '-ExecutionPolicy', 'Bypass', '-File', entry], {
       windowsHide: true, stdio: ['pipe', 'pipe', 'inherit'],
     });
+    // Assembly loading/C# compilation is startup, not a desktop action. Never
+    // queue an action across this boundary or extend the action deadline.
+    this.startupTimer = setTimeout(() => this.stop('desktop_timeout'), startupTimeout);
+    this.startupTimer.unref?.();
     let reply = '';
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', chunk => {
@@ -43,16 +47,21 @@ export class WindowsDesktop {
       if (Buffer.byteLength(reply) > REPLY_BYTES) return this.stop('desktop_response_invalid');
       const end = reply.indexOf('\n');
       if (end === -1) return;
+      if (!this.child || end !== reply.length - 1) return this.stop('desktop_response_invalid');
+      let message;
+      try { message = JSON.parse(reply); } catch { return this.stop('desktop_response_invalid'); }
+      reply = '';
+      if (!message || Array.isArray(message) || typeof message !== 'object') return this.stop('desktop_response_invalid');
+      if (!this.ready) {
+        if (message.ready !== true || Object.keys(message).length !== 1) return this.stop('desktop_response_invalid');
+        clearTimeout(this.startupTimer);
+        this.ready = true;
+        return;
+      }
       const pending = this.pending;
-      if (!pending || end !== reply.length - 1) return this.stop('desktop_response_invalid');
+      if (!pending) return this.stop('desktop_response_invalid');
       this.pending = null;
       clearTimeout(pending.timer);
-      let message;
-      try { message = JSON.parse(reply); } catch { pending.reject(limitError('desktop_response_invalid')); return this.stop('desktop_response_invalid'); }
-      reply = '';
-      if (!message || Array.isArray(message) || typeof message !== 'object') {
-        pending.reject(limitError('desktop_response_invalid')); return this.stop('desktop_response_invalid');
-      }
       if (message.error) return pending.reject(limitError(desktopErrorCodes.has(message.error) ? message.error : 'desktop_action_failed'));
       pending.resolve(message);
     });
@@ -67,6 +76,10 @@ export class WindowsDesktop {
       if (command.action === 'status') return { available: false, state: this.reason };
       throw limitError(this.reason);
     }
+    if (!this.ready) {
+      if (command.action === 'status') return { available: false, state: 'desktop_starting' };
+      throw limitError('desktop_starting');
+    }
     if (this.pending) throw limitError('desktop_busy');
     return new Promise((resolve, reject) => {
       this.pending = { resolve, reject, timer: setTimeout(() => this.stop('desktop_timeout'), this.timeout) };
@@ -75,6 +88,7 @@ export class WindowsDesktop {
   }
 
   stop(reason = 'desktop_helper_absent') {
+    clearTimeout(this.startupTimer);
     const child = this.child;
     if (child) {
       this.child = null;
