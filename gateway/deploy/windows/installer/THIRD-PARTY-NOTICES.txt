@@ -1,0 +1,11 @@
+Node Goblin for Windows packages an unmodified Node.js executable from the
+official Node.js win-x64 distribution. Its version, distribution URL, and
+archive SHA-256 are recorded in package-build.json. The Node.js license and
+bundled dependency notices are in node\LICENSE.
+
+The Node Goblin project license is included in LICENSE.txt.
+
+This installer was created with Inno Setup.
+Copyright (C) 1997-2026 Jordan Russell. All rights reserved.
+Portions Copyright (C) 2000-2026 Martijn Laan. All rights reserved.
+https://jrsoftware.org/isinfo.php
