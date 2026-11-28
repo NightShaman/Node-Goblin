@@ -3,7 +3,8 @@
 param(
     [Parameter(Mandatory)][string]$Setup,
     [Parameter(Mandatory)][string]$UpgradeSetup,
-    [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string]$ExpectedSourceRevision
+    [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string]$ExpectedSourceRevision,
+    [ValidateNotNullOrEmpty()][string]$GatewayExercise
 )
 
 $ErrorActionPreference = 'Stop'
@@ -93,6 +94,7 @@ Require (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Admin
 Require ((Get-Process -Id $PID).SessionId -ne 0) 'Use an interactive signed-in Windows session.'
 $Setup = (Resolve-Path -LiteralPath $Setup).Path
 $UpgradeSetup = (Resolve-Path -LiteralPath $UpgradeSetup).Path
+if ($GatewayExercise) { $GatewayExercise = (Resolve-Path -LiteralPath $GatewayExercise).Path }
 Require ($Setup -ne $UpgradeSetup) 'Provide two distinct installer versions.'
 Verify-Artifact $Setup
 Verify-Artifact $UpgradeSetup
@@ -127,18 +129,40 @@ Require ($null -eq (Get-ItemProperty -LiteralPath $run -Name NodeGoblin -ErrorAc
 $managerProcess = Open-Manager
 $config = Join-Path $root 'config'
 $state = Join-Path $root 'state'
+$startupCommand = "`"$managerExe`" --background"
+if ($GatewayExercise) {
+    $previousMode = $env:NODE_GOBLIN_MANAGER_E2E
+    $previousPid = $env:NODE_GOBLIN_MANAGER_PID
+    try {
+        $env:NODE_GOBLIN_MANAGER_E2E = '1'
+        $env:NODE_GOBLIN_MANAGER_PID = [string]$managerProcess.Id
+        & $nodeExe --test $GatewayExercise
+        Require ($LASTEXITCODE -eq 0) "Installed gateway exercise failed (exit $LASTEXITCODE)."
+    } finally {
+        $env:NODE_GOBLIN_MANAGER_E2E = $previousMode
+        $env:NODE_GOBLIN_MANAGER_PID = $previousPid
+    }
+    Require ($managerProcess.HasExited) 'The gateway exercise did not shut down its manager.'
+    Require ((Get-ItemPropertyValue -LiteralPath $run -Name NodeGoblin) -ceq $startupCommand) 'The gateway exercise did not leave the opted-in sign-in command.'
+    foreach ($name in 'config\gateway.env', 'config\manager-consent', 'state\node-identity.json', 'state\operations.json') {
+        Require (Test-Path -LiteralPath (Join-Path $root $name) -PathType Leaf) "Gateway exercise did not create $name."
+    }
+    $managerProcess = Open-Manager
+} else {
+    $configFile = Join-Path $config 'gateway.env'
+    if (-not (Test-Path -LiteralPath $configFile)) {
+        Set-Content -LiteralPath $configFile -Value '# installer retention fixture' -Encoding ASCII
+    }
+    [void][Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Microsoft\Windows\CurrentVersion\Run').Dispose()
+    Set-ItemProperty -LiteralPath $run -Name NodeGoblin -Value $startupCommand
+}
+Set-Content -LiteralPath (Join-Path $state 'installer-retention.txt') -Value 'installer retention fixture' -Encoding ASCII
 $savedData = @{}
-foreach ($name in 'config\gateway.env', 'state\node-identity.json', 'state\operations.json') {
-    $file = Join-Path $root $name
-    $content = if ($name.EndsWith('.env')) { "# own config fixture" } else { '{"fixture":"retain"}' }
-    Set-Content -LiteralPath $file -Value $content -Encoding ASCII
-    $savedData[$file] = @{ Hash = (Hash $file); Acl = (Get-Acl -LiteralPath $file).Sddl }
+foreach ($file in Get-ChildItem -LiteralPath $config, $state -File -Force) {
+    $savedData[$file.FullName] = @{ Hash = (Hash $file.FullName); Acl = (Get-Acl -LiteralPath $file.FullName).Sddl }
 }
 $savedDirectories = @{}
 foreach ($path in $root, $config, $state) { $savedDirectories[$path] = (Get-Acl -LiteralPath $path).Sddl }
-[void][Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Microsoft\Windows\CurrentVersion\Run').Dispose()
-$startupCommand = "`"$managerExe`" --background"
-Set-ItemProperty -LiteralPath $run -Name NodeGoblin -Value $startupCommand
 
 # A separately launched bundled Node has no manager shutdown endpoint. Setup must leave it and the old app intact.
 $blocker = Start-Process -FilePath $nodeExe -ArgumentList '-e "setInterval(()=>{},1000)"' -WindowStyle Hidden -PassThru
