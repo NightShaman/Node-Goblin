@@ -138,6 +138,7 @@ test('installed Windows manager pairs through its native GUI as a standard user'
     pid = initialPid ? Number(initialPid) : open().child.pid;
     await track(pid, exe);
     const initialWindow = await expectWindow();
+    t.diagnostic(`First-run native controls (no values): ${JSON.stringify(await driver.call('controls', { pid }))}`);
     const probe = path.join(dir, 'desktop-probe.json');
     await checkExit(launch('powershell.exe', powershell(script('./windows-desktop-probe.ps1'), '-ResultPath', probe)),
       'Interactive desktop probe failed');

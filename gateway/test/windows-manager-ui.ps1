@@ -7,10 +7,44 @@ Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase, Acces
 Add-Type -ReferencedAssemblies ([Accessibility.IAccessible].Assembly.Location) @'
 using System;
 using System.Runtime.InteropServices;
+using System.Collections.Generic;
+using System.Text;
 using Accessibility;
 
 public static class ManagerTestWindows {
+    delegate bool EnumWindow(IntPtr window, IntPtr parameter);
+    [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, EnumWindow callback, IntPtr parameter);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr window, StringBuilder name, int maximum);
+    [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr window);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out Rectangle rectangle);
+    [StructLayout(LayoutKind.Sequential)] struct Rectangle { public int Left, Top, Right, Bottom; }
+
+    public sealed class ControlInfo {
+        public long Handle;
+        public string Name;
+        public string Class;
+        public bool Visible, Enabled;
+        public int Width, Height;
+    }
+
+    public static ControlInfo[] Children(IntPtr parent) {
+        var result = new List<ControlInfo>();
+        EnumChildWindows(parent, (window, parameter) => {
+            try {
+                var name = new StringBuilder(256);
+                GetClassName(window, name, name.Capacity);
+                Rectangle rectangle;
+                if (GetWindowRect(window, out rectangle)) {
+                    result.Add(new ControlInfo { Handle = window.ToInt64(), Name = Client(window).get_accName(0),
+                        Class = name.ToString(), Visible = IsWindowVisible(window), Enabled = IsWindowEnabled(window),
+                        Width = rectangle.Right - rectangle.Left, Height = rectangle.Bottom - rectangle.Top });
+                }
+            } catch (COMException) { }
+            return true;
+        }, IntPtr.Zero);
+        return result.ToArray();
+    }
     [DllImport("oleacc.dll")]
     static extern int AccessibleObjectFromWindow(IntPtr hwnd, uint objectId, ref Guid iid,
         [MarshalAs(UnmanagedType.Interface)] out IAccessible accessible);
@@ -123,9 +157,33 @@ function Run-Request($request) {
         return $true
     }
 
+    if ($request.action -eq 'controls') {
+        # Metadata only, never input values. The first-run fixture calls this
+        # before entering a controller address, identity or pairing material.
+        return [ManagerTestWindows]::Children($hwnd)
+    }
+
     $name = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, $request.name)
     $item = $root.FindFirst([Windows.Automation.TreeScope]::Descendants, $name)
     if (-not $item) {
+        # Framework WinForms can expose an edit's explicit AccessibleName to
+        # MSAA but omit it from UIA. Resolve only a unique, visible, nonempty
+        # native edit in this exact manager window; do not select its caption.
+        $native = @([ManagerTestWindows]::Children($hwnd) | Where-Object {
+            $_.Name -ceq $request.name -and $_.Class.StartsWith('WindowsForms10.EDIT.') -and
+            $_.Visible -and $_.Width -gt 0 -and $_.Height -gt 0
+        })
+        if ($native.Count -eq 1) {
+            $handle = [IntPtr]$native[0].Handle
+            if ($request.action -eq 'exists') { return $true }
+            if ($request.action -eq 'enabled') { return $native[0].Enabled }
+            if ($request.action -ne 'read' -and -not $native[0].Enabled) { throw 'Manager control is disabled' }
+            switch ($request.action) {
+                'read' { return [ManagerTestWindows]::Read($handle) }
+                'set' { [ManagerTestWindows]::Write($handle, $request.value); return $true }
+                default { throw 'Native edit does not support this action' }
+            }
+        }
         if ($request.action -eq 'exists') { return $false }
         throw 'Manager control was not found'
     }
