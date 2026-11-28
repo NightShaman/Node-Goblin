@@ -64,7 +64,10 @@ jobs:
             $cred = [PSCredential]::new("$env:COMPUTERNAME\$owner", $pw)
             $arguments = @('-NoProfile','-NonInteractive','-Sta','-ExecutionPolicy','Bypass','-File',
               'gateway\test\windows-installer-probe.ps1','-Version',$version,'-SourceRevision',$sha)
-            $proc = Start-Process -PassThru -FilePath $winps -Credential $cred -LoadUserProfile -WorkingDirectory $work -ArgumentList $arguments -ErrorAction Stop
+            # A null native environment lets Win32 build this credential's profile
+            # environment. Inheriting runneradmin's values corrupts known-folder
+            # initialization before the probe can correct any $env: variables.
+            $proc = Start-Process -PassThru -FilePath $winps -Credential $cred -LoadUserProfile -UseNewEnvironment -WorkingDirectory $work -ArgumentList $arguments -ErrorAction Stop
             if (-not $proc.WaitForExit(480000)) { throw 'Standard-user installer acceptance timed out' }
             $log = Join-Path $work 'installer-e2e.log'
             if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log }

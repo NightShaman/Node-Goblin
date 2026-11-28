@@ -13,25 +13,29 @@ $env:Path = "$env:SystemRoot\System32;$env:SystemRoot\System32\WindowsPowerShell
 $env:PSModulePath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules;${env:ProgramFiles}\WindowsPowerShell\Modules"
 $log = Join-Path $root 'installer-e2e.log'
 try {
-  # Start-Process -Credential loads the user's registry hive, but inherits the
-  # runner's environment. Resolve this token's real profile before asking the shell
-  # to expand %USERPROFILE% in known folders or starting the installer/manager.
+  # The launcher must supply the token's genuine profile environment from birth.
+  # Patching variables after shell startup can leave cached known folders pointing
+  # at runneradmin and would conceal an invalid standard-user acceptance fixture.
   $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
   $profileKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\' + $identity.User.Value
   $profile = [Environment]::ExpandEnvironmentVariables((Get-ItemProperty -LiteralPath $profileKey -Name ProfileImagePath).ProfileImagePath)
   if (-not [IO.Directory]::Exists($profile)) { throw 'The standard-user profile was not loaded' }
-  $env:USERPROFILE = $profile
-  $env:HOMEDRIVE = [IO.Path]::GetPathRoot($profile).TrimEnd('\')
-  $env:HOMEPATH = $profile.Substring($env:HOMEDRIVE.Length)
-  $env:USERNAME = $identity.Name.Split('\')[-1]
-  $env:APPDATA = Join-Path $profile 'AppData\Roaming'
-  $env:LOCALAPPDATA = Join-Path $profile 'AppData\Local'
-  Add-Content -LiteralPath $log "Standard-user token: $($identity.Name); profile: $profile"
+  Add-Content -LiteralPath $log "Standard-user token: $($identity.Name); profile: $profile; launch profile: $env:USERPROFILE"
+  if (-not $env:USERPROFILE -or -not $env:USERPROFILE.Equals($profile, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'The launch environment does not belong to the standard-user token'
+  }
   # A fresh logon does not run Explorer's first-sign-in folder initialization.
-  foreach ($folder in 'LocalApplicationData', 'Programs', 'DesktopDirectory') {
+  foreach ($folder in 'LocalApplicationData', 'ApplicationData', 'Programs', 'DesktopDirectory') {
     $path = [Environment]::GetFolderPath($folder, [Environment+SpecialFolderOption]::DoNotVerify)
+    Add-Content -LiteralPath $log "Known folder ${folder}: $path"
     if (-not $path -or -not $path.StartsWith($profile + '\', [StringComparison]::OrdinalIgnoreCase)) {
       throw "Windows resolved $folder outside the standard-user profile: $path"
+    }
+    if ($folder -eq 'LocalApplicationData' -and -not $path.Equals($env:LOCALAPPDATA, [StringComparison]::OrdinalIgnoreCase)) {
+      throw 'Windows and the launch environment disagree on LOCALAPPDATA'
+    }
+    if ($folder -eq 'ApplicationData' -and -not $path.Equals($env:APPDATA, [StringComparison]::OrdinalIgnoreCase)) {
+      throw 'Windows and the launch environment disagree on APPDATA'
     }
     [void][IO.Directory]::CreateDirectory($path)
   }
