@@ -110,7 +110,10 @@ function Assert-GatewayStopped {
   $ownSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
   foreach ($process in @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction Stop)) {
     if (-not $process.CommandLine) {
-      $owner = Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -ErrorAction Stop
+      # Windows may deny even owner lookup for foreign processes. Do not turn
+      # another account's uninspectable process into a per-user install blocker.
+      try { $owner = Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -ErrorAction Stop }
+      catch { continue }
       if ($owner.ReturnValue -eq 0 -and $owner.Sid -eq $ownSid) { throw 'Cannot inspect a current-user Node process; resolve process visibility before packaging.' }
       continue # Other-user/SYSTEM processes are outside this per-user install.
     }

@@ -216,3 +216,19 @@ test('native Windows replacement failure restores prior runtime using a real sta
     ok(run(f.env, 'uninstall.ps1'));
   } finally { f.cleanup(); }
 });
+
+// Classification only: real native installed-process refusal is exercised above.
+test('Windows process visibility ignores inaccessible foreign processes but refuses an unreadable known own process', { skip: !windows }, () => {
+  const command = `
+    . ${quoted(path.join(scripts, 'package-common.ps1'))}
+    $script:Runtime = 'C:\\fixture\\runtime'
+    function Get-CimInstance { [PSCustomObject]@{ CommandLine=$null } }
+    function Invoke-CimMethod { throw 'Foreign process access denied' }
+    Assert-GatewayStopped
+    function Invoke-CimMethod { [PSCustomObject]@{ ReturnValue=0; Sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value } }
+    $rejected=$false
+    try { Assert-GatewayStopped } catch { if ($_.Exception.Message -like '*current-user Node*') { $rejected=$true } else { throw } }
+    if (-not $rejected) { throw 'Unreadable own process was not rejected' }
+  `;
+  ok(spawnSync(powershell, [...psArgs, '-Command', command], { encoding: 'utf8', timeout: 15_000 }));
+});
