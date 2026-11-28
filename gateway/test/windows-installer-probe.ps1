@@ -13,6 +13,13 @@ $env:Path = "$env:SystemRoot\System32;$env:SystemRoot\System32\WindowsPowerShell
 $env:PSModulePath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules;${env:ProgramFiles}\WindowsPowerShell\Modules"
 $log = Join-Path $root 'installer-e2e.log'
 try {
+  # Logon-with-profile creates a real standard token but does not run Explorer's
+  # first-sign-in known-folder initialization. Initialize the ordinary user folders.
+  foreach ($folder in 'LocalApplicationData', 'Programs', 'DesktopDirectory') {
+    $path = [Environment]::GetFolderPath($folder, [Environment+SpecialFolderOption]::DoNotVerify)
+    if (-not $path) { throw "Windows did not resolve the standard-user $folder folder" }
+    [void][IO.Directory]::CreateDirectory($path)
+  }
   & (Join-Path $root 'gateway\deploy\windows\installer\test-installed.ps1') `
     -Setup (Join-Path $root 'gateway\dist\fixture\node-goblin-2026.11.27-windows-x64-setup.exe') `
     -UpgradeSetup (Join-Path $root "gateway\dist\node-goblin-$Version-windows-x64-setup.exe") `
@@ -22,6 +29,8 @@ try {
   exit 0
 } catch {
   ($_ | Out-String) | Add-Content -LiteralPath $log
+  Add-Content -LiteralPath $log $_.ScriptStackTrace
+  Add-Content -LiteralPath $log $_.InvocationInfo.PositionMessage
   foreach ($item in Get-ChildItem -LiteralPath $root -Directory -Filter 'node-goblin-setup-test-*') {
     foreach ($setupLog in Get-ChildItem -LiteralPath $item.FullName -File -Filter '*.log') {
       Add-Content -LiteralPath $log "Installer diagnostics: $($setupLog.Name)"

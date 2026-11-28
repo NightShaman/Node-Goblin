@@ -95,7 +95,7 @@ function Run-Request($request) {
     switch ($request.action) {
         'ready' { return $true }
         'compareCapture' { return (Test-FixtureCapture $request) }
-        'registry' { return (Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name NodeGoblin) }
+        'registry' { return (Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name NodeGoblin -ErrorAction SilentlyContinue) }
         'track' {
             $process = Get-Process -Id $request.pid
             if ($process.SessionId -ne $session -or $process.MainModule.FileName -ine $request.exe) {

@@ -241,9 +241,13 @@ test('installed Windows manager pairs through its native GUI as a standard user'
     await expectExit(stopPid, 'Stop gateway did not cancel the running process');
     await expectExit(worker, 'Stop gateway did not exit the gateway worker');
     await until('Stop gateway did not disconnect the transport', () => !listener.liveGateway(gatewayId));
+    const command = `"${exe}" --background`;
+    if (await driver.call('registry') === command) {
+      await ui('toggle', 'Start Node Goblin on Windows sign-in');
+      assert.equal(await driver.call('registry'), null, 'UI did not turn off sign-in launch');
+    }
     await ui('toggle', 'Start Node Goblin on Windows sign-in');
-    const command = await driver.call('registry');
-    assert.equal(command, `"${exe}" --background`);
+    assert.equal(await driver.call('registry'), command);
     await shutdown();
     await expectExit(pid, 'First manager did not exit');
 

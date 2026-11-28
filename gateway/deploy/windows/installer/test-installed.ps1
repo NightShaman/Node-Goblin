@@ -136,32 +136,12 @@ $managerProcess = Open-Manager
 $config = Join-Path $root 'config'
 $state = Join-Path $root 'state'
 $startupCommand = "`"$managerExe`" --background"
-if ($GatewayExercise) {
-    $previousMode = $env:NODE_GOBLIN_MANAGER_E2E
-    $previousPid = $env:NODE_GOBLIN_MANAGER_PID
-    try {
-        $env:NODE_GOBLIN_MANAGER_E2E = '1'
-        $env:NODE_GOBLIN_MANAGER_PID = [string]$managerProcess.Id
-        & $nodeExe --test $GatewayExercise
-        Require ($LASTEXITCODE -eq 0) "Installed gateway exercise failed (exit $LASTEXITCODE)."
-    } finally {
-        $env:NODE_GOBLIN_MANAGER_E2E = $previousMode
-        $env:NODE_GOBLIN_MANAGER_PID = $previousPid
-    }
-    Require ($managerProcess.HasExited) 'The gateway exercise did not shut down its manager.'
-    Require ((Get-ItemPropertyValue -LiteralPath $run -Name NodeGoblin) -ceq $startupCommand) 'The gateway exercise did not leave the opted-in sign-in command.'
-    foreach ($name in 'config\gateway.env', 'config\manager-consent', 'state\node-identity.json', 'state\operations.json') {
-        Require (Test-Path -LiteralPath (Join-Path $root $name) -PathType Leaf) "Gateway exercise did not create $name."
-    }
-    $managerProcess = Open-Manager
-} else {
-    $configFile = Join-Path $config 'gateway.env'
-    if (-not (Test-Path -LiteralPath $configFile)) {
-        Set-Content -LiteralPath $configFile -Value '# installer retention fixture' -Encoding ASCII
-    }
-    [void][Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Microsoft\Windows\CurrentVersion\Run').Dispose()
-    Set-ItemProperty -LiteralPath $run -Name NodeGoblin -Value $startupCommand
+$configFile = Join-Path $config 'gateway.env'
+if (-not (Test-Path -LiteralPath $configFile)) {
+    Set-Content -LiteralPath $configFile -Value '# installer retention fixture' -Encoding ASCII
 }
+[void][Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Microsoft\Windows\CurrentVersion\Run').Dispose()
+Set-ItemProperty -LiteralPath $run -Name NodeGoblin -Value $startupCommand
 Set-Content -LiteralPath (Join-Path $state 'installer-retention.txt') -Value 'installer retention fixture' -Encoding ASCII
 $savedData = @{}
 foreach ($file in Get-ChildItem -LiteralPath $config, $state -File -Force) {
@@ -192,7 +172,33 @@ Require (Test-Path -LiteralPath $desktop -PathType Leaf) 'Selected desktop short
 Require ((Get-ItemPropertyValue -LiteralPath $run -Name NodeGoblin) -ceq $startupCommand) 'Upgrade changed the user sign-in choice.'
 Assert-RetainedData
 
+# Exercise first-run pairing on the ACTUAL release installer after its upgrade,
+# not just on the previous-version test fixture. Retain its real paired data
+# across uninstall after verifying upgrade retention independently above.
 $managerProcess = Open-Manager
+if ($GatewayExercise) {
+    $previousMode = $env:NODE_GOBLIN_MANAGER_E2E
+    $previousPid = $env:NODE_GOBLIN_MANAGER_PID
+    try {
+        $env:NODE_GOBLIN_MANAGER_E2E = '1'
+        $env:NODE_GOBLIN_MANAGER_PID = [string]$managerProcess.Id
+        & $nodeExe --test $GatewayExercise
+        Require ($LASTEXITCODE -eq 0) "Installed gateway exercise failed (exit $LASTEXITCODE)."
+    } finally {
+        $env:NODE_GOBLIN_MANAGER_E2E = $previousMode
+        $env:NODE_GOBLIN_MANAGER_PID = $previousPid
+    }
+    Require ($managerProcess.HasExited) 'The gateway exercise did not shut down its manager.'
+    Require ((Get-ItemPropertyValue -LiteralPath $run -Name NodeGoblin) -ceq $startupCommand) 'The gateway exercise did not leave the opted-in sign-in command.'
+    foreach ($name in 'config\gateway.env', 'config\manager-consent', 'state\node-identity.json', 'state\operations.json') {
+        Require (Test-Path -LiteralPath (Join-Path $root $name) -PathType Leaf) "Gateway exercise did not create $name."
+    }
+    $managerProcess = Open-Manager
+}
+$savedData = @{}
+foreach ($file in Get-ChildItem -LiteralPath $config, $state -File -Force) {
+    $savedData[$file.FullName] = @{ Hash = (Hash $file.FullName); Acl = (Get-Acl -LiteralPath $file.FullName).Sddl }
+}
 $uninstaller = (Get-ItemPropertyValue -LiteralPath $arp -Name UninstallString).Trim('"')
 Require ([IO.Path]::GetDirectoryName($uninstaller) -eq $app) 'Registered uninstaller has an unexpected path.'
 $junction = Join-Path $app 'unsafe-test-junction'
